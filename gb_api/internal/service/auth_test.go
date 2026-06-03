@@ -22,16 +22,17 @@ var mem_repo = memAuthRepo{
 	},
 }
 type mockRepo struct {}
-func (_ mockRepo) ValidateCredentials(username, password string) bool {
+func (_ mockRepo) ValidateCredentials(username, password string) (bool, error) {
 	stored, ok := mem_repo.users[username]
-	return ok && stored == password
+	return ok && stored == password, nil
 }
-func (_ mockRepo) StoreRefreshToken(token string) {
+func (_ mockRepo) StoreRefreshToken(token string) error {
 	mem_repo.refreshTokens.Store(token, struct{}{})
+	return nil
 }
-func (_ mockRepo) ConsumeRefreshToken(token string) bool {
+func (_ mockRepo) ConsumeRefreshToken(token string) (bool, error) {
 	_, ok := mem_repo.refreshTokens.LoadAndDelete(token)
-	return ok
+	return ok, nil
 }
 var svc = NewAuthSvc(mockRepo{})
 

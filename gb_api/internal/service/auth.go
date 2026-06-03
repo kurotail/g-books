@@ -76,8 +76,11 @@ func marshalTokenPair(accessToken, refreshToken string) ([]byte, error) {
 }
 
 func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
-	// TODO: replace with DB lookup when PostgreSQL is integrated
-	if !s.repo.ValidateCredentials(creds.Username, creds.Password) {
+	ok, err := s.repo.ValidateCredentials(creds.Username, creds.Password)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	if !ok {
 		return nil, http.StatusUnauthorized, fmt.Errorf("帳號或密碼錯誤")
 	}
 
@@ -110,7 +113,11 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("token 類型錯誤")
 	}
 
-	if !s.repo.ConsumeRefreshToken(refreshTokenStr) {
+	ok, err := s.repo.ConsumeRefreshToken(refreshTokenStr)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	if !ok {
 		return nil, http.StatusUnauthorized, fmt.Errorf("refresh token invalid")
 	}
 

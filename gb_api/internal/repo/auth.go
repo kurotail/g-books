@@ -17,25 +17,26 @@ var mem_repo = memAuthRepo{
 }
 
 type AuthRepo interface {
-	ValidateCredentials(username, password string) bool
-	StoreRefreshToken(token string)
-	ConsumeRefreshToken(token string) bool
+	ValidateCredentials(username, password string) (bool, error)
+	StoreRefreshToken(token string) error
+	ConsumeRefreshToken(token string) (bool, error)
 }
 
 type authRepo struct {}
 
-func (_ *authRepo) ValidateCredentials(username, password string) bool {
+func (_ *authRepo) ValidateCredentials(username, password string) (bool, error) {
 	stored, ok := mem_repo.users[username]
-	return ok && stored == password
+	return ok && stored == password, nil
 }
 
-func (_ *authRepo) StoreRefreshToken(token string) {
+func (_ *authRepo) StoreRefreshToken(token string) error {
 	mem_repo.refreshTokens.Store(token, struct{}{})
+	return nil
 }
 
-func (_ *authRepo) ConsumeRefreshToken(token string) bool {
+func (_ *authRepo) ConsumeRefreshToken(token string) (bool, error) {
 	_, ok := mem_repo.refreshTokens.LoadAndDelete(token)
-	return ok
+	return ok, nil
 }
 
 func InitAuthRepo() *authRepo {
