@@ -1,4 +1,4 @@
-package configs
+package config
 
 
 // JWT signing keys (load from env vars in production)

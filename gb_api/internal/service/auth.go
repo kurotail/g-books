@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	configs "gb-api/internal/config"
+	"gb-api/internal/config"
 	"gb-api/internal/model"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -36,7 +36,7 @@ func newAccessToken(username string) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(t.Add(accessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(t),
 		},
-	}, configs.JwtKey)
+	}, config.JwtKey)
 }
 
 func newRefreshToken(username string) (string, error) {
@@ -48,7 +48,7 @@ func newRefreshToken(username string) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(t.Add(refreshTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(t),
 		},
-	}, configs.RefreshKey)
+	}, config.RefreshKey)
 }
 
 func marshalTokenPair(accessToken, refreshToken string) ([]byte, error) {
@@ -88,7 +88,7 @@ func RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("未預期的簽章演算法: %v", t.Header["alg"])
 		}
-		return configs.RefreshKey, nil
+		return config.RefreshKey, nil
 	})
 	if err != nil || !token.Valid {
 		return nil, http.StatusUnauthorized, fmt.Errorf("refresh token 無效或已過期")
@@ -125,7 +125,7 @@ func QueryDashboard(tokenString string) ([]byte, int, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("未預期的簽章演算法: %v", t.Header["alg"])
 		}
-		return configs.JwtKey, nil
+		return config.JwtKey, nil
 	})
 	if err != nil || !token.Valid {
 		return nil, http.StatusUnauthorized, fmt.Errorf("token 無效或已過期")
