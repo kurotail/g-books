@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,9 +11,33 @@ import (
 	"gb-api/internal/model"
 )
 
+// memAuthRepo is an in-memory implementation backed by Go collections.
+type memAuthRepo struct {
+	users         map[string]string // username -> password
+	refreshTokens sync.Map
+}
+var mem_repo = memAuthRepo{
+	users: map[string]string{
+		"user": "password123",
+	},
+}
+type mockRepo struct {}
+func (_ mockRepo) ValidateCredentials(username, password string) bool {
+	stored, ok := mem_repo.users[username]
+	return ok && stored == password
+}
+func (_ mockRepo) StoreRefreshToken(token string) {
+	mem_repo.refreshTokens.Store(token, struct{}{})
+}
+func (_ mockRepo) ConsumeRefreshToken(token string) bool {
+	_, ok := mem_repo.refreshTokens.LoadAndDelete(token)
+	return ok
+}
+var svc = NewAuthSvc(mockRepo{})
+
 func clearRefreshTokens() {
-	refreshTokens.Range(func(k, v any) bool {
-		refreshTokens.Delete(k)
+	mem_repo.refreshTokens.Range(func(k, v any) bool {
+		mem_repo.refreshTokens.Delete(k)
 		return true
 	})
 }
@@ -31,7 +56,7 @@ func useAdvancingClock(t *testing.T) {
 
 func loginTokenPair(t *testing.T) map[string]string {
 	t.Helper()
-	data, _, err := LoginByName(model.Credential{Username: "user", Password: "password123"})
+	data, _, err := svc.LoginByName(model.Credential{Username: "user", Password: "password123"})
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
@@ -46,7 +71,7 @@ func TestLoginByName_ValidCredentials(t *testing.T) {
 	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
 
-	data, status, err := LoginByName(model.Credential{Username: "user", Password: "password123"})
+	data, status, err := svc.LoginByName(model.Credential{Username: "user", Password: "password123"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,7 +95,7 @@ func TestLoginByName_WrongPassword(t *testing.T) {
 	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
 
-	_, status, err := LoginByName(model.Credential{Username: "user", Password: "wrong"})
+	_, status, err := svc.LoginByName(model.Credential{Username: "user", Password: "wrong"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -83,7 +108,7 @@ func TestLoginByName_WrongUsername(t *testing.T) {
 	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
 
-	_, status, err := LoginByName(model.Credential{Username: "nobody", Password: "password123"})
+	_, status, err := svc.LoginByName(model.Credential{Username: "nobody", Password: "password123"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -98,7 +123,7 @@ func TestRefreshTokens_ValidToken(t *testing.T) {
 
 	pair := loginTokenPair(t)
 
-	data, status, err := RefreshTokens(pair["refresh_token"])
+	data, status, err := svc.RefreshTokens(pair["refresh_token"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,11 +150,11 @@ func TestRefreshTokens_SingleUse(t *testing.T) {
 	pair := loginTokenPair(t)
 	original := pair["refresh_token"]
 
-	if _, _, err := RefreshTokens(original); err != nil {
+	if _, _, err := svc.RefreshTokens(original); err != nil {
 		t.Fatalf("first use failed: %v", err)
 	}
 
-	_, status, err := RefreshTokens(original)
+	_, status, err := svc.RefreshTokens(original)
 	if err == nil {
 		t.Fatal("expected error on second use of same refresh token")
 	}
@@ -139,7 +164,7 @@ func TestRefreshTokens_SingleUse(t *testing.T) {
 }
 
 func TestRefreshTokens_ForgedToken(t *testing.T) {
-	_, status, err := RefreshTokens("not.a.valid.token")
+	_, status, err := svc.RefreshTokens("not.a.valid.token")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -154,7 +179,7 @@ func TestRefreshTokens_AccessTokenRejected(t *testing.T) {
 
 	pair := loginTokenPair(t)
 
-	_, status, err := RefreshTokens(pair["access_token"])
+	_, status, err := svc.RefreshTokens(pair["access_token"])
 	if err == nil {
 		t.Fatal("expected error when using access token as refresh token")
 	}

@@ -4,30 +4,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	"gb-api/internal/config"
 	"gb-api/internal/model"
+	"gb-api/internal/repo"
 
 	"github.com/golang-jwt/jwt/v5"
 )
-
-var refreshTokens sync.Map // valid refresh token strings → struct{}{}
-
-var now = time.Now // overridable in tests
 
 const (
 	accessTokenTTL  = 15 * time.Minute
 	refreshTokenTTL = 7 * 24 * time.Hour
 )
 
+var now = time.Now
+type AuthSvc struct {
+	repo repo.AuthRepo
+}
+
+func NewAuthSvc(r repo.AuthRepo) *AuthSvc {
+	return &AuthSvc{repo: r}
+}
+
 func signToken(claims *model.Claims, key []byte) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(key)
 }
 
-func newAccessToken(username string) (string, error) {
+func (s *AuthSvc) newAccessToken(username string) (string, error) {
 	t := now()
 	return signToken(&model.Claims{
 		Username:  username,
@@ -39,7 +44,7 @@ func newAccessToken(username string) (string, error) {
 	}, config.JwtKey)
 }
 
-func newRefreshToken(username string) (string, error) {
+func (s *AuthSvc) newRefreshToken(username string) (string, error) {
 	t := now()
 	return signToken(&model.Claims{
 		Username:  username,
@@ -51,6 +56,18 @@ func newRefreshToken(username string) (string, error) {
 	}, config.RefreshKey)
 }
 
+func (s *AuthSvc) genTokenPair(username string) (string, string, error) {
+	accessToken, err := s.newAccessToken(username)
+	if err != nil {
+		return "", "", err
+	}
+	refreshToken, err := s.newRefreshToken(username)
+	if err != nil {
+		return "", "", err
+	}
+	return accessToken, refreshToken, nil
+}
+
 func marshalTokenPair(accessToken, refreshToken string) ([]byte, error) {
 	return json.Marshal(map[string]string{
 		"access_token":  accessToken,
@@ -58,22 +75,18 @@ func marshalTokenPair(accessToken, refreshToken string) ([]byte, error) {
 	})
 }
 
-func LoginByName(creds model.Credential) ([]byte, int, error) {
+func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
 	// TODO: replace with DB lookup when PostgreSQL is integrated
-	if creds.Username != "user" || creds.Password != "password123" {
+	if !s.repo.ValidateCredentials(creds.Username, creds.Password) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("帳號或密碼錯誤")
 	}
 
-	accessToken, err := newAccessToken(creds.Username)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	refreshToken, err := newRefreshToken(creds.Username)
+	accessToken, refreshToken, err := s.genTokenPair(creds.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 
-	refreshTokens.Store(refreshToken, struct{}{})
+	s.repo.StoreRefreshToken(refreshToken)
 
 	data, err := marshalTokenPair(accessToken, refreshToken)
 	if err != nil {
@@ -82,7 +95,7 @@ func LoginByName(creds model.Credential) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
-func RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
+func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 	claims := &model.Claims{}
 	token, err := jwt.ParseWithClaims(refreshTokenStr, claims, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -97,20 +110,15 @@ func RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("token 類型錯誤")
 	}
 
-	if _, ok := refreshTokens.LoadAndDelete(refreshTokenStr); !ok {
+	if !s.repo.ConsumeRefreshToken(refreshTokenStr) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("refresh token invalid")
 	}
 
-	accessToken, err := newAccessToken(claims.Username)
+	accessToken, newRefresh, err := s.genTokenPair(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	newRefresh, err := newRefreshToken(claims.Username)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-
-	refreshTokens.Store(newRefresh, struct{}{})
+	s.repo.StoreRefreshToken(newRefresh)
 
 	data, err := marshalTokenPair(accessToken, newRefresh)
 	if err != nil {
