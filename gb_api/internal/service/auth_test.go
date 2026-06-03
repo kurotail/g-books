@@ -163,8 +163,6 @@ func TestRefreshTokens_AccessTokenRejected(t *testing.T) {
 	}
 }
 
-// ── QueryDashboard ────────────────────────────────────────────────────────────
-
 func TestQueryDashboard_ValidAccessToken(t *testing.T) {
 	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
