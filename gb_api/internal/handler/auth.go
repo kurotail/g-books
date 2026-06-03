@@ -9,7 +9,11 @@ import (
 	"gb-api/internal/service"
 )
 
-// 2. 登入處理函式（第一階段：寫死使用者資訊）
+func write_json_rsp(w http.ResponseWriter, data []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "只接受 POST 請求", http.StatusMethodNotAllowed)
@@ -17,29 +21,35 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var creds model.Credential
-	err := json.NewDecoder(r.Body).Decode(&creds)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
 
-	err, status, outString := service.LoginByName(creds)
+	data, status, err := service.LoginByName(creds)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
 	}
-
-	// 回傳 Token 給前端（Flutter 等）
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"token": outString,
-	})
+	write_json_rsp(w, data)
 }
 
-// 3. JWT 驗證中間件（Middleware）
-func QueryHandler(w http.ResponseWriter, r *http.Request) {
+func RefreshHandler(w http.ResponseWriter, r *http.Request) {
+	var req model.RefreshRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RefreshToken == "" {
+		http.Error(w, "缺少或不合法的 refresh_token", http.StatusBadRequest)
+		return
+	}
 
-	// 從 Header 讀取 Authorization: Bearer <Token>
+	data, status, err := service.RefreshTokens(req.RefreshToken)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	write_json_rsp(w, data)
+}
+
+func QueryHandler(w http.ResponseWriter, r *http.Request) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		http.Error(w, "未附帶授權令牌 (Missing Token)", http.StatusUnauthorized)
@@ -52,17 +62,10 @@ func QueryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString := parts[1]
-	claims := &model.Claims{}
-
-	err, status, outString := service.QueryDashboard(tokenString, claims)
+	data, status, err := service.QueryDashboard(parts[1])
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
 	}
-	
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": outString,
-	})
+	write_json_rsp(w, data)
 }
