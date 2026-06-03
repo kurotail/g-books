@@ -75,6 +75,23 @@ func marshalTokenPair(accessToken, refreshToken string) ([]byte, error) {
 	})
 }
 
+func validateAccessToken(tokenString string) (*model.Claims, error) {
+	claims := &model.Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("未預期的簽章演算法: %v", t.Header["alg"])
+		}
+		return config.JwtKey, nil
+	})
+	if err != nil || !token.Valid {
+		return nil, fmt.Errorf("token 無效或已過期")
+	}
+	if claims.TokenType != "access" {
+		return nil, fmt.Errorf("請使用 access token")
+	}
+	return claims, nil
+}
+
 func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
 	ok, err := s.repo.ValidateCredentials(creds.Username, creds.Password)
 	if err != nil {
@@ -135,18 +152,8 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 }
 
 func QueryDashboard(tokenString string) ([]byte, int, error) {
-	claims := &model.Claims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("未預期的簽章演算法: %v", t.Header["alg"])
-		}
-		return config.JwtKey, nil
-	})
-	if err != nil || !token.Valid {
-		return nil, http.StatusUnauthorized, fmt.Errorf("token 無效或已過期")
-	}
-	if claims.TokenType != "access" {
-		return nil, http.StatusUnauthorized, fmt.Errorf("請使用 access token")
+	if _, err := validateAccessToken(tokenString); err != nil {
+		return nil, http.StatusUnauthorized, err
 	}
 
 	data, err := json.Marshal(map[string]string{"message": "恭喜！您已成功通過 JWT 驗證，並讀取了受保護的資料庫內容。"})

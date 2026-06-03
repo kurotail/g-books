@@ -11,40 +11,36 @@ import (
 	"gb-api/internal/model"
 )
 
-// memAuthRepo is an in-memory implementation backed by Go collections.
-type memAuthRepo struct {
-	users         map[string]string // username -> password
+type mockAuthRepo struct {
+	users         map[string]string
 	refreshTokens sync.Map
 }
-var mem_repo = memAuthRepo{
-	users: map[string]string{
-		"user": "password123",
-	},
+
+func newMockAuthRepo() *mockAuthRepo {
+	return &mockAuthRepo{
+		users: map[string]string{"user": "password123"},
+	}
 }
-type mockRepo struct {}
-func (_ mockRepo) ValidateCredentials(username, password string) (bool, error) {
-	stored, ok := mem_repo.users[username]
+
+func (m *mockAuthRepo) ValidateCredentials(username, password string) (bool, error) {
+	stored, ok := m.users[username]
 	return ok && stored == password, nil
 }
-func (_ mockRepo) StoreRefreshToken(token string) error {
-	mem_repo.refreshTokens.Store(token, struct{}{})
+
+func (m *mockAuthRepo) StoreRefreshToken(token string) error {
+	m.refreshTokens.Store(token, struct{}{})
 	return nil
 }
-func (_ mockRepo) ConsumeRefreshToken(token string) (bool, error) {
-	_, ok := mem_repo.refreshTokens.LoadAndDelete(token)
+
+func (m *mockAuthRepo) ConsumeRefreshToken(token string) (bool, error) {
+	_, ok := m.refreshTokens.LoadAndDelete(token)
 	return ok, nil
 }
-var svc = NewAuthSvc(mockRepo{})
 
-func clearRefreshTokens() {
-	mem_repo.refreshTokens.Range(func(k, v any) bool {
-		mem_repo.refreshTokens.Delete(k)
-		return true
-	})
+func newTestAuthSvc() *AuthSvc {
+	return NewAuthSvc(newMockAuthRepo())
 }
 
-// useAdvancingClock replaces now with a clock that advances by 1 s on every
-// call, ensuring tokens minted in rapid succession always differ.
 func useAdvancingClock(t *testing.T) {
 	t.Helper()
 	base := time.Now()
@@ -55,9 +51,9 @@ func useAdvancingClock(t *testing.T) {
 	t.Cleanup(func() { now = time.Now })
 }
 
-func loginTokenPair(t *testing.T) map[string]string {
+func loginTokenPair(t *testing.T, s *AuthSvc) map[string]string {
 	t.Helper()
-	data, _, err := svc.LoginByName(model.Credential{Username: "user", Password: "password123"})
+	data, _, err := s.LoginByName(model.Credential{Username: "user", Password: "password123"})
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
@@ -69,17 +65,16 @@ func loginTokenPair(t *testing.T) map[string]string {
 }
 
 func TestLoginByName_ValidCredentials(t *testing.T) {
-	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
+	s := newTestAuthSvc()
 
-	data, status, err := svc.LoginByName(model.Credential{Username: "user", Password: "password123"})
+	data, status, err := s.LoginByName(model.Credential{Username: "user", Password: "password123"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-
 	var resp map[string]string
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
@@ -93,10 +88,10 @@ func TestLoginByName_ValidCredentials(t *testing.T) {
 }
 
 func TestLoginByName_WrongPassword(t *testing.T) {
-	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
+	s := newTestAuthSvc()
 
-	_, status, err := svc.LoginByName(model.Credential{Username: "user", Password: "wrong"})
+	_, status, err := s.LoginByName(model.Credential{Username: "user", Password: "wrong"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -106,10 +101,10 @@ func TestLoginByName_WrongPassword(t *testing.T) {
 }
 
 func TestLoginByName_WrongUsername(t *testing.T) {
-	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
+	s := newTestAuthSvc()
 
-	_, status, err := svc.LoginByName(model.Credential{Username: "nobody", Password: "password123"})
+	_, status, err := s.LoginByName(model.Credential{Username: "nobody", Password: "password123"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -119,19 +114,17 @@ func TestLoginByName_WrongUsername(t *testing.T) {
 }
 
 func TestRefreshTokens_ValidToken(t *testing.T) {
-	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
+	s := newTestAuthSvc()
+	pair := loginTokenPair(t, s)
 
-	pair := loginTokenPair(t)
-
-	data, status, err := svc.RefreshTokens(pair["refresh_token"])
+	data, status, err := s.RefreshTokens(pair["refresh_token"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-
 	var pair2 map[string]string
 	if err := json.Unmarshal(data, &pair2); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
@@ -145,17 +138,14 @@ func TestRefreshTokens_ValidToken(t *testing.T) {
 }
 
 func TestRefreshTokens_SingleUse(t *testing.T) {
-	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
+	s := newTestAuthSvc()
+	original := loginTokenPair(t, s)["refresh_token"]
 
-	pair := loginTokenPair(t)
-	original := pair["refresh_token"]
-
-	if _, _, err := svc.RefreshTokens(original); err != nil {
+	if _, _, err := s.RefreshTokens(original); err != nil {
 		t.Fatalf("first use failed: %v", err)
 	}
-
-	_, status, err := svc.RefreshTokens(original)
+	_, status, err := s.RefreshTokens(original)
 	if err == nil {
 		t.Fatal("expected error on second use of same refresh token")
 	}
@@ -165,7 +155,9 @@ func TestRefreshTokens_SingleUse(t *testing.T) {
 }
 
 func TestRefreshTokens_ForgedToken(t *testing.T) {
-	_, status, err := svc.RefreshTokens("not.a.valid.token")
+	s := newTestAuthSvc()
+
+	_, status, err := s.RefreshTokens("not.a.valid.token")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -175,12 +167,11 @@ func TestRefreshTokens_ForgedToken(t *testing.T) {
 }
 
 func TestRefreshTokens_AccessTokenRejected(t *testing.T) {
-	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
+	s := newTestAuthSvc()
+	pair := loginTokenPair(t, s)
 
-	pair := loginTokenPair(t)
-
-	_, status, err := svc.RefreshTokens(pair["access_token"])
+	_, status, err := s.RefreshTokens(pair["access_token"])
 	if err == nil {
 		t.Fatal("expected error when using access token as refresh token")
 	}
@@ -190,10 +181,9 @@ func TestRefreshTokens_AccessTokenRejected(t *testing.T) {
 }
 
 func TestQueryDashboard_ValidAccessToken(t *testing.T) {
-	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
-
-	pair := loginTokenPair(t)
+	s := newTestAuthSvc()
+	pair := loginTokenPair(t, s)
 
 	data, status, err := QueryDashboard(pair["access_token"])
 	if err != nil {
@@ -208,10 +198,9 @@ func TestQueryDashboard_ValidAccessToken(t *testing.T) {
 }
 
 func TestQueryDashboard_RefreshTokenRejected(t *testing.T) {
-	t.Cleanup(clearRefreshTokens)
 	useAdvancingClock(t)
-
-	pair := loginTokenPair(t)
+	s := newTestAuthSvc()
+	pair := loginTokenPair(t, s)
 
 	_, status, err := QueryDashboard(pair["refresh_token"])
 	if err == nil {
