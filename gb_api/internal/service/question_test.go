@@ -7,43 +7,14 @@ import (
 	"time"
 
 	"gb-api/internal/model"
+	"gb-api/internal/repo/mock"
 )
 
-type mockQuestionRepo struct {
-	perm     uint
-	sessions map[string]model.QuestionSession
-	created  string // last session ID handed out by CreateSession
-}
-
-func newMockQuestionRepo(perm uint) *mockQuestionRepo {
-	return &mockQuestionRepo{
-		perm:     perm,
-		sessions: map[string]model.QuestionSession{},
+func newMockQuestionRepo(perm uint) *mock.QuestionRepo {
+	return &mock.QuestionRepo{
+		Perm:     perm,
+		Sessions: map[string]model.QuestionSession{},
 	}
-}
-
-func (m *mockQuestionRepo) CreateSession(groupID uint) (string, model.Question, error) {
-	q := model.Question{Description: "What is six times three?", Answer: 1}
-	id := "session-id"
-	m.sessions[id] = model.QuestionSession{
-		ExpiresAt: time.Now().Add(15 * time.Minute),
-		GroupID:   groupID,
-		Question:  q,
-	}
-	m.created = id
-	return id, q, nil
-}
-
-func (m *mockQuestionRepo) ConsumeSession(session string) (model.QuestionSession, bool, error) {
-	qs, ok := m.sessions[session]
-	if ok {
-		delete(m.sessions, session)
-	}
-	return qs, ok, nil
-}
-
-func (m *mockQuestionRepo) GetPermission(_ string) (uint, error) {
-	return m.perm, nil
 }
 
 func accessTokenFor(t *testing.T, username string) string {
@@ -216,7 +187,7 @@ func TestQuestionSvc_Answer_Correct(t *testing.T) {
 	r := newMockQuestionRepo(model.PermStudent)
 	s := NewQuestionSvc(r)
 	r.CreateSession(0) // seeds answer = 1
-	id := r.created
+	id := r.Created
 
 	data, status, err := s.Answer(accessTokenFor(t, "student"), id, 1)
 	if err != nil {
@@ -233,7 +204,7 @@ func TestQuestionSvc_Answer_Correct(t *testing.T) {
 		t.Error("expected correct=true")
 	}
 	// Session must be deleted (single-use).
-	if _, ok := r.sessions[id]; ok {
+	if _, ok := r.Sessions[id]; ok {
 		t.Error("expected session to be deleted after answering")
 	}
 }
@@ -244,7 +215,7 @@ func TestQuestionSvc_Answer_Wrong(t *testing.T) {
 	r := newMockQuestionRepo(model.PermStudent)
 	s := NewQuestionSvc(r)
 	r.CreateSession(0)
-	id := r.created
+	id := r.Created
 
 	data, status, err := s.Answer(accessTokenFor(t, "student"), id, 3)
 	if err != nil {
@@ -267,7 +238,7 @@ func TestQuestionSvc_Answer_StudentForbiddenInNormal(t *testing.T) {
 	r := newMockQuestionRepo(model.PermStudent)
 	s := NewQuestionSvc(r)
 	r.CreateSession(0)
-	id := r.created
+	id := r.Created
 
 	_, status, err := s.Answer(accessTokenFor(t, "student"), id, 1)
 	if err == nil {
@@ -277,7 +248,7 @@ func TestQuestionSvc_Answer_StudentForbiddenInNormal(t *testing.T) {
 		t.Fatalf("expected 403, got %d", status)
 	}
 	// The gate must reject before the session is consumed.
-	if _, ok := r.sessions[id]; !ok {
+	if _, ok := r.Sessions[id]; !ok {
 		t.Error("session must not be consumed when answering is forbidden")
 	}
 }
@@ -287,7 +258,7 @@ func TestQuestionSvc_Answer_TeacherAllowedInNormal(t *testing.T) {
 	r := newMockQuestionRepo(model.PermTeacher)
 	s := NewQuestionSvc(r)
 	r.CreateSession(0)
-	id := r.created
+	id := r.Created
 
 	_, status, err := s.Answer(accessTokenFor(t, "teacher"), id, 1)
 	if err != nil {
@@ -317,7 +288,7 @@ func TestQuestionSvc_Answer_Expired(t *testing.T) {
 	useState(t, model.StateQuiz)
 	r := newMockQuestionRepo(model.PermStudent)
 	s := NewQuestionSvc(r)
-	r.sessions["expired"] = model.QuestionSession{
+	r.Sessions["expired"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(-time.Minute),
 		Question:  model.Question{Answer: 1},
 	}

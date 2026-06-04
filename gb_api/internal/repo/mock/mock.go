@@ -5,15 +5,18 @@ package mock
 import (
 	"maps"
 	"sync"
+	"time"
 
 	apperr "gb-api/internal/error"
+	"gb-api/internal/model"
 	"gb-api/internal/repo"
 )
 
 var (
-	_ repo.AuthRepo  = (*AuthRepo)(nil)
-	_ repo.ItemRepo  = (*ItemRepo)(nil)
-	_ repo.GroupRepo = (*GroupRepo)(nil)
+	_ repo.AuthRepo     = (*AuthRepo)(nil)
+	_ repo.ItemRepo     = (*ItemRepo)(nil)
+	_ repo.GroupRepo    = (*GroupRepo)(nil)
+	_ repo.QuestionRepo = (*QuestionRepo)(nil)
 )
 
 // AuthRepo is an in-memory repo.AuthRepo.
@@ -118,4 +121,39 @@ func (m *GroupRepo) UserExists(username string) (bool, error) {
 
 func (m *GroupRepo) GetPermission(username string) (uint, error) {
 	return m.Permissions[username], nil
+}
+
+// QuestionRepo is an in-memory repo.QuestionRepo. Perm is the permission level
+// reported for every user; Created records the last session id handed out.
+type QuestionRepo struct {
+	Perm     uint
+	Sessions map[string]model.QuestionSession
+	Created  string
+}
+
+func (m *QuestionRepo) CreateSession(groupID uint) (string, model.Question, error) {
+	q := model.Question{Description: "What is six times three?", Answer: 1}
+	id := "session-id"
+	if m.Sessions == nil {
+		m.Sessions = map[string]model.QuestionSession{}
+	}
+	m.Sessions[id] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(15 * time.Minute),
+		GroupID:   groupID,
+		Question:  q,
+	}
+	m.Created = id
+	return id, q, nil
+}
+
+func (m *QuestionRepo) ConsumeSession(session string) (model.QuestionSession, bool, error) {
+	qs, ok := m.Sessions[session]
+	if ok {
+		delete(m.Sessions, session)
+	}
+	return qs, ok, nil
+}
+
+func (m *QuestionRepo) GetPermission(_ string) (uint, error) {
+	return m.Perm, nil
 }

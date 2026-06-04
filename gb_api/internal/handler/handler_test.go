@@ -7,85 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"gb-api/internal/handler"
 	"gb-api/internal/model"
-	"gb-api/internal/repo/mock"
-	"gb-api/internal/service"
 )
-
-// ---- test fixture ----
-
-type fixture struct {
-	auth      *handler.AuthHandler
-	item      *handler.ItemHandler
-	group     *handler.GroupHandler
-	groupRepo *mock.GroupRepo
-}
-
-func newFixture() *fixture {
-	authRepo := &mock.AuthRepo{Users: map[string]string{"user": "pass"}}
-	itemRepo := &mock.ItemRepo{
-		Inv:  map[uint]uint{1: 3, 2: 1},
-		Slot: map[uint]uint{0: 1},
-	}
-	groupRepo := &mock.GroupRepo{
-		UserGroups:  map[string]uint{"user": 0},
-		Users:       map[string]bool{"user": true},
-		Permissions: map[string]uint{"user": model.PermTeacher},
-	}
-	return &fixture{
-		auth:      handler.NewAuthHandler(service.NewAuthSvc(authRepo)),
-		item:      handler.NewItemHandler(service.NewItemSvc(itemRepo)),
-		group:     handler.NewGroupHandler(service.NewGroupSvc(groupRepo)),
-		groupRepo: groupRepo,
-	}
-}
-
-// login calls POST /api/login and returns the access token.
-func (f *fixture) login(t *testing.T) string {
-	t.Helper()
-	body, _ := json.Marshal(map[string]string{"username": "user", "password": "pass"})
-	req := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	f.auth.Login(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("login: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	var resp map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("login: invalid JSON: %v", err)
-	}
-	tok := resp["access_token"]
-	if tok == "" {
-		t.Fatal("login: empty access_token")
-	}
-	return tok
-}
-
-// do sends a request to fn with a Bearer token and JSON body, returns the recorder.
-func do(t *testing.T, fn http.HandlerFunc, token string, body map[string]any) *httptest.ResponseRecorder {
-	t.Helper()
-	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	rec := httptest.NewRecorder()
-	fn(rec, req)
-	return rec
-}
-
-// decodeMap parses a JSON object response into map[string]uint.
-func decodeMap(t *testing.T, rec *httptest.ResponseRecorder) map[string]uint {
-	t.Helper()
-	var m map[string]uint
-	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
-		t.Fatalf("decodeMap: %v — body: %s", err, rec.Body.String())
-	}
-	return m
-}
 
 // ---- auth handler tests ----
 
@@ -387,5 +310,142 @@ func TestAuthHandler_QueryUser_MissingToken(t *testing.T) {
 	rec := do(t, f.auth.QueryUser, "", nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("QueryUser without token: expected 401, got %d", rec.Code)
+	}
+}
+
+// ---- question handler: quiz state machine ----
+//
+// The quiz state is a package-level singleton in the service layer, so these
+// tests drive it through the SetState handler and restore NORMAL on cleanup.
+// State gate: students may only Generate/Answer while the state is QUIZ;
+// teachers and admins always may.
+
+// forceState sets the global quiz state via the SetState handler (which needs a
+// teacher), then restores the prior permission and resets to NORMAL on cleanup.
+func (f *fixture) forceState(t *testing.T, tok string, s model.ServerState) {
+	t.Helper()
+	prevPerm := f.questionRepo.Perm
+	f.questionRepo.Perm = model.PermTeacher
+	rec := do(t, f.question.SetState, tok, map[string]any{"state": string(s)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("forceState %q: expected 200, got %d: %s", s, rec.Code, rec.Body.String())
+	}
+	f.questionRepo.Perm = prevPerm
+	t.Cleanup(func() {
+		f.questionRepo.Perm = model.PermTeacher
+		do(t, f.question.SetState, tok, map[string]any{"state": string(model.StateNormal)})
+	})
+}
+
+func TestQuestionHandler_MissingToken(t *testing.T) {
+	f := newFixture()
+	cases := map[string]http.HandlerFunc{
+		"Generate": f.question.Generate,
+		"Answer":   f.question.Answer,
+		"GetState": f.question.GetState,
+		"SetState": f.question.SetState,
+	}
+	for name, fn := range cases {
+		rec := do(t, fn, "", map[string]any{"group_id": 0, "state": "QUIZ"})
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
+		}
+	}
+}
+
+func TestQuestionHandler_GetState_ReflectsTransitions(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	readState := func() model.ServerState {
+		rec := do(t, f.question.GetState, tok, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GetState: expected 200, got %d", rec.Code)
+		}
+		var resp model.StateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("GetState: invalid JSON: %v", err)
+		}
+		return resp.State
+	}
+
+	f.forceState(t, tok, model.StateQuiz)
+	if got := readState(); got != model.StateQuiz {
+		t.Errorf("after SetState QUIZ: expected QUIZ, got %q", got)
+	}
+
+	f.forceState(t, tok, model.StateNormal)
+	if got := readState(); got != model.StateNormal {
+		t.Errorf("after SetState NORMAL: expected NORMAL, got %q", got)
+	}
+}
+
+func TestQuestionHandler_StudentBlockedInNormalState(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+	f.forceState(t, tok, model.StateNormal)
+	f.questionRepo.Perm = model.PermStudent
+
+	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
+	if gen.Code != http.StatusForbidden {
+		t.Errorf("Generate as student in NORMAL: expected 403, got %d", gen.Code)
+	}
+	ans := do(t, f.question.Answer, tok, map[string]any{"session": "session-id", "answer": 1})
+	if ans.Code != http.StatusForbidden {
+		t.Errorf("Answer as student in NORMAL: expected 403, got %d", ans.Code)
+	}
+}
+
+func TestQuestionHandler_StudentAllowedInQuizState(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+	f.forceState(t, tok, model.StateQuiz)
+	f.questionRepo.Perm = model.PermStudent
+
+	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
+	if gen.Code != http.StatusOK {
+		t.Fatalf("Generate as student in QUIZ: expected 200, got %d: %s", gen.Code, gen.Body.String())
+	}
+	var qr model.QuestionResponse
+	if err := json.Unmarshal(gen.Body.Bytes(), &qr); err != nil {
+		t.Fatalf("Generate: invalid JSON: %v", err)
+	}
+	if qr.Session == "" {
+		t.Fatal("Generate: expected a session in response")
+	}
+
+	ans := do(t, f.question.Answer, tok, map[string]any{"session": qr.Session, "answer": 1})
+	if ans.Code != http.StatusOK {
+		t.Fatalf("Answer as student in QUIZ: expected 200, got %d: %s", ans.Code, ans.Body.String())
+	}
+	var ar model.AnswerResponse
+	if err := json.Unmarshal(ans.Body.Bytes(), &ar); err != nil {
+		t.Fatalf("Answer: invalid JSON: %v", err)
+	}
+	if !ar.Correct {
+		t.Error("Answer: expected correct=true for answer 1")
+	}
+}
+
+func TestQuestionHandler_TeacherAllowedInNormalState(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+	f.forceState(t, tok, model.StateNormal)
+	// permission stays PermTeacher (fixture default)
+
+	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
+	if gen.Code != http.StatusOK {
+		t.Errorf("Generate as teacher in NORMAL: expected 200, got %d: %s", gen.Code, gen.Body.String())
+	}
+}
+
+func TestQuestionHandler_SetState_StudentForbidden(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+	f.questionRepo.Perm = model.PermStudent
+
+	rec := do(t, f.question.SetState, tok, map[string]any{"state": "QUIZ"})
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("SetState as student: expected 403, got %d", rec.Code)
 	}
 }
