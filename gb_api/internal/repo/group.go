@@ -7,7 +7,7 @@ type GroupRepo interface {
 	GetUserGroup(username string) (uint, bool, error)
 	GetGroupMembers(groupID uint) ([]string, error)
 	UserExists(username string) (bool, error)
-	GetPermission(username string) (uint, error)
+	GetRole(username string) (uint, error)
 }
 
 type groupRepo struct{}
@@ -45,8 +45,8 @@ func (_ *groupRepo) UserExists(username string) (bool, error) {
 	return ok, nil
 }
 
-func (_ *groupRepo) GetPermission(username string) (uint, error) {
-	return mem_db.permissions[username], nil
+func (_ *groupRepo) GetRole(username string) (uint, error) {
+	return mem_db.roles[username], nil
 }
 
 func InitGroupRepo() GroupRepo {

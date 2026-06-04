@@ -20,9 +20,9 @@ type QuestionRepo interface {
 	CreateSession(groupID uint) (string, model.Question, error)
 	// ConsumeSession loads and deletes a session. ok is false when absent.
 	ConsumeSession(session string) (model.QuestionSession, bool, error)
-	// GetPermission returns a user's permission level; unknown users default to
-	// PermStudent (0).
-	GetPermission(username string) (uint, error)
+	// GetRole returns a user's role level; unknown users default to
+	// RoleStudent (0).
+	GetRole(username string) (uint, error)
 }
 
 type questionRepo struct{}
@@ -61,8 +61,8 @@ func (_ *questionRepo) ConsumeSession(session string) (model.QuestionSession, bo
 	return qs, ok, nil
 }
 
-func (_ *questionRepo) GetPermission(username string) (uint, error) {
-	return mem_db.permissions[username], nil
+func (_ *questionRepo) GetRole(username string) (uint, error) {
+	return mem_db.roles[username], nil
 }
 
 func InitQuestionRepo() QuestionRepo {

@@ -11,9 +11,9 @@ import (
 
 func newMockGroupRepo() *mock.GroupRepo {
 	return &mock.GroupRepo{
-		UserGroups:  map[string]uint{"alice": 1, "bob": 1, "carol": 2},
-		Users:       map[string]bool{"alice": true, "bob": true, "carol": true, "teacher": true, "student": true},
-		Permissions: map[string]uint{"teacher": model.PermTeacher, "student": model.PermStudent},
+		UserGroups: map[string]uint{"alice": 1, "bob": 1, "carol": 2},
+		Users:      map[string]bool{"alice": true, "bob": true, "carol": true, "teacher": true, "student": true},
+		Roles:      map[string]uint{"teacher": model.RoleTeacher, "student": model.RoleStudent},
 	}
 }
 

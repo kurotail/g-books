@@ -9,7 +9,6 @@ import (
 	"gb-api/internal/service"
 )
 
-
 func main() {
 	authRepo := repo.InitAuthRepo()
 	authSvc := service.NewAuthSvc(authRepo)
@@ -30,6 +29,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /api/login", authHandler.Login)
+	mux.HandleFunc("POST /api/register", authHandler.Register)
 	mux.HandleFunc("POST /api/refresh", authHandler.Refresh)
 	mux.HandleFunc("GET /api/users", authHandler.QueryUser)
 

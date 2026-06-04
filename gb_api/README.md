@@ -16,10 +16,10 @@ go run ./cmd/server
 
 ---
 
-## Permission
+## Role
 
-| user type | permission |
-|-----------|------------|
+| user type | role |
+|-----------|------|
 | Student   | 0          |
 | Teacher   | 1          |
 | Admin     | 2          |
@@ -47,6 +47,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | Method & path | Auth | Description |
 |---------------|------|-------------|
 | `POST /api/login` | — | Exchange credentials for a token pair |
+| `POST /api/register` | Bearer (> Student) | Register a new user (Student or Teacher; Admins cannot be created) |
 | `POST /api/refresh` | — | Rotate a refresh token into a new token pair |
 | `POST /api/item/inv` | Bearer | Read a group's inventory |
 | `POST /api/item/slot` | Bearer | Read a group's slots |
@@ -89,6 +90,42 @@ Authenticate with username and password.
 |--------|-----------|
 | `400`  | Malformed JSON body |
 | `401`  | Wrong username or password |
+
+---
+
+### `POST /api/register`
+
+Create a new user. The caller must present a valid access token and be a Teacher or
+Admin. Teachers and Admins may create Students (`0`) or Teachers (`1`);
+**Admins cannot be created via this endpoint**. The new user is not assigned to any
+group — use `POST /api/group/set` for that.
+
+Requires a valid access token:
+
+```
+Authorization: Bearer <access_token>
+```
+
+**Request** — `role` is `0` (Student) or `1` (Teacher)
+
+```json
+{
+  "username": "alice",
+  "password": "password123",
+  "role": 0
+}
+```
+
+**Response** — `201 Created` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `username` / `password` / `role` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller is a Student, or `role` is `2` (Admin) or higher |
+| `409`  | A user with that username already exists |
 
 ---
 
@@ -346,7 +383,7 @@ Transition the server state. Only Teachers and Admins may call it.
 |--------|-----------|
 | `400`  | Malformed JSON body, or a state other than `NORMAL` / `QUIZ` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller's permission is Student or lower |
+| `403`  | Caller's role is Student or lower |
 
 ---
 

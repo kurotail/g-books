@@ -22,6 +22,7 @@ var (
 // AuthRepo is an in-memory repo.AuthRepo.
 type AuthRepo struct {
 	Users         map[string]string
+	Roles         map[string]uint
 	RefreshTokens sync.Map
 }
 
@@ -46,6 +47,25 @@ func (m *AuthRepo) GetAllUsers() ([]string, error) {
 		users = append(users, username)
 	}
 	return users, nil
+}
+
+func (m *AuthRepo) GetRole(username string) (uint, error) {
+	return m.Roles[username], nil
+}
+
+func (m *AuthRepo) CreateUser(username, password string, role uint) error {
+	if _, ok := m.Users[username]; ok {
+		return apperr.ErrUserExists
+	}
+	if m.Users == nil {
+		m.Users = map[string]string{}
+	}
+	if m.Roles == nil {
+		m.Roles = map[string]uint{}
+	}
+	m.Users[username] = password
+	m.Roles[username] = role
+	return nil
 }
 
 // ItemRepo is an in-memory repo.ItemRepo.
@@ -90,9 +110,9 @@ func (m *ItemRepo) SetSlot(_, slotID, itemID uint) error {
 
 // GroupRepo is an in-memory repo.GroupRepo.
 type GroupRepo struct {
-	UserGroups  map[string]uint
-	Users       map[string]bool
-	Permissions map[string]uint
+	UserGroups map[string]uint
+	Users      map[string]bool
+	Roles      map[string]uint
 }
 
 func (m *GroupRepo) SetUserGroup(username string, groupID uint) error {
@@ -119,14 +139,14 @@ func (m *GroupRepo) UserExists(username string) (bool, error) {
 	return m.Users[username], nil
 }
 
-func (m *GroupRepo) GetPermission(username string) (uint, error) {
-	return m.Permissions[username], nil
+func (m *GroupRepo) GetRole(username string) (uint, error) {
+	return m.Roles[username], nil
 }
 
-// QuestionRepo is an in-memory repo.QuestionRepo. Perm is the permission level
+// QuestionRepo is an in-memory repo.QuestionRepo. Role is the role level
 // reported for every user; Created records the last session id handed out.
 type QuestionRepo struct {
-	Perm     uint
+	Role     uint
 	Sessions map[string]model.QuestionSession
 	Created  string
 }
@@ -154,6 +174,6 @@ func (m *QuestionRepo) ConsumeSession(session string) (model.QuestionSession, bo
 	return qs, ok, nil
 }
 
-func (m *QuestionRepo) GetPermission(_ string) (uint, error) {
-	return m.Perm, nil
+func (m *QuestionRepo) GetRole(_ string) (uint, error) {
+	return m.Role, nil
 }

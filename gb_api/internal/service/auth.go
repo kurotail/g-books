@@ -2,11 +2,13 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"gb-api/internal/config"
+	apperr "gb-api/internal/error"
 	"gb-api/internal/model"
 	"gb-api/internal/repo"
 
@@ -19,6 +21,7 @@ const (
 )
 
 var now = time.Now
+
 type AuthSvc struct {
 	repo repo.AuthRepo
 }
@@ -129,6 +132,30 @@ func (s *AuthSvc) QueryUser(accessToken string) ([]byte, int, error) {
 		return nil, http.StatusInternalServerError, err
 	}
 	return data, http.StatusOK, nil
+}
+
+func (s *AuthSvc) RegisterUser(accessToken, username, password string, role uint) (int, error) {
+	claims, err := validateAccessToken(accessToken)
+	if err != nil {
+		return http.StatusUnauthorized, err
+	}
+	callerRole, err := s.repo.GetRole(claims.Username)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if callerRole < model.RoleTeacher {
+		return http.StatusForbidden, fmt.Errorf("權限不足")
+	}
+	if role > model.RoleTeacher {
+		return http.StatusForbidden, fmt.Errorf("無法建立此權限的使用者")
+	}
+	if err := s.repo.CreateUser(username, password, role); err != nil {
+		if errors.Is(err, apperr.ErrUserExists) {
+			return http.StatusConflict, err
+		}
+		return http.StatusInternalServerError, err
+	}
+	return http.StatusCreated, nil
 }
 
 func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {

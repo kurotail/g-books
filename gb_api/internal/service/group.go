@@ -17,18 +17,16 @@ func NewGroupSvc(r repo.GroupRepo) *GroupSvc {
 	return &GroupSvc{repo: r}
 }
 
-// SetGroup assigns a user to a group. Only teachers and admins may call it, and
-// the target user must already exist.
 func (s *GroupSvc) SetGroup(accessToken, username string, groupID uint) (int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return http.StatusUnauthorized, err
 	}
-	perm, err := s.repo.GetPermission(claims.Username)
+	role, err := s.repo.GetRole(claims.Username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if perm <= model.PermStudent {
+	if role <= model.RoleStudent {
 		return http.StatusForbidden, fmt.Errorf("權限不足")
 	}
 	ok, err := s.repo.UserExists(username)

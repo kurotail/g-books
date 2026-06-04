@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	
+
 	"gb-api/internal/handler"
 	"gb-api/internal/model"
 	"gb-api/internal/repo/mock"
@@ -20,23 +20,27 @@ type fixture struct {
 	item         *handler.ItemHandler
 	group        *handler.GroupHandler
 	question     *handler.QuestionHandler
+	authRepo     *mock.AuthRepo
 	groupRepo    *mock.GroupRepo
 	questionRepo *mock.QuestionRepo
 }
 
 func newFixture() *fixture {
-	authRepo := &mock.AuthRepo{Users: map[string]string{"user": "pass"}}
+	authRepo := &mock.AuthRepo{
+		Users: map[string]string{"user": "pass"},
+		Roles: map[string]uint{"user": model.RoleTeacher},
+	}
 	itemRepo := &mock.ItemRepo{
 		Inv:  map[uint]uint{1: 3, 2: 1},
 		Slot: map[uint]uint{0: 1},
 	}
 	groupRepo := &mock.GroupRepo{
-		UserGroups:  map[string]uint{"user": 0},
-		Users:       map[string]bool{"user": true},
-		Permissions: map[string]uint{"user": model.PermTeacher},
+		UserGroups: map[string]uint{"user": 0},
+		Users:      map[string]bool{"user": true},
+		Roles:      map[string]uint{"user": model.RoleTeacher},
 	}
 	questionRepo := &mock.QuestionRepo{
-		Perm:     model.PermTeacher,
+		Role:     model.RoleTeacher,
 		Sessions: map[string]model.QuestionSession{},
 	}
 	return &fixture{
@@ -44,6 +48,7 @@ func newFixture() *fixture {
 		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo)),
 		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo)),
 		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo)),
+		authRepo:     authRepo,
 		groupRepo:    groupRepo,
 		questionRepo: questionRepo,
 	}

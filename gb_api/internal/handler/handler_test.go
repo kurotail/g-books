@@ -61,6 +61,106 @@ func TestAuthHandler_Login_InvalidJSON(t *testing.T) {
 	}
 }
 
+// ---- auth handler: Register ----
+
+func TestAuthHandler_Register_TeacherCreatesStudent(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.auth.Register, tok, map[string]any{"username": "alice", "password": "pw", "role": 0})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// the new user should now show up in QueryUser
+	rec = do(t, f.auth.QueryUser, tok, nil)
+	var ur model.UsersResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &ur); err != nil {
+		t.Fatalf("QueryUser: invalid JSON: %v", err)
+	}
+	found := false
+	for _, u := range ur.Users {
+		if u == "alice" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected alice in users, got %v", ur.Users)
+	}
+}
+
+func TestAuthHandler_Register_TeacherCreatesTeacher(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.auth.Register, tok, map[string]any{"username": "bob", "password": "pw", "role": 1})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if f.authRepo.Roles["bob"] != model.RoleTeacher {
+		t.Errorf("expected bob to be a teacher, got %d", f.authRepo.Roles["bob"])
+	}
+}
+
+func TestAuthHandler_Register_StudentForbidden(t *testing.T) {
+	f := newFixture()
+	f.authRepo.Roles["user"] = model.RoleStudent
+	tok := f.login(t)
+
+	rec := do(t, f.auth.Register, tok, map[string]any{"username": "alice", "password": "pw", "role": 0})
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("student caller: expected 403, got %d", rec.Code)
+	}
+}
+
+func TestAuthHandler_Register_CannotCreateAdmin(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.auth.Register, tok, map[string]any{"username": "root", "password": "pw", "role": 2})
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("create admin: expected 403, got %d", rec.Code)
+	}
+}
+
+func TestAuthHandler_Register_DuplicateUser(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.auth.Register, tok, map[string]any{"username": "user", "password": "pw", "role": 0})
+	if rec.Code != http.StatusConflict {
+		t.Errorf("duplicate user: expected 409, got %d", rec.Code)
+	}
+}
+
+func TestAuthHandler_Register_MissingToken(t *testing.T) {
+	f := newFixture()
+	rec := do(t, f.auth.Register, "", map[string]any{"username": "alice", "password": "pw", "role": 0})
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("missing token: expected 401, got %d", rec.Code)
+	}
+}
+
+func TestAuthHandler_Register_MissingFields(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{"no username", map[string]any{"password": "pw", "role": 0}},
+		{"no password", map[string]any{"username": "alice", "role": 0}},
+		{"no role", map[string]any{"username": "alice", "password": "pw"}},
+	}
+	for _, c := range cases {
+		rec := do(t, f.auth.Register, tok, c.body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d", c.name, rec.Code)
+		}
+	}
+}
+
 // ---- item handler: request validation ----
 
 func TestItemHandler_MissingToken(t *testing.T) {
@@ -240,7 +340,7 @@ func TestGroupHandler_SetGroup_MissingUsername(t *testing.T) {
 
 func TestGroupHandler_SetGroup_StudentForbidden(t *testing.T) {
 	f := newFixture()
-	f.groupRepo.Permissions["user"] = model.PermStudent
+	f.groupRepo.Roles["user"] = model.RoleStudent
 	tok := f.login(t)
 
 	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 3, "username": "user"})
@@ -321,18 +421,18 @@ func TestAuthHandler_QueryUser_MissingToken(t *testing.T) {
 // teachers and admins always may.
 
 // forceState sets the global quiz state via the SetState handler (which needs a
-// teacher), then restores the prior permission and resets to NORMAL on cleanup.
+// teacher), then restores the prior role and resets to NORMAL on cleanup.
 func (f *fixture) forceState(t *testing.T, tok string, s model.ServerState) {
 	t.Helper()
-	prevPerm := f.questionRepo.Perm
-	f.questionRepo.Perm = model.PermTeacher
+	prevRole := f.questionRepo.Role
+	f.questionRepo.Role = model.RoleTeacher
 	rec := do(t, f.question.SetState, tok, map[string]any{"state": string(s)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("forceState %q: expected 200, got %d: %s", s, rec.Code, rec.Body.String())
 	}
-	f.questionRepo.Perm = prevPerm
+	f.questionRepo.Role = prevRole
 	t.Cleanup(func() {
-		f.questionRepo.Perm = model.PermTeacher
+		f.questionRepo.Role = model.RoleTeacher
 		do(t, f.question.SetState, tok, map[string]any{"state": string(model.StateNormal)})
 	})
 }
@@ -384,7 +484,7 @@ func TestQuestionHandler_StudentBlockedInNormalState(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateNormal)
-	f.questionRepo.Perm = model.PermStudent
+	f.questionRepo.Role = model.RoleStudent
 
 	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
 	if gen.Code != http.StatusForbidden {
@@ -400,7 +500,7 @@ func TestQuestionHandler_StudentAllowedInQuizState(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateQuiz)
-	f.questionRepo.Perm = model.PermStudent
+	f.questionRepo.Role = model.RoleStudent
 
 	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
 	if gen.Code != http.StatusOK {
@@ -431,7 +531,7 @@ func TestQuestionHandler_TeacherAllowedInNormalState(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateNormal)
-	// permission stays PermTeacher (fixture default)
+	// role stays RoleTeacher (fixture default)
 
 	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
 	if gen.Code != http.StatusOK {
@@ -442,7 +542,7 @@ func TestQuestionHandler_TeacherAllowedInNormalState(t *testing.T) {
 func TestQuestionHandler_SetState_StudentForbidden(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
-	f.questionRepo.Perm = model.PermStudent
+	f.questionRepo.Role = model.RoleStudent
 
 	rec := do(t, f.question.SetState, tok, map[string]any{"state": "QUIZ"})
 	if rec.Code != http.StatusForbidden {

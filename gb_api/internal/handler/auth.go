@@ -12,7 +12,7 @@ type AuthHandler struct {
 	svc *service.AuthSvc
 }
 
-func NewAuthHandler(s *service.AuthSvc) *AuthHandler{
+func NewAuthHandler(s *service.AuthSvc) *AuthHandler {
 	return &AuthHandler{svc: s}
 }
 
@@ -53,6 +53,33 @@ func (h *AuthHandler) QueryUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, data)
+}
+
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if req.Username == "" || req.Password == "" {
+		http.Error(w, "缺少 username 或 password", http.StatusBadRequest)
+		return
+	}
+	if req.Role == nil {
+		http.Error(w, "缺少 role", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.RegisterUser(token, req.Username, req.Password, *req.Role)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(status)
 }
 
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {

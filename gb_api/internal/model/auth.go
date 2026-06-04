@@ -17,13 +17,19 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+type RegisterRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Role     *uint  `json:"role"` // 0=student, 1=teacher; required
+}
+
 type UsersResponse struct {
 	Users []string `json:"users"`
 }
 
-// Permission levels (see README).
+// Role levels (see README).
 const (
-	PermStudent uint = 0
-	PermTeacher uint = 1
-	PermAdmin   uint = 2
+	RoleStudent uint = 0
+	RoleTeacher uint = 1
+	RoleAdmin   uint = 2
 )

@@ -6,9 +6,6 @@ import (
 	"gb-api/internal/model"
 )
 
-// state is the global quiz state machine, maintained in-process by the service
-// layer. Students may only generate or answer questions while it is StateQuiz;
-// teachers and admins are unaffected.
 var (
 	stateMu sync.RWMutex
 	state   = model.StateNormal
@@ -26,8 +23,6 @@ func setState(s model.ServerState) {
 	state = s
 }
 
-// studentBlockedByState reports whether a caller of the given permission is
-// barred from question operations by the current state (students outside QUIZ).
-func studentBlockedByState(perm uint) bool {
-	return perm <= model.PermStudent && getState() != model.StateQuiz
+func studentBlockedByState(role uint) bool {
+	return role <= model.RoleStudent && getState() != model.StateQuiz
 }

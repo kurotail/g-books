@@ -18,20 +18,18 @@ func NewQuestionSvc(r repo.QuestionRepo) *QuestionSvc {
 	return &QuestionSvc{repo: r}
 }
 
-// Generate issues a new question session. Only users with permission higher
-// than Student may call it.
 func (s *QuestionSvc) Generate(accessToken string, groupID uint) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	perm, err := s.repo.GetPermission(claims.Username)
+	role, err := s.repo.GetRole(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 	// Teachers and admins may always generate; students only while the server
 	// is in QUIZ state.
-	if studentBlockedByState(perm) {
+	if studentBlockedByState(role) {
 		return nil, http.StatusForbidden, fmt.Errorf("NORMAL 狀態下學生無法產生題目")
 	}
 	id, q, err := s.repo.CreateSession(groupID)
@@ -45,19 +43,16 @@ func (s *QuestionSvc) Generate(accessToken string, groupID uint) ([]byte, int, e
 	return data, http.StatusOK, nil
 }
 
-// Answer checks the submitted answer against a session, deletes the session
-// (single-use), and reports whether the answer was correct. Teachers and admins
-// may always answer; students only while the server is in QUIZ state.
 func (s *QuestionSvc) Answer(accessToken, session string, ans uint) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	perm, err := s.repo.GetPermission(claims.Username)
+	role, err := s.repo.GetRole(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	if studentBlockedByState(perm) {
+	if studentBlockedByState(role) {
 		return nil, http.StatusForbidden, fmt.Errorf("NORMAL 狀態下學生無法作答")
 	}
 	qs, ok, err := s.repo.ConsumeSession(session)
@@ -77,7 +72,6 @@ func (s *QuestionSvc) Answer(accessToken, session string, ans uint) ([]byte, int
 	return data, http.StatusOK, nil
 }
 
-// GetState returns the current global quiz state. Any authenticated user may read it.
 func (s *QuestionSvc) GetState(accessToken string) ([]byte, int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return nil, http.StatusUnauthorized, err
@@ -89,17 +83,16 @@ func (s *QuestionSvc) GetState(accessToken string) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
-// SetState transitions the global quiz state. Only teachers and admins may call it.
 func (s *QuestionSvc) SetState(accessToken string, state model.ServerState) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	perm, err := s.repo.GetPermission(claims.Username)
+	role, err := s.repo.GetRole(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	if perm <= model.PermStudent {
+	if role <= model.RoleStudent {
 		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
 	}
 	if state != model.StateNormal && state != model.StateQuiz {

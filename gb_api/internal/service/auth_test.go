@@ -14,6 +14,7 @@ import (
 func newMockAuthRepo() *mock.AuthRepo {
 	return &mock.AuthRepo{
 		Users: map[string]string{"user": "password123"},
+		Roles: map[string]uint{"user": model.RoleTeacher},
 	}
 }
 
@@ -124,6 +125,79 @@ func TestLoginByName_WrongUsername(t *testing.T) {
 	}
 }
 
+func TestRegisterUser_TeacherCreatesStudent(t *testing.T) {
+	useAdvancingClock(t)
+	repo := newMockAuthRepo()
+	s := NewAuthSvc(repo)
+
+	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleStudent)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", status)
+	}
+	if repo.Users["alice"] != "pw" {
+		t.Errorf("expected alice to be created with password pw, got %q", repo.Users["alice"])
+	}
+	if repo.Roles["alice"] != model.RoleStudent {
+		t.Errorf("expected alice role %d, got %d", model.RoleStudent, repo.Roles["alice"])
+	}
+}
+
+func TestRegisterUser_StudentForbidden(t *testing.T) {
+	useAdvancingClock(t)
+	repo := newMockAuthRepo()
+	repo.Roles["user"] = model.RoleStudent
+	s := NewAuthSvc(repo)
+
+	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleStudent)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestRegisterUser_CannotCreateAdmin(t *testing.T) {
+	useAdvancingClock(t)
+	s := NewAuthSvc(newMockAuthRepo())
+
+	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleAdmin)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestRegisterUser_DuplicateUser(t *testing.T) {
+	useAdvancingClock(t)
+	s := NewAuthSvc(newMockAuthRepo())
+
+	status, err := s.RegisterUser(tokenFor(t, "user"), "user", "pw", model.RoleStudent)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", status)
+	}
+}
+
+func TestRegisterUser_InvalidToken(t *testing.T) {
+	s := NewAuthSvc(newMockAuthRepo())
+
+	status, err := s.RegisterUser("invalid.token", "alice", "pw", model.RoleStudent)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
+}
+
 func TestRefreshTokens_ValidToken(t *testing.T) {
 	useAdvancingClock(t)
 	s := newTestAuthSvc()
@@ -190,4 +264,3 @@ func TestRefreshTokens_AccessTokenRejected(t *testing.T) {
 		t.Fatalf("expected 401, got %d", status)
 	}
 }
-
