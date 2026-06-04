@@ -1,14 +1,29 @@
 package repo
 
 import (
+	"gb-api/internal/model"
 	"sync"
+	"time"
 )
+
+var questionList = []model.Question{
+	{
+		Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
+		Answer: 1,
+	},
+	{
+		Description: "Who is F\n(a)HRM\n(b)M's child\n(c)White cat\n(d)O's Big sis",
+		Answer: 0,
+	},
+}
 
 type memAuthRepo struct {
 	users         map[string]string // username -> password
 	refreshTokens sync.Map
 	groupInv      map[uint]uint // itemID -> itemCount
 	groupSlot   map[uint]uint // slotID -> itemID
+	questions    map[string]model.QuestionSession
+	permissions  map[string]uint // username -> permission
 }
 
 var mem_db = memAuthRepo{
@@ -24,6 +39,19 @@ var mem_db = memAuthRepo{
 		0: 1,
 		2: 3,
 		5: 0,
+	},
+	questions: map[string]model.QuestionSession{
+		"0123456789abcdef0123456789abcdef": {
+			ExpiresAt: time.Now().Add(15*time.Minute),
+			GroupID: 0,
+			Question: model.Question{
+				Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
+				Answer: 1,
+			},
+		},
+	},
+	permissions: map[string]uint{
+		"user": model.PermTeacher,
 	},
 }
 

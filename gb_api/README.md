@@ -16,6 +16,16 @@ go run ./cmd/server
 
 ---
 
+## Permission
+
+| user type | permission |
+|-----------|------------|
+| Student   | 0          |
+| Teacher   | 1          |
+| Admin     | 2          |
+
+---
+
 ## Authentication flow
 
 ```
@@ -42,6 +52,10 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/item/slot` | Bearer | Read a group's slots |
 | `POST /api/item/inv2slot` | Bearer | Move one item from inventory into a slot |
 | `POST /api/item/slot2inv` | Bearer | Return a slotted item to the inventory |
+| `POST /api/question/generate` | Bearer | Issue a random question + single-use session (students only in `QUIZ` state) |
+| `POST /api/question/answer` | Bearer | Answer a question session (students only in `QUIZ` state); returns whether it was correct |
+| `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ`) |
+| `POST /api/state` | Bearer (> Student) | Transition the server state |
 
 ---
 
@@ -209,6 +223,130 @@ one and the slot is cleared.
 |--------|-----------|
 | `400`  | Malformed JSON body, or a required field (`item_id` / `slot_id`) is missing |
 | `401`  | Missing or malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+## Questions
+
+A quiz flow split into two steps:
+
+- `generate` picks a random question and opens a **single-use session** (15 min TTL).
+- `answer` submits a session's answer. The session is **deleted on use** and the
+  server replies whether the answer was correct.
+
+Both are gated by the **server state machine** (see below): Teachers and Admins may
+always generate and answer, while Students may only do so while the server is in `QUIZ`
+state.
+
+### Server state machine
+
+The server holds a single global state, either `NORMAL` (default) or `QUIZ`,
+maintained in-process by the service layer:
+
+| State    | Student `generate` / `answer` | Teacher / Admin |
+|----------|-------------------------------|-----------------|
+| `NORMAL` | ❌ `403`                      | ✅              |
+| `QUIZ`   | ✅                            | ✅              |
+
+Read the state with `GET /api/state`; transition it with `POST /api/state`
+(Teacher / Admin only).
+
+Both endpoints require a valid access token:
+
+```
+Authorization: Bearer <access_token>
+```
+
+### `POST /api/question/generate`
+
+Issue a new question session.
+
+**Request**
+
+```json
+{ "group_id": 0 }
+```
+
+**Response `200 OK`** — the question text and its session ID (the answer is never returned)
+
+```json
+{
+  "session": "0123456789abcdef0123456789abcdef",
+  "description": "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller is a Student and the server is in `NORMAL` state |
+
+---
+
+### `POST /api/question/answer`
+
+Answer a question session. The answer is the zero-based index of the chosen option.
+
+**Request**
+
+```json
+{ "session": "0123456789abcdef0123456789abcdef", "answer": 1 }
+```
+
+**Response `200 OK`**
+
+```json
+{ "correct": true }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, missing `session`, or the session is unknown/already used/expired |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller is a Student and the server is in `NORMAL` state |
+
+---
+
+### `GET /api/state`
+
+Read the current server state.
+
+**Response `200 OK`**
+
+```json
+{ "state": "NORMAL" }
+```
+
+---
+
+### `POST /api/state`
+
+Transition the server state. Only Teachers and Admins may call it.
+
+**Request**
+
+```json
+{ "state": "QUIZ" }
+```
+
+**Response `200 OK`**
+
+```json
+{ "state": "QUIZ" }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a state other than `NORMAL` / `QUIZ` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's permission is Student or lower |
 
 ---
 

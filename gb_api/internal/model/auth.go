@@ -1,8 +1,6 @@
 package model
 
-import (
-	"github.com/golang-jwt/jwt/v5"
-)
+import "github.com/golang-jwt/jwt/v5"
 
 type Credential struct {
 	Username string `json:"username"`
@@ -19,9 +17,9 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-type ItemOperation struct {
-	AccessToken string `json:"access_token"`
-	GroupID      uint  `json:"group_id"`
-	ItemID      *uint  `json:"item_id"`
-	SlotID      *uint  `json:"slot_id"`
-}
+// Permission levels (see README).
+const (
+	PermStudent uint = 0
+	PermTeacher uint = 1
+	PermAdmin   uint = 2
+)

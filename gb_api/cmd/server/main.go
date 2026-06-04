@@ -19,6 +19,10 @@ func main() {
 	itemSvc := service.NewItemSvc(itemRepo)
 	itemHandler := handler.NewItemHandler(itemSvc)
 
+	questionRepo := repo.InitQuestionRepo()
+	questionSvc := service.NewQuestionSvc(questionRepo)
+	questionHandler := handler.NewQuestionHandler(questionSvc)
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /api/login", authHandler.Login)
@@ -28,6 +32,12 @@ func main() {
 	mux.HandleFunc("POST /api/item/slot", itemHandler.QuerySlot)
 	mux.HandleFunc("POST /api/item/inv2slot", itemHandler.TranInv2Slot)
 	mux.HandleFunc("POST /api/item/slot2inv", itemHandler.TranSlot2Inv)
+
+	mux.HandleFunc("POST /api/question/generate", questionHandler.Generate)
+	mux.HandleFunc("POST /api/question/answer", questionHandler.Answer)
+
+	mux.HandleFunc("GET /api/state", questionHandler.GetState)
+	mux.HandleFunc("POST /api/state", questionHandler.SetState)
 
 	log.Println("伺服器已啟動，監聽埠號 :8080...")
 	if err := http.ListenAndServe(":8080", mux); err != nil {
