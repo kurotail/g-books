@@ -6,8 +6,3 @@ type ItemOperation struct {
 	ItemID      *uint  `json:"item_id"`
 	SlotID      *uint  `json:"slot_id"`
 }
-
-type GroupItem struct {
-	GroupInv  map[uint]uint // itemID -> itemCount
-	GroupSlot map[uint]uint // slotID -> itemID
-}

@@ -4,15 +4,12 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	mrand "math/rand"
-	"sync"
 	"time"
 
 	"gb-api/internal/model"
 )
 
 const sessionTTL = 15 * time.Minute
-
-var questionMu sync.Mutex
 
 type QuestionRepo interface {
 	// CreateSession picks a random question, stores a single-use session for it,
@@ -41,9 +38,9 @@ func (_ *questionRepo) CreateSession(groupID uint) (string, model.Question, erro
 	if err != nil {
 		return "", model.Question{}, err
 	}
-	questionMu.Lock()
-	defer questionMu.Unlock()
-	mem_db.questions[id] = model.QuestionSession{
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.sessions[id] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(sessionTTL),
 		GroupID:   groupID,
 		Question:  q,
@@ -52,17 +49,19 @@ func (_ *questionRepo) CreateSession(groupID uint) (string, model.Question, erro
 }
 
 func (_ *questionRepo) ConsumeSession(session string) (model.QuestionSession, bool, error) {
-	questionMu.Lock()
-	defer questionMu.Unlock()
-	qs, ok := mem_db.questions[session]
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	qs, ok := db.sessions[session]
 	if ok {
-		delete(mem_db.questions, session)
+		delete(db.sessions, session)
 	}
 	return qs, ok, nil
 }
 
 func (_ *questionRepo) GetRole(username string) (uint, error) {
-	return mem_db.roles[username], nil
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return roleOf(username), nil
 }
 
 func InitQuestionRepo() QuestionRepo {

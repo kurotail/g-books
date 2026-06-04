@@ -1,8 +1,6 @@
 package repo
 
 import (
-	"sync"
-
 	apperr "gb-api/internal/error"
 )
 
@@ -15,26 +13,41 @@ type ItemRepo interface {
 
 type itemRepo struct{}
 
-var itemMu sync.RWMutex
+// group returns the group row for groupID, creating an empty one if absent.
+// Callers must hold db.mu.Lock.
+func group(groupID uint) *Group {
+	g := db.groups[groupID]
+	if g == nil {
+		g = &Group{
+			ID:        groupID,
+			Inventory: make(map[uint]uint),
+			Slots:     make(map[uint]uint),
+		}
+		db.groups[groupID] = g
+	}
+	return g
+}
 
 func (_ *itemRepo) QueryInv(groupID uint) (map[uint]uint, error) {
-	itemMu.RLock()
-	defer itemMu.RUnlock()
-	inv := mem_db.groupItem[groupID].GroupInv
-	result := make(map[uint]uint, len(inv))
-	for k, v := range inv {
-		result[k] = v
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	result := make(map[uint]uint)
+	if g := db.groups[groupID]; g != nil {
+		for k, v := range g.Inventory {
+			result[k] = v
+		}
 	}
 	return result, nil
 }
 
 func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]uint, error) {
-	itemMu.RLock()
-	defer itemMu.RUnlock()
-	slot := mem_db.groupItem[groupID].GroupSlot
-	result := make(map[uint]uint, len(slot))
-	for k, v := range slot {
-		result[k] = v
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	result := make(map[uint]uint)
+	if g := db.groups[groupID]; g != nil {
+		for k, v := range g.Slots {
+			result[k] = v
+		}
 	}
 	return result, nil
 }
@@ -44,38 +57,30 @@ func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]uint, error) {
 // count below zero is rejected with ErrInsufficientStock; reaching exactly zero
 // removes the item.
 func (_ *itemRepo) ChangeInv(groupID, itemID uint, delta int) error {
-	itemMu.Lock()
-	defer itemMu.Unlock()
-	group := mem_db.groupItem[groupID]
-	if group.GroupInv == nil {
-		group.GroupInv = make(map[uint]uint)
-	}
-	next := int(group.GroupInv[itemID]) + delta
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	g := group(groupID)
+	next := int(g.Inventory[itemID]) + delta
 	if next < 0 {
 		return apperr.ErrInsufficientStock
 	}
 	if next == 0 {
-		delete(group.GroupInv, itemID)
+		delete(g.Inventory, itemID)
 	} else {
-		group.GroupInv[itemID] = uint(next)
+		g.Inventory[itemID] = uint(next)
 	}
-	mem_db.groupItem[groupID] = group
 	return nil
 }
 
 func (_ *itemRepo) SetSlot(groupID, slotID, itemID uint) error {
-	itemMu.Lock()
-	defer itemMu.Unlock()
-	group := mem_db.groupItem[groupID]
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	g := group(groupID)
 	if itemID == 0 {
-		delete(group.GroupSlot, slotID)
+		delete(g.Slots, slotID)
 		return nil
 	}
-	if group.GroupSlot == nil {
-		group.GroupSlot = make(map[uint]uint)
-	}
-	group.GroupSlot[slotID] = itemID
-	mem_db.groupItem[groupID] = group
+	g.Slots[slotID] = itemID
 	return nil
 }
 
