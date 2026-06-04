@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	apperr "gb-api/internal/error"
 	"gb-api/internal/handler"
 	"gb-api/internal/service"
 )
@@ -55,11 +56,15 @@ func (m *mockItemRepo) QuerySlot(_ uint) (map[uint]uint, error) {
 	return result, nil
 }
 
-func (m *mockItemRepo) SetInv(_, itemID, itemCount uint) error {
-	if itemCount == 0 {
+func (m *mockItemRepo) ChangeInv(_, itemID uint, delta int) error {
+	next := int(m.inv[itemID]) + delta
+	if next < 0 {
+		return apperr.ErrInsufficientStock
+	}
+	if next == 0 {
 		delete(m.inv, itemID)
 	} else {
-		m.inv[itemID] = itemCount
+		m.inv[itemID] = uint(next)
 	}
 	return nil
 }
@@ -214,9 +219,6 @@ func TestItemHandler_MissingFields(t *testing.T) {
 		fn   http.HandlerFunc
 		body map[string]any
 	}{
-		{"DeleteSlotItem no slot_id", f.item.DeleteSlotItem, map[string]any{"group_id": 0}},
-		{"IncreaseInvItem no item_id", f.item.IncreaseInvItem, map[string]any{"group_id": 0, "item_count": 1}},
-		{"IncreaseInvItem no item_count", f.item.IncreaseInvItem, map[string]any{"group_id": 0, "item_id": 1}},
 		{"TranInv2Slot no slot_id", f.item.TranInv2Slot, map[string]any{"group_id": 0, "item_id": 1}},
 		{"TranInv2Slot no item_id", f.item.TranInv2Slot, map[string]any{"group_id": 0, "slot_id": 5}},
 		{"TranSlot2Inv no slot_id", f.item.TranSlot2Inv, map[string]any{"group_id": 0}},
@@ -237,9 +239,8 @@ func TestItemHandler_MissingFields(t *testing.T) {
 //  step 2  QueryInv + QuerySlot          -> verify
 //  step 3  TranSlot2Inv(slot=0)          -> inv={1:3, 2:1}  slot={5:1}
 //  step 4  QueryInv + QuerySlot          -> verify
-//  step 5  IncreaseInvItem(item=2, +3)   -> inv={1:3, 2:4}
-//  step 6  DeleteSlotItem(slot=5)        -> slot={}
-//  step 7  Final QueryInv + QuerySlot    -> verify
+//  step 5  TranSlot2Inv(slot=5)          -> inv={1:4, 2:1}  slot={}
+//  step 6  Final QueryInv + QuerySlot    -> verify
 
 func TestItemHandler_StateTransitions(t *testing.T) {
 	f := newFixture()
@@ -298,38 +299,26 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 		t.Errorf("step4: expected slot[5]==1 (unchanged), got %d", slot["5"])
 	}
 
-	// step 5: add 3 more of item 2
-	rec = do(t, f.item.IncreaseInvItem, tok, map[string]any{"group_id": 0, "item_id": 2, "item_count": 3})
+	// step 5: return item 1 from slot 5 to inventory, clearing the slot
+	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 0, "slot_id": 5})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("step5 IncreaseInvItem: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("step5 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 0})
-	inv = decodeMap(t, rec)
-	if inv["2"] != 4 {
-		t.Errorf("step5: expected inv[2]==4, got %d", inv["2"])
-	}
-
-	// step 6: clear slot 5
-	rec = do(t, f.item.DeleteSlotItem, tok, map[string]any{"group_id": 0, "slot_id": 5})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("step6 DeleteSlotItem: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	// step 7: final state — slot empty, inv={1:3, 2:4}
+	// step 6: final state — slot empty, inv={1:4, 2:1}
 	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 0})
 	slot = decodeMap(t, rec)
 	if len(slot) != 0 {
-		t.Errorf("step7: expected empty slot map, got %v", slot)
+		t.Errorf("step6: expected empty slot map, got %v", slot)
 	}
 
 	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 0})
 	inv = decodeMap(t, rec)
-	if inv["1"] != 3 {
-		t.Errorf("step7: expected inv[1]==3, got %d", inv["1"])
+	if inv["1"] != 4 {
+		t.Errorf("step6: expected inv[1]==4, got %d", inv["1"])
 	}
-	if inv["2"] != 4 {
-		t.Errorf("step7: expected inv[2]==4, got %d", inv["2"])
+	if inv["2"] != 1 {
+		t.Errorf("step6: expected inv[2]==1, got %d", inv["2"])
 	}
 }
 

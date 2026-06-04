@@ -69,52 +69,6 @@ func (h *ItemHandler) QuerySlot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
-func (h *ItemHandler) DeleteSlotItem(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	op, err := decodeItemOp(r)
-	if err != nil {
-		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	if op.SlotID == nil {
-		http.Error(w, "缺少 slot_id", http.StatusBadRequest)
-		return
-	}
-	status, err := h.svc.DeleteSlotItem(token, op.GroupID, *op.SlotID)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	w.WriteHeader(status)
-}
-
-func (h *ItemHandler) IncreaseInvItem(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	op, err := decodeItemOp(r)
-	if err != nil {
-		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	if op.ItemID == nil || op.ItemCount == nil {
-		http.Error(w, "缺少 item_id 或 item_count", http.StatusBadRequest)
-		return
-	}
-	status, err := h.svc.IncreaseInvItem(token, op.GroupID, *op.ItemID, *op.ItemCount)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	w.WriteHeader(status)
-}
-
 func (h *ItemHandler) TranInv2Slot(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {

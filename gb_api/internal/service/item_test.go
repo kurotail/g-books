@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	apperr "gb-api/internal/error"
 )
 
 type mockItemRepo struct {
@@ -34,11 +36,15 @@ func (m *mockItemRepo) QuerySlot(_ uint) (map[uint]uint, error) {
 	return result, nil
 }
 
-func (m *mockItemRepo) SetInv(_, itemID, itemCount uint) error {
-	if itemCount == 0 {
+func (m *mockItemRepo) ChangeInv(_, itemID uint, delta int) error {
+	next := int(m.inv[itemID]) + delta
+	if next < 0 {
+		return apperr.ErrInsufficientStock
+	}
+	if next == 0 {
 		delete(m.inv, itemID)
 	} else {
-		m.inv[itemID] = itemCount
+		m.inv[itemID] = uint(next)
 	}
 	return nil
 }
@@ -131,80 +137,6 @@ func TestItemSvc_QuerySlot_ValidToken(t *testing.T) {
 func TestItemSvc_QuerySlot_InvalidToken(t *testing.T) {
 	s, _ := newItemSvc(t)
 	_, status, err := s.QuerySlot("invalid.token", 0)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if status != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", status)
-	}
-}
-
-// --- DeleteSlotItem ---
-
-func TestItemSvc_DeleteSlotItem_RemovesSlot(t *testing.T) {
-	useAdvancingClock(t)
-	s, r := newItemSvc(t)
-
-	status, err := s.DeleteSlotItem(validAccessToken(t), 0, 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-	if _, ok := r.slot[0]; ok {
-		t.Error("expected slot 0 to be removed")
-	}
-}
-
-func TestItemSvc_DeleteSlotItem_InvalidToken(t *testing.T) {
-	s, _ := newItemSvc(t)
-	status, err := s.DeleteSlotItem("bad.token", 0, 0)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if status != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", status)
-	}
-}
-
-// --- IncreaseInvItem ---
-
-func TestItemSvc_IncreaseInvItem_ExistingItem(t *testing.T) {
-	useAdvancingClock(t)
-	s, r := newItemSvc(t)
-
-	status, err := s.IncreaseInvItem(validAccessToken(t), 0, 1, 2)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-	if r.inv[1] != 5 {
-		t.Errorf("expected inv[1]==5, got %d", r.inv[1])
-	}
-}
-
-func TestItemSvc_IncreaseInvItem_NewItem(t *testing.T) {
-	useAdvancingClock(t)
-	s, r := newItemSvc(t)
-
-	status, err := s.IncreaseInvItem(validAccessToken(t), 0, 99, 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-	if r.inv[99] != 1 {
-		t.Errorf("expected inv[99]==1, got %d", r.inv[99])
-	}
-}
-
-func TestItemSvc_IncreaseInvItem_InvalidToken(t *testing.T) {
-	s, _ := newItemSvc(t)
-	status, err := s.IncreaseInvItem("bad.token", 0, 1, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}

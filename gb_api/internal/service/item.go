@@ -2,9 +2,11 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
+	apperr "gb-api/internal/error"
 	"gb-api/internal/repo"
 )
 
@@ -46,43 +48,14 @@ func (s *ItemSvc) QuerySlot(accessToken string, groupID uint) ([]byte, int, erro
 	return data, http.StatusOK, nil
 }
 
-func (s *ItemSvc) DeleteSlotItem(accessToken string, groupID, slotID uint) (int, error) {
-	if _, err := validateAccessToken(accessToken); err != nil {
-		return http.StatusUnauthorized, err
-	}
-	if err := s.repo.SetSlot(groupID, slotID, 0); err != nil {
-		return http.StatusInternalServerError, err
-	}
-	return http.StatusOK, nil
-}
-
-func (s *ItemSvc) IncreaseInvItem(accessToken string, groupID, itemID, itemCount uint) (int, error) {
-	if _, err := validateAccessToken(accessToken); err != nil {
-		return http.StatusUnauthorized, err
-	}
-	inv, err := s.repo.QueryInv(groupID)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	if err := s.repo.SetInv(groupID, itemID, inv[itemID]+itemCount); err != nil {
-		return http.StatusInternalServerError, err
-	}
-	return http.StatusOK, nil
-}
-
 func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint) (int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return http.StatusUnauthorized, err
 	}
-	inv, err := s.repo.QueryInv(groupID)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	count := inv[itemID]
-	if count == 0 {
-		return http.StatusBadRequest, fmt.Errorf("item %d 庫存不足", itemID)
-	}
-	if err := s.repo.SetInv(groupID, itemID, count-1); err != nil {
+	if err := s.repo.ChangeInv(groupID, itemID, -1); err != nil {
+		if errors.Is(err, apperr.ErrInsufficientStock) {
+			return http.StatusBadRequest, fmt.Errorf("item %d %w", itemID, err)
+		}
 		return http.StatusInternalServerError, err
 	}
 	if err := s.repo.SetSlot(groupID, slotID, itemID); err != nil {
@@ -103,11 +76,7 @@ func (s *ItemSvc) TranSlot2Inv(accessToken string, groupID, slotID uint) (int, e
 	if !ok {
 		return http.StatusBadRequest, fmt.Errorf("slot %d 不存在", slotID)
 	}
-	inv, err := s.repo.QueryInv(groupID)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	if err := s.repo.SetInv(groupID, itemID, inv[itemID]+1); err != nil {
+	if err := s.repo.ChangeInv(groupID, itemID, 1); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	if err := s.repo.SetSlot(groupID, slotID, 0); err != nil {

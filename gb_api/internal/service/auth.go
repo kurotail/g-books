@@ -150,15 +150,3 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 	}
 	return data, http.StatusOK, nil
 }
-
-func QueryDashboard(tokenString string) ([]byte, int, error) {
-	if _, err := validateAccessToken(tokenString); err != nil {
-		return nil, http.StatusUnauthorized, err
-	}
-
-	data, err := json.Marshal(map[string]string{"message": "恭喜！您已成功通過 JWT 驗證，並讀取了受保護的資料庫內容。"})
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	return data, http.StatusOK, nil
-}

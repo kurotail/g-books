@@ -23,12 +23,9 @@ func main() {
 
 	mux.HandleFunc("POST /api/login", authHandler.Login)
 	mux.HandleFunc("POST /api/refresh", authHandler.Refresh)
-	mux.HandleFunc("GET /api/dashboard", handler.QueryDashboard)
 
 	mux.HandleFunc("POST /api/item/inv", itemHandler.QueryInv)
 	mux.HandleFunc("POST /api/item/slot", itemHandler.QuerySlot)
-	mux.HandleFunc("POST /api/item/increase", itemHandler.IncreaseInvItem)
-	mux.HandleFunc("DELETE /api/item/slot", itemHandler.DeleteSlotItem)
 	mux.HandleFunc("POST /api/item/inv2slot", itemHandler.TranInv2Slot)
 	mux.HandleFunc("POST /api/item/slot2inv", itemHandler.TranSlot2Inv)
 

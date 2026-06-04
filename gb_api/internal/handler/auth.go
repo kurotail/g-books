@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"gb-api/internal/model"
 	"gb-api/internal/service"
@@ -50,27 +49,6 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data, status, err := h.svc.RefreshTokens(req.RefreshToken)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	writeJSON(w, data)
-}
-
-func QueryDashboard(w http.ResponseWriter, r *http.Request) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		http.Error(w, "未附帶授權令牌 (Missing Token)", http.StatusUnauthorized)
-		return
-	}
-
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		http.Error(w, "Authorization Header 格式必須為 Bearer <Token>", http.StatusUnauthorized)
-		return
-	}
-
-	data, status, err := service.QueryDashboard(parts[1])
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

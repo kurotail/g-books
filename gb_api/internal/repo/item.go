@@ -1,11 +1,15 @@
 package repo
 
-import "sync"
+import (
+	"sync"
+
+	apperr "gb-api/internal/error"
+)
 
 type ItemRepo interface {
 	QueryInv(groupID uint) (map[uint]uint, error)
 	QuerySlot(groupID uint) (map[uint]uint, error)
-	SetInv(groupID, itemID, itemCount uint) error
+	ChangeInv(groupID, itemID uint, delta int) error
 	SetSlot(groupID, slotID, itemID uint) error
 }
 
@@ -33,13 +37,21 @@ func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]uint, error) {
 	return result, nil
 }
 
-func (_ *itemRepo) SetInv(groupID, itemID, itemCount uint) error {
+// ChangeInv adjusts itemID's count in a group's inventory by delta (which may be
+// negative), atomically under the write lock. A decrement that would drop the
+// count below zero is rejected with ErrInsufficientStock; reaching exactly zero
+// removes the item.
+func (_ *itemRepo) ChangeInv(groupID, itemID uint, delta int) error {
 	itemMu.Lock()
 	defer itemMu.Unlock()
-	if itemCount == 0 {
+	next := int(mem_db.groupInv[itemID]) + delta
+	if next < 0 {
+		return apperr.ErrInsufficientStock
+	}
+	if next == 0 {
 		delete(mem_db.groupInv, itemID)
 	} else {
-		mem_db.groupInv[itemID] = itemCount
+		mem_db.groupInv[itemID] = uint(next)
 	}
 	return nil
 }
