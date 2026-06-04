@@ -1,0 +1,121 @@
+// Package mock provides in-memory implementations of the repo interfaces for
+// use in tests across the service and handler packages.
+package mock
+
+import (
+	"maps"
+	"sync"
+
+	apperr "gb-api/internal/error"
+	"gb-api/internal/repo"
+)
+
+var (
+	_ repo.AuthRepo  = (*AuthRepo)(nil)
+	_ repo.ItemRepo  = (*ItemRepo)(nil)
+	_ repo.GroupRepo = (*GroupRepo)(nil)
+)
+
+// AuthRepo is an in-memory repo.AuthRepo.
+type AuthRepo struct {
+	Users         map[string]string
+	RefreshTokens sync.Map
+}
+
+func (m *AuthRepo) ValidateCredentials(username, password string) (bool, error) {
+	stored, ok := m.Users[username]
+	return ok && stored == password, nil
+}
+
+func (m *AuthRepo) StoreRefreshToken(token string) error {
+	m.RefreshTokens.Store(token, struct{}{})
+	return nil
+}
+
+func (m *AuthRepo) ConsumeRefreshToken(token string) (bool, error) {
+	_, ok := m.RefreshTokens.LoadAndDelete(token)
+	return ok, nil
+}
+
+func (m *AuthRepo) GetAllUsers() ([]string, error) {
+	users := make([]string, 0, len(m.Users))
+	for username := range m.Users {
+		users = append(users, username)
+	}
+	return users, nil
+}
+
+// ItemRepo is an in-memory repo.ItemRepo.
+type ItemRepo struct {
+	Inv  map[uint]uint
+	Slot map[uint]uint
+}
+
+func (m *ItemRepo) QueryInv(_ uint) (map[uint]uint, error) {
+	result := make(map[uint]uint, len(m.Inv))
+	maps.Copy(result, m.Inv)
+	return result, nil
+}
+
+func (m *ItemRepo) QuerySlot(_ uint) (map[uint]uint, error) {
+	result := make(map[uint]uint, len(m.Slot))
+	maps.Copy(result, m.Slot)
+	return result, nil
+}
+
+func (m *ItemRepo) ChangeInv(_, itemID uint, delta int) error {
+	next := int(m.Inv[itemID]) + delta
+	if next < 0 {
+		return apperr.ErrInsufficientStock
+	}
+	if next == 0 {
+		delete(m.Inv, itemID)
+	} else {
+		m.Inv[itemID] = uint(next)
+	}
+	return nil
+}
+
+func (m *ItemRepo) SetSlot(_, slotID, itemID uint) error {
+	if itemID == 0 {
+		delete(m.Slot, slotID)
+	} else {
+		m.Slot[slotID] = itemID
+	}
+	return nil
+}
+
+// GroupRepo is an in-memory repo.GroupRepo.
+type GroupRepo struct {
+	UserGroups  map[string]uint
+	Users       map[string]bool
+	Permissions map[string]uint
+}
+
+func (m *GroupRepo) SetUserGroup(username string, groupID uint) error {
+	m.UserGroups[username] = groupID
+	return nil
+}
+
+func (m *GroupRepo) GetUserGroup(username string) (uint, bool, error) {
+	groupID, ok := m.UserGroups[username]
+	return groupID, ok, nil
+}
+
+func (m *GroupRepo) GetGroupMembers(groupID uint) ([]string, error) {
+	members := make([]string, 0)
+	for username, gid := range m.UserGroups {
+		if gid == groupID {
+			members = append(members, username)
+		}
+	}
+	return members, nil
+}
+
+func (m *GroupRepo) UserExists(username string) (bool, error) {
+	return m.Users[username], nil
+}
+
+func (m *GroupRepo) GetPermission(username string) (uint, error) {
+	return m.Permissions[username], nil
+}

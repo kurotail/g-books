@@ -17,6 +17,10 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+type UsersResponse struct {
+	Users []string `json:"users"`
+}
+
 // Permission levels (see README).
 const (
 	PermStudent uint = 0

@@ -5,95 +5,39 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
-	apperr "gb-api/internal/error"
 	"gb-api/internal/handler"
+	"gb-api/internal/model"
+	"gb-api/internal/repo/mock"
 	"gb-api/internal/service"
 )
-
-// ---- mock repos ----
-
-type mockAuthRepo struct {
-	users         map[string]string
-	refreshTokens sync.Map
-}
-
-func (m *mockAuthRepo) ValidateCredentials(username, password string) (bool, error) {
-	stored, ok := m.users[username]
-	return ok && stored == password, nil
-}
-
-func (m *mockAuthRepo) StoreRefreshToken(token string) error {
-	m.refreshTokens.Store(token, struct{}{})
-	return nil
-}
-
-func (m *mockAuthRepo) ConsumeRefreshToken(token string) (bool, error) {
-	_, ok := m.refreshTokens.LoadAndDelete(token)
-	return ok, nil
-}
-
-type mockItemRepo struct {
-	inv  map[uint]uint
-	slot map[uint]uint
-}
-
-func (m *mockItemRepo) QueryInv(_ uint) (map[uint]uint, error) {
-	result := make(map[uint]uint, len(m.inv))
-	for k, v := range m.inv {
-		result[k] = v
-	}
-	return result, nil
-}
-
-func (m *mockItemRepo) QuerySlot(_ uint) (map[uint]uint, error) {
-	result := make(map[uint]uint, len(m.slot))
-	for k, v := range m.slot {
-		result[k] = v
-	}
-	return result, nil
-}
-
-func (m *mockItemRepo) ChangeInv(_, itemID uint, delta int) error {
-	next := int(m.inv[itemID]) + delta
-	if next < 0 {
-		return apperr.ErrInsufficientStock
-	}
-	if next == 0 {
-		delete(m.inv, itemID)
-	} else {
-		m.inv[itemID] = uint(next)
-	}
-	return nil
-}
-
-func (m *mockItemRepo) SetSlot(_, slotID, itemID uint) error {
-	if itemID == 0 {
-		delete(m.slot, slotID)
-	} else {
-		m.slot[slotID] = itemID
-	}
-	return nil
-}
 
 // ---- test fixture ----
 
 type fixture struct {
-	auth *handler.AuthHandler
-	item *handler.ItemHandler
+	auth      *handler.AuthHandler
+	item      *handler.ItemHandler
+	group     *handler.GroupHandler
+	groupRepo *mock.GroupRepo
 }
 
 func newFixture() *fixture {
-	authRepo := &mockAuthRepo{users: map[string]string{"user": "pass"}}
-	itemRepo := &mockItemRepo{
-		inv:  map[uint]uint{1: 3, 2: 1},
-		slot: map[uint]uint{0: 1},
+	authRepo := &mock.AuthRepo{Users: map[string]string{"user": "pass"}}
+	itemRepo := &mock.ItemRepo{
+		Inv:  map[uint]uint{1: 3, 2: 1},
+		Slot: map[uint]uint{0: 1},
+	}
+	groupRepo := &mock.GroupRepo{
+		UserGroups:  map[string]uint{"user": 0},
+		Users:       map[string]bool{"user": true},
+		Permissions: map[string]uint{"user": model.PermTeacher},
 	}
 	return &fixture{
-		auth: handler.NewAuthHandler(service.NewAuthSvc(authRepo)),
-		item: handler.NewItemHandler(service.NewItemSvc(itemRepo)),
+		auth:      handler.NewAuthHandler(service.NewAuthSvc(authRepo)),
+		item:      handler.NewItemHandler(service.NewItemSvc(itemRepo)),
+		group:     handler.NewGroupHandler(service.NewGroupSvc(groupRepo)),
+		groupRepo: groupRepo,
 	}
 }
 
@@ -341,5 +285,107 @@ func TestItemHandler_TranSlot2Inv_NonExistentSlot(t *testing.T) {
 	rec := do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 0, "slot_id": 99})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("non-existent slot: expected 400, got %d", rec.Code)
+	}
+}
+
+// ---- group handler ----
+
+func TestGroupHandler_MissingToken(t *testing.T) {
+	f := newFixture()
+	cases := map[string]http.HandlerFunc{
+		"SetGroup":    f.group.SetGroup,
+		"QueryGroup":  f.group.QueryGroup,
+		"QueryMember": f.group.QueryMember,
+	}
+	for name, fn := range cases {
+		rec := do(t, fn, "", map[string]any{"group_id": 0, "username": "user"})
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
+		}
+	}
+}
+
+func TestGroupHandler_SetGroup_MissingUsername(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 3})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing username: expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGroupHandler_SetGroup_StudentForbidden(t *testing.T) {
+	f := newFixture()
+	f.groupRepo.Permissions["user"] = model.PermStudent
+	tok := f.login(t)
+
+	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 3, "username": "user"})
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("student caller: expected 403, got %d", rec.Code)
+	}
+}
+
+func TestGroupHandler_SetThenQueryRoundtrip(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	// teacher "user" reassigns itself to group 7
+	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 7, "username": "user"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetGroup: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// QueryGroup should now report group 7
+	rec = do(t, f.group.QueryGroup, tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
+	}
+	var gr model.GroupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
+		t.Fatalf("QueryGroup: invalid JSON: %v", err)
+	}
+	if gr.GroupID != 7 {
+		t.Errorf("expected group_id 7, got %d", gr.GroupID)
+	}
+
+	// QueryMember(7) should list "user"
+	rec = do(t, f.group.QueryMember, tok, map[string]any{"group_id": 7})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("QueryMember: expected 200, got %d", rec.Code)
+	}
+	var mr model.MembersResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &mr); err != nil {
+		t.Fatalf("QueryMember: invalid JSON: %v", err)
+	}
+	if len(mr.Members) != 1 || mr.Members[0] != "user" {
+		t.Errorf("expected members [user], got %v", mr.Members)
+	}
+}
+
+// ---- auth handler: QueryUser ----
+
+func TestAuthHandler_QueryUser(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.auth.QueryUser, tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("QueryUser: expected 200, got %d", rec.Code)
+	}
+	var ur model.UsersResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &ur); err != nil {
+		t.Fatalf("QueryUser: invalid JSON: %v", err)
+	}
+	if len(ur.Users) != 1 || ur.Users[0] != "user" {
+		t.Errorf("expected users [user], got %v", ur.Users)
+	}
+}
+
+func TestAuthHandler_QueryUser_MissingToken(t *testing.T) {
+	f := newFixture()
+	rec := do(t, f.auth.QueryUser, "", nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("QueryUser without token: expected 401, got %d", rec.Code)
 	}
 }

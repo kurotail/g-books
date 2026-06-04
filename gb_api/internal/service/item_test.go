@@ -5,57 +5,14 @@ import (
 	"net/http"
 	"testing"
 
-	apperr "gb-api/internal/error"
+	"gb-api/internal/repo/mock"
 )
 
-type mockItemRepo struct {
-	inv  map[uint]uint
-	slot map[uint]uint
-}
-
-func newMockItemRepo() *mockItemRepo {
-	return &mockItemRepo{
-		inv:  map[uint]uint{1: 3, 2: 1},
-		slot: map[uint]uint{0: 1, 2: 2},
+func newMockItemRepo() *mock.ItemRepo {
+	return &mock.ItemRepo{
+		Inv:  map[uint]uint{1: 3, 2: 1},
+		Slot: map[uint]uint{0: 1, 2: 2},
 	}
-}
-
-func (m *mockItemRepo) QueryInv(_ uint) (map[uint]uint, error) {
-	result := make(map[uint]uint, len(m.inv))
-	for k, v := range m.inv {
-		result[k] = v
-	}
-	return result, nil
-}
-
-func (m *mockItemRepo) QuerySlot(_ uint) (map[uint]uint, error) {
-	result := make(map[uint]uint, len(m.slot))
-	for k, v := range m.slot {
-		result[k] = v
-	}
-	return result, nil
-}
-
-func (m *mockItemRepo) ChangeInv(_, itemID uint, delta int) error {
-	next := int(m.inv[itemID]) + delta
-	if next < 0 {
-		return apperr.ErrInsufficientStock
-	}
-	if next == 0 {
-		delete(m.inv, itemID)
-	} else {
-		m.inv[itemID] = uint(next)
-	}
-	return nil
-}
-
-func (m *mockItemRepo) SetSlot(_, slotID, itemID uint) error {
-	if itemID == 0 {
-		delete(m.slot, slotID)
-	} else {
-		m.slot[slotID] = itemID
-	}
-	return nil
 }
 
 func validAccessToken(t *testing.T) string {
@@ -67,7 +24,7 @@ func validAccessToken(t *testing.T) string {
 	return tok
 }
 
-func newItemSvc(t *testing.T) (*ItemSvc, *mockItemRepo) {
+func newItemSvc(t *testing.T) (*ItemSvc, *mock.ItemRepo) {
 	t.Helper()
 	r := newMockItemRepo()
 	return NewItemSvc(r), r
@@ -158,11 +115,11 @@ func TestItemSvc_TranInv2Slot_DecrementsInvAndSetsSlot(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	if r.inv[1] != 2 {
-		t.Errorf("expected inv[1]==2, got %d", r.inv[1])
+	if r.Inv[1] != 2 {
+		t.Errorf("expected inv[1]==2, got %d", r.Inv[1])
 	}
-	if r.slot[5] != 1 {
-		t.Errorf("expected slot[5]==1, got %d", r.slot[5])
+	if r.Slot[5] != 1 {
+		t.Errorf("expected slot[5]==1, got %d", r.Slot[5])
 	}
 }
 
@@ -203,11 +160,11 @@ func TestItemSvc_TranSlot2Inv_ClearsSlotAndIncrementsInv(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	if _, ok := r.slot[0]; ok {
+	if _, ok := r.Slot[0]; ok {
 		t.Error("expected slot 0 to be cleared")
 	}
-	if r.inv[1] != 4 {
-		t.Errorf("expected inv[1]==4, got %d", r.inv[1])
+	if r.Inv[1] != 4 {
+		t.Errorf("expected inv[1]==4, got %d", r.Inv[1])
 	}
 }
 

@@ -3,38 +3,18 @@ package service
 import (
 	"encoding/json"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"gb-api/internal/model"
+	"gb-api/internal/repo/mock"
 )
 
-type mockAuthRepo struct {
-	users         map[string]string
-	refreshTokens sync.Map
-}
-
-func newMockAuthRepo() *mockAuthRepo {
-	return &mockAuthRepo{
-		users: map[string]string{"user": "password123"},
+func newMockAuthRepo() *mock.AuthRepo {
+	return &mock.AuthRepo{
+		Users: map[string]string{"user": "password123"},
 	}
-}
-
-func (m *mockAuthRepo) ValidateCredentials(username, password string) (bool, error) {
-	stored, ok := m.users[username]
-	return ok && stored == password, nil
-}
-
-func (m *mockAuthRepo) StoreRefreshToken(token string) error {
-	m.refreshTokens.Store(token, struct{}{})
-	return nil
-}
-
-func (m *mockAuthRepo) ConsumeRefreshToken(token string) (bool, error) {
-	_, ok := m.refreshTokens.LoadAndDelete(token)
-	return ok, nil
 }
 
 func newTestAuthSvc() *AuthSvc {
@@ -62,6 +42,37 @@ func loginTokenPair(t *testing.T, s *AuthSvc) map[string]string {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 	return pair
+}
+
+func TestAuthSvc_QueryUser_ValidToken(t *testing.T) {
+	useAdvancingClock(t)
+	s := newTestAuthSvc()
+
+	data, status, err := s.QueryUser(validAccessToken(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	var resp model.UsersResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(resp.Users) != 1 || resp.Users[0] != "user" {
+		t.Errorf("expected users [user], got %v", resp.Users)
+	}
+}
+
+func TestAuthSvc_QueryUser_InvalidToken(t *testing.T) {
+	s := newTestAuthSvc()
+	_, status, err := s.QueryUser("invalid.token")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
 }
 
 func TestLoginByName_ValidCredentials(t *testing.T) {

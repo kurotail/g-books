@@ -115,6 +115,22 @@ func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
+// QueryUser lists all users. Any authenticated user may call it.
+func (s *AuthSvc) QueryUser(accessToken string) ([]byte, int, error) {
+	if _, err := validateAccessToken(accessToken); err != nil {
+		return nil, http.StatusUnauthorized, err
+	}
+	users, err := s.repo.GetAllUsers()
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	data, err := json.Marshal(model.UsersResponse{Users: users})
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return data, http.StatusOK, nil
+}
+
 func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 	claims := &model.Claims{}
 	token, err := jwt.ParseWithClaims(refreshTokenStr, claims, func(t *jwt.Token) (any, error) {

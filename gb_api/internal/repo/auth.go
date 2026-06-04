@@ -23,6 +23,7 @@ type memAuthRepo struct {
 	groupItem     map[uint]model.GroupItem
 	questions     map[string]model.QuestionSession
 	permissions   map[string]uint // username -> permission
+	userGroups    map[string]uint // username -> groupID
 }
 
 var mem_db = memAuthRepo{
@@ -56,12 +57,16 @@ var mem_db = memAuthRepo{
 	permissions: map[string]uint{
 		"user": model.PermTeacher,
 	},
+	userGroups: map[string]uint{
+		"user": 0,
+	},
 }
 
 type AuthRepo interface {
 	ValidateCredentials(username, password string) (bool, error)
 	StoreRefreshToken(token string) error
 	ConsumeRefreshToken(token string) (bool, error)
+	GetAllUsers() ([]string, error)
 }
 
 type authRepo struct {}
@@ -79,6 +84,14 @@ func (_ *authRepo) StoreRefreshToken(token string) error {
 func (_ *authRepo) ConsumeRefreshToken(token string) (bool, error) {
 	_, ok := mem_db.refreshTokens.LoadAndDelete(token)
 	return ok, nil
+}
+
+func (_ *authRepo) GetAllUsers() ([]string, error) {
+	users := make([]string, 0, len(mem_db.users))
+	for username := range mem_db.users {
+		users = append(users, username)
+	}
+	return users, nil
 }
 
 func InitAuthRepo() AuthRepo {
