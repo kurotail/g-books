@@ -20,25 +20,28 @@ var questionList = []model.Question{
 type memAuthRepo struct {
 	users         map[string]string // username -> password
 	refreshTokens sync.Map
-	groupInv      map[uint]uint // itemID -> itemCount
-	groupSlot   map[uint]uint // slotID -> itemID
-	questions    map[string]model.QuestionSession
-	permissions  map[string]uint // username -> permission
+	groupItem     map[uint]model.GroupItem
+	questions     map[string]model.QuestionSession
+	permissions   map[string]uint // username -> permission
 }
 
 var mem_db = memAuthRepo{
 	users: map[string]string{
 		"user": "password123",
 	},
-	groupInv: map[uint]uint{
-		0: 1,
-		1: 1,
-		3: 2,
-	},
-	groupSlot: map[uint]uint{
-		0: 1,
-		2: 3,
-		5: 0,
+	groupItem: map[uint]model.GroupItem{
+		0: {
+			GroupInv: map[uint]uint{
+				0: 1,
+				1: 1,
+				3: 2,
+			},
+			GroupSlot: map[uint]uint{
+				0: 1,
+				2: 3,
+				5: 0,
+			},
+		},
 	},
 	questions: map[string]model.QuestionSession{
 		"0123456789abcdef0123456789abcdef": {
