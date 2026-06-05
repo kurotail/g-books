@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"gb-api/internal/handler"
 	"gb-api/internal/repo"
@@ -48,8 +53,30 @@ func main() {
 	mux.HandleFunc("GET /api/state", questionHandler.GetState)
 	mux.HandleFunc("POST /api/state", questionHandler.SetState)
 
-	log.Println("伺服器已啟動，監聽埠號 :8080...")
-	if err := http.ListenAndServe(":8080", mux); err != nil {
-		log.Fatalf("伺服器啟動失敗: %v", err)
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
 	}
+	go func () {
+		log.Println("伺服器已啟動，監聽埠號 :8080...")
+		if err := http.ListenAndServe(":8080", mux); err != nil {
+			log.Fatalf("伺服器啟動失敗: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// Block until a signal is received
+	<-quit
+	log.Println("Shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v\n", err)
+	}
+
+	// Close database connections or other resources here
+
+	log.Println("Server exited")
 }
