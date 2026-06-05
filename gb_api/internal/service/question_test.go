@@ -37,7 +37,6 @@ func useState(t *testing.T, s model.ServerState) {
 // --- Generate ---
 
 func TestQuestionSvc_Generate_TeacherSucceeds(t *testing.T) {
-	useAdvancingClock(t)
 	r := newMockQuestionRepo(model.RoleTeacher)
 	s := NewQuestionSvc(r)
 
@@ -68,7 +67,6 @@ func TestQuestionSvc_Generate_TeacherSucceeds(t *testing.T) {
 }
 
 func TestQuestionSvc_Generate_StudentForbiddenInNormal(t *testing.T) {
-	useAdvancingClock(t)
 	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
 
 	_, status, err := s.Generate(accessTokenFor(t, "student"), 0)
@@ -93,7 +91,6 @@ func TestQuestionSvc_Generate_InvalidToken(t *testing.T) {
 }
 
 func TestQuestionSvc_Generate_StudentAllowedInQuizState(t *testing.T) {
-	useAdvancingClock(t)
 	useState(t, model.StateQuiz)
 	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
 
@@ -109,7 +106,6 @@ func TestQuestionSvc_Generate_StudentAllowedInQuizState(t *testing.T) {
 // --- State ---
 
 func TestQuestionSvc_SetState_TeacherTransitions(t *testing.T) {
-	useAdvancingClock(t)
 	t.Cleanup(func() { setState(model.StateNormal) })
 	s := NewQuestionSvc(newMockQuestionRepo(model.RoleTeacher))
 
@@ -133,7 +129,6 @@ func TestQuestionSvc_SetState_TeacherTransitions(t *testing.T) {
 }
 
 func TestQuestionSvc_SetState_StudentForbidden(t *testing.T) {
-	useAdvancingClock(t)
 	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
 
 	_, status, err := s.SetState(accessTokenFor(t, "student"), model.StateQuiz)
@@ -146,7 +141,6 @@ func TestQuestionSvc_SetState_StudentForbidden(t *testing.T) {
 }
 
 func TestQuestionSvc_SetState_InvalidValue(t *testing.T) {
-	useAdvancingClock(t)
 	s := NewQuestionSvc(newMockQuestionRepo(model.RoleTeacher))
 
 	_, status, err := s.SetState(accessTokenFor(t, "teacher"), model.ServerState("BOGUS"))
@@ -159,7 +153,6 @@ func TestQuestionSvc_SetState_InvalidValue(t *testing.T) {
 }
 
 func TestQuestionSvc_GetState(t *testing.T) {
-	useAdvancingClock(t)
 	useState(t, model.StateQuiz)
 	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
 
@@ -182,7 +175,6 @@ func TestQuestionSvc_GetState(t *testing.T) {
 // --- Answer ---
 
 func TestQuestionSvc_Answer_Correct(t *testing.T) {
-	useAdvancingClock(t)
 	useState(t, model.StateQuiz) // let the student through the gate
 	r := newMockQuestionRepo(model.RoleStudent)
 	s := NewQuestionSvc(r)
@@ -210,7 +202,6 @@ func TestQuestionSvc_Answer_Correct(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_Wrong(t *testing.T) {
-	useAdvancingClock(t)
 	useState(t, model.StateQuiz)
 	r := newMockQuestionRepo(model.RoleStudent)
 	s := NewQuestionSvc(r)
@@ -234,7 +225,6 @@ func TestQuestionSvc_Answer_Wrong(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_StudentForbiddenInNormal(t *testing.T) {
-	useAdvancingClock(t)
 	r := newMockQuestionRepo(model.RoleStudent)
 	s := NewQuestionSvc(r)
 	r.CreateSession(0)
@@ -254,7 +244,6 @@ func TestQuestionSvc_Answer_StudentForbiddenInNormal(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_TeacherAllowedInNormal(t *testing.T) {
-	useAdvancingClock(t)
 	r := newMockQuestionRepo(model.RoleTeacher)
 	s := NewQuestionSvc(r)
 	r.CreateSession(0)
@@ -270,7 +259,6 @@ func TestQuestionSvc_Answer_TeacherAllowedInNormal(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_UnknownSession(t *testing.T) {
-	useAdvancingClock(t)
 	useState(t, model.StateQuiz)
 	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
 
@@ -284,7 +272,6 @@ func TestQuestionSvc_Answer_UnknownSession(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_Expired(t *testing.T) {
-	useAdvancingClock(t)
 	useState(t, model.StateQuiz)
 	r := newMockQuestionRepo(model.RoleStudent)
 	s := NewQuestionSvc(r)

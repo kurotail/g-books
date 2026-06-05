@@ -35,7 +35,6 @@ func newGroupSvc() (*GroupSvc, *mock.GroupRepo) {
 // --- SetGroup ---
 
 func TestGroupSvc_SetGroup_TeacherSucceeds(t *testing.T) {
-	useAdvancingClock(t)
 	s, r := newGroupSvc()
 
 	status, err := s.SetGroup(tokenFor(t, "teacher"), "alice", 5)
@@ -51,7 +50,6 @@ func TestGroupSvc_SetGroup_TeacherSucceeds(t *testing.T) {
 }
 
 func TestGroupSvc_SetGroup_StudentForbidden(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newGroupSvc()
 
 	status, err := s.SetGroup(tokenFor(t, "student"), "alice", 5)
@@ -64,7 +62,6 @@ func TestGroupSvc_SetGroup_StudentForbidden(t *testing.T) {
 }
 
 func TestGroupSvc_SetGroup_UnknownUser(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newGroupSvc()
 
 	status, err := s.SetGroup(tokenFor(t, "teacher"), "nobody", 5)
@@ -90,7 +87,6 @@ func TestGroupSvc_SetGroup_InvalidToken(t *testing.T) {
 // --- QueryGroup ---
 
 func TestGroupSvc_QueryGroup_Member(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newGroupSvc()
 
 	data, status, err := s.QueryGroup(tokenFor(t, "carol"))
@@ -110,7 +106,6 @@ func TestGroupSvc_QueryGroup_Member(t *testing.T) {
 }
 
 func TestGroupSvc_QueryGroup_NonMember(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newGroupSvc()
 
 	_, status, err := s.QueryGroup(tokenFor(t, "teacher"))
@@ -136,7 +131,6 @@ func TestGroupSvc_QueryGroup_InvalidToken(t *testing.T) {
 // --- QueryMember ---
 
 func TestGroupSvc_QueryMember_ReturnsMembers(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newGroupSvc()
 
 	data, status, err := s.QueryMember(tokenFor(t, "alice"), 1)
@@ -163,7 +157,6 @@ func TestGroupSvc_QueryMember_ReturnsMembers(t *testing.T) {
 }
 
 func TestGroupSvc_QueryMember_EmptyGroup(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newGroupSvc()
 
 	data, status, err := s.QueryMember(tokenFor(t, "alice"), 99)

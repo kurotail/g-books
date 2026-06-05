@@ -72,6 +72,8 @@ func (_ *itemRepo) ChangeInv(groupID, itemID uint, delta int) error {
 	return nil
 }
 
+// SetSlot places itemID in a group's slot. Item IDs are always > 0; itemID 0 is
+// the sentinel for "empty" and clears the slot instead of storing item 0.
 func (_ *itemRepo) SetSlot(groupID, slotID, itemID uint) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()

@@ -31,13 +31,13 @@ func (m *AuthRepo) ValidateCredentials(username, password string) (bool, error) 
 	return ok && stored == password, nil
 }
 
-func (m *AuthRepo) StoreRefreshToken(token string) error {
-	m.RefreshTokens.Store(token, struct{}{})
+func (m *AuthRepo) StoreRefreshToken(jti string) error {
+	m.RefreshTokens.Store(jti, struct{}{})
 	return nil
 }
 
-func (m *AuthRepo) ConsumeRefreshToken(token string) (bool, error) {
-	_, ok := m.RefreshTokens.LoadAndDelete(token)
+func (m *AuthRepo) ConsumeRefreshToken(jti string) (bool, error) {
+	_, ok := m.RefreshTokens.LoadAndDelete(jti)
 	return ok, nil
 }
 

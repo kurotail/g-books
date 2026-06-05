@@ -3,9 +3,7 @@ package service
 import (
 	"encoding/json"
 	"net/http"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"gb-api/internal/model"
 	"gb-api/internal/repo/mock"
@@ -22,16 +20,6 @@ func newTestAuthSvc() *AuthSvc {
 	return NewAuthSvc(newMockAuthRepo())
 }
 
-func useAdvancingClock(t *testing.T) {
-	t.Helper()
-	base := time.Now()
-	var n atomic.Int64
-	now = func() time.Time {
-		return base.Add(time.Duration(n.Add(1)) * time.Second)
-	}
-	t.Cleanup(func() { now = time.Now })
-}
-
 func loginTokenPair(t *testing.T, s *AuthSvc) map[string]string {
 	t.Helper()
 	data, _, err := s.LoginByName(model.Credential{Username: "user", Password: "password123"})
@@ -46,7 +34,6 @@ func loginTokenPair(t *testing.T, s *AuthSvc) map[string]string {
 }
 
 func TestAuthSvc_QueryUser_ValidToken(t *testing.T) {
-	useAdvancingClock(t)
 	s := newTestAuthSvc()
 
 	data, status, err := s.QueryUser(validAccessToken(t))
@@ -77,7 +64,6 @@ func TestAuthSvc_QueryUser_InvalidToken(t *testing.T) {
 }
 
 func TestLoginByName_ValidCredentials(t *testing.T) {
-	useAdvancingClock(t)
 	s := newTestAuthSvc()
 
 	data, status, err := s.LoginByName(model.Credential{Username: "user", Password: "password123"})
@@ -100,7 +86,6 @@ func TestLoginByName_ValidCredentials(t *testing.T) {
 }
 
 func TestLoginByName_WrongPassword(t *testing.T) {
-	useAdvancingClock(t)
 	s := newTestAuthSvc()
 
 	_, status, err := s.LoginByName(model.Credential{Username: "user", Password: "wrong"})
@@ -113,7 +98,6 @@ func TestLoginByName_WrongPassword(t *testing.T) {
 }
 
 func TestLoginByName_WrongUsername(t *testing.T) {
-	useAdvancingClock(t)
 	s := newTestAuthSvc()
 
 	_, status, err := s.LoginByName(model.Credential{Username: "nobody", Password: "password123"})
@@ -126,7 +110,6 @@ func TestLoginByName_WrongUsername(t *testing.T) {
 }
 
 func TestRegisterUser_TeacherCreatesStudent(t *testing.T) {
-	useAdvancingClock(t)
 	repo := newMockAuthRepo()
 	s := NewAuthSvc(repo)
 
@@ -146,7 +129,6 @@ func TestRegisterUser_TeacherCreatesStudent(t *testing.T) {
 }
 
 func TestRegisterUser_StudentForbidden(t *testing.T) {
-	useAdvancingClock(t)
 	repo := newMockAuthRepo()
 	repo.Roles["user"] = model.RoleStudent
 	s := NewAuthSvc(repo)
@@ -161,7 +143,6 @@ func TestRegisterUser_StudentForbidden(t *testing.T) {
 }
 
 func TestRegisterUser_CannotCreateAdmin(t *testing.T) {
-	useAdvancingClock(t)
 	s := NewAuthSvc(newMockAuthRepo())
 
 	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleAdmin)
@@ -174,7 +155,6 @@ func TestRegisterUser_CannotCreateAdmin(t *testing.T) {
 }
 
 func TestRegisterUser_DuplicateUser(t *testing.T) {
-	useAdvancingClock(t)
 	s := NewAuthSvc(newMockAuthRepo())
 
 	status, err := s.RegisterUser(tokenFor(t, "user"), "user", "pw", model.RoleStudent)
@@ -199,7 +179,6 @@ func TestRegisterUser_InvalidToken(t *testing.T) {
 }
 
 func TestRefreshTokens_ValidToken(t *testing.T) {
-	useAdvancingClock(t)
 	s := newTestAuthSvc()
 	pair := loginTokenPair(t, s)
 
@@ -223,7 +202,6 @@ func TestRefreshTokens_ValidToken(t *testing.T) {
 }
 
 func TestRefreshTokens_SingleUse(t *testing.T) {
-	useAdvancingClock(t)
 	s := newTestAuthSvc()
 	original := loginTokenPair(t, s)["refresh_token"]
 
@@ -252,7 +230,6 @@ func TestRefreshTokens_ForgedToken(t *testing.T) {
 }
 
 func TestRefreshTokens_AccessTokenRejected(t *testing.T) {
-	useAdvancingClock(t)
 	s := newTestAuthSvc()
 	pair := loginTokenPair(t, s)
 

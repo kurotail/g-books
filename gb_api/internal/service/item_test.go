@@ -33,7 +33,6 @@ func newItemSvc(t *testing.T) (*ItemSvc, *mock.ItemRepo) {
 // --- QueryInv ---
 
 func TestItemSvc_QueryInv_ValidToken(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newItemSvc(t)
 
 	data, status, err := s.QueryInv(validAccessToken(t), 0)
@@ -69,7 +68,6 @@ func TestItemSvc_QueryInv_InvalidToken(t *testing.T) {
 // --- QuerySlot ---
 
 func TestItemSvc_QuerySlot_ValidToken(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newItemSvc(t)
 
 	data, status, err := s.QuerySlot(validAccessToken(t), 0)
@@ -105,7 +103,6 @@ func TestItemSvc_QuerySlot_InvalidToken(t *testing.T) {
 // --- TranInv2Slot ---
 
 func TestItemSvc_TranInv2Slot_DecrementsInvAndSetsSlot(t *testing.T) {
-	useAdvancingClock(t)
 	s, r := newItemSvc(t)
 
 	status, err := s.TranInv2Slot(validAccessToken(t), 0, 1, 5)
@@ -124,7 +121,6 @@ func TestItemSvc_TranInv2Slot_DecrementsInvAndSetsSlot(t *testing.T) {
 }
 
 func TestItemSvc_TranInv2Slot_OutOfStock(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newItemSvc(t)
 
 	status, err := s.TranInv2Slot(validAccessToken(t), 0, 99, 5)
@@ -150,7 +146,6 @@ func TestItemSvc_TranInv2Slot_InvalidToken(t *testing.T) {
 // --- TranSlot2Inv ---
 
 func TestItemSvc_TranSlot2Inv_ClearsSlotAndIncrementsInv(t *testing.T) {
-	useAdvancingClock(t)
 	s, r := newItemSvc(t)
 
 	status, err := s.TranSlot2Inv(validAccessToken(t), 0, 0)
@@ -169,7 +164,6 @@ func TestItemSvc_TranSlot2Inv_ClearsSlotAndIncrementsInv(t *testing.T) {
 }
 
 func TestItemSvc_TranSlot2Inv_NonExistentSlot(t *testing.T) {
-	useAdvancingClock(t)
 	s, _ := newItemSvc(t)
 
 	status, err := s.TranSlot2Inv(validAccessToken(t), 0, 99)

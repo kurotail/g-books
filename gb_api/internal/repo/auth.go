@@ -6,8 +6,10 @@ import (
 
 type AuthRepo interface {
 	ValidateCredentials(username, password string) (bool, error)
-	StoreRefreshToken(token string) error
-	ConsumeRefreshToken(token string) (bool, error)
+	// StoreRefreshToken registers a refresh token's jti as a live, single-use
+	// handle. ConsumeRefreshToken atomically validates and removes it.
+	StoreRefreshToken(jti string) error
+	ConsumeRefreshToken(jti string) (bool, error)
 	GetAllUsers() ([]string, error)
 	GetRole(username string) (uint, error)
 	CreateUser(username, password string, role uint) error
@@ -22,18 +24,18 @@ func (_ *authRepo) ValidateCredentials(username, password string) (bool, error) 
 	return u != nil && u.Password == password, nil
 }
 
-func (_ *authRepo) StoreRefreshToken(token string) error {
+func (_ *authRepo) StoreRefreshToken(jti string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	db.refreshTokens[token] = struct{}{}
+	db.refreshTokens[jti] = struct{}{}
 	return nil
 }
 
-func (_ *authRepo) ConsumeRefreshToken(token string) (bool, error) {
+func (_ *authRepo) ConsumeRefreshToken(jti string) (bool, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	if _, ok := db.refreshTokens[token]; ok {
-		delete(db.refreshTokens, token)
+	if _, ok := db.refreshTokens[jti]; ok {
+		delete(db.refreshTokens, jti)
 		return true, nil
 	}
 	return false, nil

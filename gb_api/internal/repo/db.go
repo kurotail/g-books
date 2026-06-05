@@ -29,7 +29,7 @@ type Database struct {
 	users         map[string]*User                 // PK: username
 	groups        map[uint]*Group                  // PK: id
 	sessions      map[string]model.QuestionSession // PK: session_id
-	refreshTokens map[string]struct{}              // PK: token
+	refreshTokens map[string]struct{}              // PK: jti (refresh token id)
 }
 
 // questionList is the reference set of questions sessions are drawn from.
@@ -61,8 +61,8 @@ func newDatabase() *Database {
 		groups: map[uint]*Group{
 			0: {
 				ID:        0,
-				Inventory: map[uint]uint{0: 1, 1: 1, 3: 2},
-				Slots:     map[uint]uint{0: 1, 2: 3, 5: 0},
+				Inventory: map[uint]uint{1: 1, 2: 1, 3: 2},
+				Slots:     map[uint]uint{0: 1, 2: 3},
 			},
 		},
 		sessions: map[string]model.QuestionSession{

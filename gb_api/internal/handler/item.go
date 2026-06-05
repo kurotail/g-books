@@ -84,6 +84,10 @@ func (h *ItemHandler) TranInv2Slot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 item_id 或 slot_id", http.StatusBadRequest)
 		return
 	}
+	if *op.ItemID == 0 {
+		http.Error(w, "item_id 必須大於 0", http.StatusBadRequest)
+		return
+	}
 	status, err := h.svc.TranInv2Slot(token, op.GroupID, *op.ItemID, *op.SlotID)
 	if err != nil {
 		http.Error(w, err.Error(), status)

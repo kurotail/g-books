@@ -1,6 +1,8 @@
 package service
 
 import (
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +22,6 @@ const (
 	refreshTokenTTL = 7 * 24 * time.Hour
 )
 
-var now = time.Now
-
 type AuthSvc struct {
 	repo repo.AuthRepo
 }
@@ -35,8 +35,17 @@ func signToken(claims *model.Claims, key []byte) (string, error) {
 	return token.SignedString(key)
 }
 
+// newJTI returns a random 128-bit token identifier as 32 hex chars.
+func newJTI() (string, error) {
+	b := make([]byte, 16)
+	if _, err := crand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 func (s *AuthSvc) newAccessToken(username string) (string, error) {
-	t := now()
+	t := time.Now()
 	return signToken(&model.Claims{
 		Username:  username,
 		TokenType: "access",
@@ -47,28 +56,42 @@ func (s *AuthSvc) newAccessToken(username string) (string, error) {
 	}, config.JwtKey)
 }
 
-func (s *AuthSvc) newRefreshToken(username string) (string, error) {
-	t := now()
-	return signToken(&model.Claims{
+// newRefreshToken mints a refresh token carrying a unique jti, which it also
+// returns so the caller can register the jti as the single-use handle for this
+// token in the store.
+func (s *AuthSvc) newRefreshToken(username string) (token, jti string, err error) {
+	jti, err = newJTI()
+	if err != nil {
+		return "", "", err
+	}
+	t := time.Now()
+	token, err = signToken(&model.Claims{
 		Username:  username,
 		TokenType: "refresh",
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			ExpiresAt: jwt.NewNumericDate(t.Add(refreshTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(t),
 		},
 	}, config.RefreshKey)
+	if err != nil {
+		return "", "", err
+	}
+	return token, jti, nil
 }
 
-func (s *AuthSvc) genTokenPair(username string) (string, string, error) {
-	accessToken, err := s.newAccessToken(username)
+// genTokenPair returns a fresh access/refresh token pair plus the refresh
+// token's jti (its key in the refresh-token store).
+func (s *AuthSvc) genTokenPair(username string) (accessToken, refreshToken, jti string, err error) {
+	accessToken, err = s.newAccessToken(username)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	refreshToken, err := s.newRefreshToken(username)
+	refreshToken, jti, err = s.newRefreshToken(username)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return accessToken, refreshToken, nil
+	return accessToken, refreshToken, jti, nil
 }
 
 func marshalTokenPair(accessToken, refreshToken string) ([]byte, error) {
@@ -104,12 +127,12 @@ func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("帳號或密碼錯誤")
 	}
 
-	accessToken, refreshToken, err := s.genTokenPair(creds.Username)
+	accessToken, refreshToken, jti, err := s.genTokenPair(creds.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 
-	s.repo.StoreRefreshToken(refreshToken)
+	s.repo.StoreRefreshToken(jti)
 
 	data, err := marshalTokenPair(accessToken, refreshToken)
 	if err != nil {
@@ -173,7 +196,7 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("token 類型錯誤")
 	}
 
-	ok, err := s.repo.ConsumeRefreshToken(refreshTokenStr)
+	ok, err := s.repo.ConsumeRefreshToken(claims.ID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -181,11 +204,11 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("refresh token invalid")
 	}
 
-	accessToken, newRefresh, err := s.genTokenPair(claims.Username)
+	accessToken, newRefresh, jti, err := s.genTokenPair(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	s.repo.StoreRefreshToken(newRefresh)
+	s.repo.StoreRefreshToken(jti)
 
 	data, err := marshalTokenPair(accessToken, newRefresh)
 	if err != nil {
