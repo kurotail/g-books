@@ -11,9 +11,14 @@ REST API server for g-books, built with Go's standard `net/http` library and JWT
 
 ## Run
 
+Build the image and start a container:
+
 ```bash
-go run ./cmd/server
+docker build -t gb-api .
+docker run --rm --env-file .env -p 8080:8080 gb-api
 ```
+
+The server listens on `8080` inside the container; `-p 8080:8080` publishes it to the host.
 
 ---
 
