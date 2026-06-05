@@ -20,6 +20,7 @@ type fixture struct {
 	item         *handler.ItemHandler
 	group        *handler.GroupHandler
 	question     *handler.QuestionHandler
+	state        *handler.StateHandler
 	authRepo     *mock.AuthRepo
 	groupRepo    *mock.GroupRepo
 	questionRepo *mock.QuestionRepo
@@ -44,10 +45,11 @@ func newFixture() *fixture {
 		Sessions: map[string]model.QuestionSession{},
 	}
 	return &fixture{
-		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo)),
+		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
 		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo)),
 		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo)),
 		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo)),
+		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
 		authRepo:     authRepo,
 		groupRepo:    groupRepo,
 		questionRepo: questionRepo,

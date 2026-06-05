@@ -57,36 +57,3 @@ func (h *QuestionHandler) Answer(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, data)
 }
-
-func (h *QuestionHandler) GetState(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	data, status, err := h.svc.GetState(token)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	writeJSON(w, data)
-}
-
-func (h *QuestionHandler) SetState(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	var req model.SetStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	data, status, err := h.svc.SetState(token, req.State)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	writeJSON(w, data)
-}

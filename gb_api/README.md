@@ -5,6 +5,7 @@ REST API server for g-books, built with Go's standard `net/http` library and JWT
 - **Runtime:** Go 1.24+
 - **Port:** `8080`
 - **Auth scheme:** JWT (HS256) — short-lived access tokens + single-use rotating refresh tokens
+- **Real-time:** server-state changes are pushed to subscribers over a WebSocket (`GET /api/state/ws`)
 
 ---
 
@@ -57,6 +58,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/question/answer` | Bearer | Answer a question session (students only in `QUIZ` state); returns whether it was correct |
 | `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ`) |
 | `POST /api/state` | Bearer (> Student) | Transition the server state |
+| `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every `NORMAL` ⇄ `QUIZ` transition |
 
 ---
 
@@ -384,6 +386,41 @@ Transition the server state. Only Teachers and Admins may call it.
 | `400`  | Malformed JSON body, or a state other than `NORMAL` / `QUIZ` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
+
+---
+
+### `GET /api/state/ws`
+
+Subscribe to server-state changes over a WebSocket. Any authenticated user may
+subscribe (same access policy as `GET /api/state`). On connect the server sends
+the current state immediately, then pushes a message on every transition into or
+out of `QUIZ`.
+
+Because browsers cannot set headers on a WebSocket handshake, the access token
+may be supplied either way:
+
+- `Authorization: Bearer <access_token>` header, or
+- `?access_token=<access_token>` query parameter.
+
+**Messages** — each frame is JSON, identical in shape to `GET /api/state`:
+
+```json
+{ "state": "QUIZ" }
+```
+
+**Lifecycle**
+
+- The first message is the current state at connect time (a snapshot).
+- Subsequent messages are sent only when the state actually changes; a single
+  transition is broadcast to every connected subscriber.
+- On server shutdown each connection is closed gracefully with a WebSocket
+  Going-Away (`1001`) close frame.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing or invalid access token — the handshake is rejected before the upgrade |
 
 ---
 

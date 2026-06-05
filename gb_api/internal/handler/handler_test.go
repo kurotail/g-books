@@ -420,20 +420,18 @@ func TestAuthHandler_QueryUser_MissingToken(t *testing.T) {
 // State gate: students may only Generate/Answer while the state is QUIZ;
 // teachers and admins always may.
 
-// forceState sets the global quiz state via the SetState handler (which needs a
-// teacher), then restores the prior role and resets to NORMAL on cleanup.
+// forceState sets the global quiz state via the SetState handler and resets to
+// NORMAL on cleanup. The login user is a teacher (its role lives in authRepo, on
+// which StateSvc depends), so the write is authorized regardless of the
+// questionRepo role the question-gate tests may have set.
 func (f *fixture) forceState(t *testing.T, tok string, s model.ServerState) {
 	t.Helper()
-	prevRole := f.questionRepo.Role
-	f.questionRepo.Role = model.RoleTeacher
-	rec := do(t, f.question.SetState, tok, map[string]any{"state": string(s)})
+	rec := do(t, f.state.SetState, tok, map[string]any{"state": string(s)})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("forceState %q: expected 200, got %d: %s", s, rec.Code, rec.Body.String())
 	}
-	f.questionRepo.Role = prevRole
 	t.Cleanup(func() {
-		f.questionRepo.Role = model.RoleTeacher
-		do(t, f.question.SetState, tok, map[string]any{"state": string(model.StateNormal)})
+		do(t, f.state.SetState, tok, map[string]any{"state": string(model.StateNormal)})
 	})
 }
 
@@ -442,8 +440,8 @@ func TestQuestionHandler_MissingToken(t *testing.T) {
 	cases := map[string]http.HandlerFunc{
 		"Generate": f.question.Generate,
 		"Answer":   f.question.Answer,
-		"GetState": f.question.GetState,
-		"SetState": f.question.SetState,
+		"GetState": f.state.GetState,
+		"SetState": f.state.SetState,
 	}
 	for name, fn := range cases {
 		rec := do(t, fn, "", map[string]any{"group_id": 0, "state": "QUIZ"})
@@ -458,7 +456,7 @@ func TestQuestionHandler_GetState_ReflectsTransitions(t *testing.T) {
 	tok := f.login(t)
 
 	readState := func() model.ServerState {
-		rec := do(t, f.question.GetState, tok, nil)
+		rec := do(t, f.state.GetState, tok, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GetState: expected 200, got %d", rec.Code)
 		}
@@ -542,9 +540,9 @@ func TestQuestionHandler_TeacherAllowedInNormalState(t *testing.T) {
 func TestQuestionHandler_SetState_StudentForbidden(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
-	f.questionRepo.Role = model.RoleStudent
+	f.authRepo.Roles["user"] = model.RoleStudent
 
-	rec := do(t, f.question.SetState, tok, map[string]any{"state": "QUIZ"})
+	rec := do(t, f.state.SetState, tok, map[string]any{"state": "QUIZ"})
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("SetState as student: expected 403, got %d", rec.Code)
 	}

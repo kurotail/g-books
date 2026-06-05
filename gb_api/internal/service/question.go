@@ -71,37 +71,3 @@ func (s *QuestionSvc) Answer(accessToken, session string, ans uint) ([]byte, int
 	}
 	return data, http.StatusOK, nil
 }
-
-func (s *QuestionSvc) GetState(accessToken string) ([]byte, int, error) {
-	if _, err := validateAccessToken(accessToken); err != nil {
-		return nil, http.StatusUnauthorized, err
-	}
-	data, err := json.Marshal(model.StateResponse{State: getState()})
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	return data, http.StatusOK, nil
-}
-
-func (s *QuestionSvc) SetState(accessToken string, state model.ServerState) ([]byte, int, error) {
-	claims, err := validateAccessToken(accessToken)
-	if err != nil {
-		return nil, http.StatusUnauthorized, err
-	}
-	role, err := s.repo.GetRole(claims.Username)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	if role <= model.RoleStudent {
-		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
-	}
-	if state != model.StateNormal && state != model.StateQuiz {
-		return nil, http.StatusBadRequest, fmt.Errorf("不合法的狀態: %q", state)
-	}
-	setState(state)
-	data, err := json.Marshal(model.StateResponse{State: state})
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	return data, http.StatusOK, nil
-}

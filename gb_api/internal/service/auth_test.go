@@ -17,7 +17,8 @@ func newMockAuthRepo() *mock.AuthRepo {
 }
 
 func newTestAuthSvc() *AuthSvc {
-	return NewAuthSvc(newMockAuthRepo())
+	r := newMockAuthRepo()
+	return NewAuthSvc(r, r)
 }
 
 func loginTokenPair(t *testing.T, s *AuthSvc) map[string]string {
@@ -111,7 +112,7 @@ func TestLoginByName_WrongUsername(t *testing.T) {
 
 func TestRegisterUser_TeacherCreatesStudent(t *testing.T) {
 	repo := newMockAuthRepo()
-	s := NewAuthSvc(repo)
+	s := NewAuthSvc(repo, repo)
 
 	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleStudent)
 	if err != nil {
@@ -131,7 +132,7 @@ func TestRegisterUser_TeacherCreatesStudent(t *testing.T) {
 func TestRegisterUser_StudentForbidden(t *testing.T) {
 	repo := newMockAuthRepo()
 	repo.Roles["user"] = model.RoleStudent
-	s := NewAuthSvc(repo)
+	s := NewAuthSvc(repo, repo)
 
 	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleStudent)
 	if err == nil {
@@ -143,7 +144,7 @@ func TestRegisterUser_StudentForbidden(t *testing.T) {
 }
 
 func TestRegisterUser_CannotCreateAdmin(t *testing.T) {
-	s := NewAuthSvc(newMockAuthRepo())
+	s := newTestAuthSvc()
 
 	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleAdmin)
 	if err == nil {
@@ -155,7 +156,7 @@ func TestRegisterUser_CannotCreateAdmin(t *testing.T) {
 }
 
 func TestRegisterUser_DuplicateUser(t *testing.T) {
-	s := NewAuthSvc(newMockAuthRepo())
+	s := newTestAuthSvc()
 
 	status, err := s.RegisterUser(tokenFor(t, "user"), "user", "pw", model.RoleStudent)
 	if err == nil {
@@ -167,7 +168,7 @@ func TestRegisterUser_DuplicateUser(t *testing.T) {
 }
 
 func TestRegisterUser_InvalidToken(t *testing.T) {
-	s := NewAuthSvc(newMockAuthRepo())
+	s := newTestAuthSvc()
 
 	status, err := s.RegisterUser("invalid.token", "alice", "pw", model.RoleStudent)
 	if err == nil {

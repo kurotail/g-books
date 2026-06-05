@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,9 +13,13 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 )
 
 const base = "http://localhost:8080"
+const wsBase = "ws://localhost:8080"
 
 var client = &http.Client{Timeout: 5 * time.Second}
 
@@ -72,6 +77,177 @@ func tokens(body string) (access, refresh string) {
 }
 
 func section(name string) { fmt.Printf("\n=== %s ===\n", name) }
+
+// stateEvent mirrors the JSON pushed over the state WebSocket.
+type stateEvent struct {
+	State string `json:"state"`
+}
+
+// readEvent reads one JSON frame with a short deadline.
+func readEvent(conn *websocket.Conn) (stateEvent, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var ev stateEvent
+	err := wsjson.Read(ctx, conn, &ev)
+	return ev, err
+}
+
+// wsChecks exercises the /api/state/ws endpoint: header auth, the on-connect
+// snapshot, live QUIZ/NORMAL transitions, query-param auth, and rejection of
+// unauthenticated dials.
+func wsChecks(access, sAccess string) {
+	// Unauthenticated dial must be rejected before the upgrade (HTTP 401).
+	dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Second)
+	_, resp, err := websocket.Dial(dctx, wsBase+"/api/state/ws", nil)
+	dcancel()
+	gotStatus := -1
+	if resp != nil {
+		gotStatus = resp.StatusCode
+	}
+	checks++
+	if err != nil && gotStatus == http.StatusUnauthorized {
+		fmt.Printf("[OK] %-46s -> %d (want 401)\n", "ws dial without token rejected", gotStatus)
+	} else {
+		fails++
+		fmt.Printf("[XX] %-46s -> %d (want 401, err=%v)\n", "ws dial without token rejected", gotStatus, err)
+	}
+
+	// Authenticated dial via Authorization header.
+	dctx, dcancel = context.WithTimeout(context.Background(), 3*time.Second)
+	conn, _, err := websocket.Dial(dctx, wsBase+"/api/state/ws", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + access}},
+	})
+	dcancel()
+	if err != nil {
+		checks++
+		fails++
+		fmt.Printf("[XX] %-46s -> err=%v\n", "ws dial with header token", err)
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// On-connect snapshot (state was left at NORMAL by the prior section).
+	ev, err := readEvent(conn)
+	showWS("ws snapshot on connect (NORMAL)", ev, err, "NORMAL")
+
+	// Flip to QUIZ via REST and expect a pushed event.
+	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ"})
+	show("set state QUIZ (to trigger ws)", st, 200, "")
+	ev, err = readEvent(conn)
+	showWS("ws receives QUIZ transition", ev, err, "QUIZ")
+
+	// Flip back to NORMAL and expect another event.
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
+	show("set state NORMAL (to trigger ws)", st, 200, "")
+	ev, err = readEvent(conn)
+	showWS("ws receives NORMAL transition", ev, err, "NORMAL")
+
+	// A non-teacher token may still subscribe (same policy as GET /api/state),
+	// this time authenticating via the ?access_token= query fallback.
+	dctx, dcancel = context.WithTimeout(context.Background(), 3*time.Second)
+	sConn, _, err := websocket.Dial(dctx, wsBase+"/api/state/ws?access_token="+sAccess, nil)
+	dcancel()
+	if err != nil {
+		checks++
+		fails++
+		fmt.Printf("[XX] %-46s -> err=%v\n", "ws dial with query-param token", err)
+		return
+	}
+	defer sConn.Close(websocket.StatusNormalClosure, "")
+	ev, err = readEvent(sConn)
+	showWS("ws query-param auth snapshot", ev, err, "NORMAL")
+}
+
+// showWS prints one WebSocket check comparing the received event to expectations.
+func showWS(title string, ev stateEvent, err error, wantState string) {
+	checks++
+	if err == nil && ev.State == wantState {
+		fmt.Printf("[OK] %-46s -> {state:%s}\n", title, ev.State)
+		return
+	}
+	fails++
+	fmt.Printf("[XX] %-46s -> {state:%s} (want {state:%s} err=%v)\n",
+		title, ev.State, wantState, err)
+}
+
+// allReceived reads one frame from every connection and reports whether they
+// all carry wantState. It always drains every conn (no early return) so a single
+// slow/wrong subscriber does not leave the others' frames unread.
+func allReceived(conns []*websocket.Conn, wantState string) bool {
+	ok := true
+	for i, c := range conns {
+		ev, err := readEvent(c)
+		if err != nil || ev.State != wantState {
+			ok = false
+			fmt.Printf("       subscriber %d: got {state:%s} err=%v\n", i, ev.State, err)
+		}
+	}
+	return ok
+}
+
+// wsFanout opens many student subscribers on /api/state/ws and verifies that a
+// single teacher-driven transition is broadcast to every one of them. All
+// subscribers share one student token — the endpoint authorizes any user, and a
+// token may back any number of independent connections.
+func wsFanout(access, sAccess string) {
+	const n = 10
+
+	// Establish a known NORMAL baseline before anyone subscribes, so every
+	// snapshot is NORMAL and the later flip to QUIZ is a real transition.
+	req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
+
+	conns := make([]*websocket.Conn, 0, n)
+	defer func() {
+		for _, c := range conns {
+			c.Close(websocket.StatusNormalClosure, "")
+		}
+	}()
+
+	snapOK := true
+	for i := range n {
+		dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		c, _, err := websocket.Dial(dctx, wsBase+"/api/state/ws?access_token="+sAccess, nil)
+		dcancel()
+		if err != nil {
+			snapOK = false
+			fmt.Printf("       student %d dial err: %v\n", i, err)
+			break
+		}
+		conns = append(conns, c)
+		if ev, err := readEvent(c); err != nil || ev.State != "NORMAL" {
+			snapOK = false
+		}
+	}
+	checks++
+	if snapOK && len(conns) == n {
+		fmt.Printf("[OK] %-46s -> %d connected, all NORMAL snapshot\n", "fanout: students subscribe", n)
+	} else {
+		fails++
+		fmt.Printf("[XX] %-46s -> %d/%d connected ok=%v\n", "fanout: students subscribe", len(conns), n, snapOK)
+	}
+
+	// One teacher transition must reach every subscriber.
+	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ"})
+	show("fanout: teacher sets QUIZ", st, 200, "")
+	checks++
+	if allReceived(conns, "QUIZ") {
+		fmt.Printf("[OK] %-46s -> all %d received QUIZ\n", "fanout: every subscriber notified", len(conns))
+	} else {
+		fails++
+		fmt.Printf("[XX] %-46s -> not all %d received QUIZ\n", "fanout: every subscriber notified", len(conns))
+	}
+
+	// And again on the way back to NORMAL.
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
+	show("fanout: teacher sets NORMAL", st, 200, "")
+	checks++
+	if allReceived(conns, "NORMAL") {
+		fmt.Printf("[OK] %-46s -> all %d received NORMAL\n", "fanout: every subscriber notified", len(conns))
+	} else {
+		fails++
+		fmt.Printf("[XX] %-46s -> not all %d received NORMAL\n", "fanout: every subscriber notified", len(conns))
+	}
+}
 
 func main() {
 	section("AUTH")
@@ -192,6 +368,12 @@ func main() {
 
 	st, body = req("POST", "/api/question/generate", sAccess, map[string]any{"group_id": 0})
 	show("student generates in NORMAL (blocked)", st, 403, body)
+
+	section("STATE WEBSOCKET")
+	wsChecks(access, sAccess)
+
+	section("STATE WS FANOUT")
+	wsFanout(access, sAccess)
 
 	section("REFRESH")
 

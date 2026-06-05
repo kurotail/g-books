@@ -2,34 +2,26 @@ package main
 
 import (
 	"context"
-	"log"
+	"errors"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"gb-api/internal/handler"
+	"gb-api/internal/logger"
 	"gb-api/internal/repo"
 	"gb-api/internal/service"
 )
 
-func main() {
-	authRepo := repo.InitAuthRepo()
-	authSvc := service.NewAuthSvc(authRepo)
-	authHandler := handler.NewAuthHandler(authSvc)
-
-	itemRepo := repo.InitItemRepo()
-	itemSvc := service.NewItemSvc(itemRepo)
-	itemHandler := handler.NewItemHandler(itemSvc)
-
-	questionRepo := repo.InitQuestionRepo()
-	questionSvc := service.NewQuestionSvc(questionRepo)
-	questionHandler := handler.NewQuestionHandler(questionSvc)
-
-	groupRepo := repo.InitGroupRepo()
-	groupSvc := service.NewGroupSvc(groupRepo)
-	groupHandler := handler.NewGroupHandler(groupSvc)
+func routes() (http.Handler, *handler.StateHandler) {
+	authHandler := handler.NewAuthHandler(service.NewAuthSvc(repo.InitUserRepo(), repo.InitRefreshTokenRepo()))
+	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo()))
+	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo()))
+	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
+	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo()))
 
 	mux := http.NewServeMux()
 
@@ -50,33 +42,45 @@ func main() {
 	mux.HandleFunc("POST /api/question/generate", questionHandler.Generate)
 	mux.HandleFunc("POST /api/question/answer", questionHandler.Answer)
 
-	mux.HandleFunc("GET /api/state", questionHandler.GetState)
-	mux.HandleFunc("POST /api/state", questionHandler.SetState)
+	mux.HandleFunc("GET /api/state", stateHandler.GetState)
+	mux.HandleFunc("POST /api/state", stateHandler.SetState)
+	mux.HandleFunc("GET /api/state/ws", stateHandler.StateSocket)
 
+	return logger.RequestLogger(mux), stateHandler
+}
+
+func main() {
+	mux, stateHandler := routes()
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
 	}
-	go func () {
-		log.Println("伺服器已啟動，監聽埠號 :8080...")
-		if err := http.ListenAndServe(":8080", mux); err != nil {
-			log.Fatalf("伺服器啟動失敗: %v", err)
+
+	go func() {
+		logger.L.Info("server started, port " + strings.TrimPrefix(server.Addr, ":"))
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.L.Error("server failed to start", "err", err)
+			os.Exit(1)
 		}
 	}()
 
+	// Block until an interrupt or terminate signal is received.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
-	// Block until a signal is received
 	<-quit
-	log.Println("Shutting down server...")
+
+	logger.L.Info("shutting down server...")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v\n", err)
+
+	if err := stateHandler.Shutdown(ctx); err != nil {
+		logger.L.Warn("websocket forced to close", "err", err)
 	}
 
-	// Close database connections or other resources here
+	if err := server.Shutdown(ctx); err != nil {
+		logger.L.Error("server forced to shutdown", "err", err)
+		os.Exit(1)
+	}
 
-	log.Println("Server exited")
+	logger.L.Info("server exited")
 }

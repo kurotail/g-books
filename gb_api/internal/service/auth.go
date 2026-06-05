@@ -23,11 +23,12 @@ const (
 )
 
 type AuthSvc struct {
-	repo repo.AuthRepo
+	users  repo.UserRepo
+	tokens repo.RefreshTokenRepo
 }
 
-func NewAuthSvc(r repo.AuthRepo) *AuthSvc {
-	return &AuthSvc{repo: r}
+func NewAuthSvc(users repo.UserRepo, tokens repo.RefreshTokenRepo) *AuthSvc {
+	return &AuthSvc{users: users, tokens: tokens}
 }
 
 func signToken(claims *model.Claims, key []byte) (string, error) {
@@ -119,7 +120,7 @@ func validateAccessToken(tokenString string) (*model.Claims, error) {
 }
 
 func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
-	ok, err := s.repo.ValidateCredentials(creds.Username, creds.Password)
+	ok, err := s.users.ValidateCredentials(creds.Username, creds.Password)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -132,7 +133,7 @@ func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
 		return nil, http.StatusInternalServerError, err
 	}
 
-	s.repo.StoreRefreshToken(jti)
+	s.tokens.StoreRefreshToken(jti)
 
 	data, err := marshalTokenPair(accessToken, refreshToken)
 	if err != nil {
@@ -146,7 +147,7 @@ func (s *AuthSvc) QueryUser(accessToken string) ([]byte, int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	users, err := s.repo.GetAllUsers()
+	users, err := s.users.GetAllUsers()
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -162,7 +163,7 @@ func (s *AuthSvc) RegisterUser(accessToken, username, password string, role uint
 	if err != nil {
 		return http.StatusUnauthorized, err
 	}
-	callerRole, err := s.repo.GetRole(claims.Username)
+	callerRole, err := s.users.GetRole(claims.Username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -172,7 +173,7 @@ func (s *AuthSvc) RegisterUser(accessToken, username, password string, role uint
 	if role > model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("無法建立此權限的使用者")
 	}
-	if err := s.repo.CreateUser(username, password, role); err != nil {
+	if err := s.users.CreateUser(username, password, role); err != nil {
 		if errors.Is(err, apperr.ErrUserExists) {
 			return http.StatusConflict, err
 		}
@@ -196,7 +197,7 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("token 類型錯誤")
 	}
 
-	ok, err := s.repo.ConsumeRefreshToken(claims.ID)
+	ok, err := s.tokens.ConsumeRefreshToken(claims.ID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -208,7 +209,7 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	s.repo.StoreRefreshToken(jti)
+	s.tokens.StoreRefreshToken(jti)
 
 	data, err := marshalTokenPair(accessToken, newRefresh)
 	if err != nil {

@@ -13,13 +13,15 @@ import (
 )
 
 var (
-	_ repo.AuthRepo     = (*AuthRepo)(nil)
-	_ repo.ItemRepo     = (*ItemRepo)(nil)
-	_ repo.GroupRepo    = (*GroupRepo)(nil)
-	_ repo.QuestionRepo = (*QuestionRepo)(nil)
+	_ repo.UserRepo         = (*AuthRepo)(nil)
+	_ repo.RefreshTokenRepo = (*AuthRepo)(nil)
+	_ repo.ItemRepo         = (*ItemRepo)(nil)
+	_ repo.GroupRepo        = (*GroupRepo)(nil)
+	_ repo.QuestionRepo     = (*QuestionRepo)(nil)
 )
 
-// AuthRepo is an in-memory repo.AuthRepo.
+// AuthRepo is an in-memory user-account + refresh-token store, implementing
+// both repo.UserRepo and repo.RefreshTokenRepo.
 type AuthRepo struct {
 	Users         map[string]string
 	Roles         map[string]uint
