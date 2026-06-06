@@ -1,0 +1,190 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../core/theme/app_colors.dart';
+import '../../core/widgets/parchment_scaffold.dart';
+import '../../core/widgets/step_indicator.dart';
+import '../../state/app_state.dart';
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _nameCtrl = TextEditingController();
+  final _seatCtrl = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _seatCtrl.dispose();
+    super.dispose();
+  }
+
+  void _login() {
+    final name = _nameCtrl.text.trim();
+    final seat = _seatCtrl.text.trim();
+    if (name.isEmpty || seat.isEmpty) {
+      setState(() => _error = '請輸入姓名與座號');
+      return;
+    }
+    final err = context.read<AppState>().loginWithMock(name, seat);
+    if (err != null) setState(() => _error = err);
+    // GoRouter refreshListenable handles redirect on success
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ParchmentScaffold(
+      child: Stack(
+        children: [
+          // Watermark logo
+          Center(
+            child: Opacity(
+              opacity: 0.10,
+              child: Image.asset('assets/logo.png', width: 300),
+            ),
+          ),
+          // 蹟不可師 subtitle watermark
+          Positioned(
+            bottom: MediaQuery.of(context).size.height * 0.24,
+            left: 0,
+            right: 240,
+            child: Column(
+              children: [
+                Text(
+                  '蹟不可師',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 38,
+                    color: AppColors.labelText.withValues(alpha: 0.28),
+                    letterSpacing: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  '— G-BOOKS ~',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColors.labelText.withValues(alpha: 0.28),
+                    letterSpacing: 4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Login form
+          Positioned(
+            left: 0,
+            right: 240,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: SizedBox(
+                width: 300,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _label('姓名'),
+                    const SizedBox(height: 8),
+                    _textField(_nameCtrl, '請輸入姓名'),
+                    const SizedBox(height: 20),
+                    _label('座號'),
+                    const SizedBox(height: 8),
+                    _textField(_seatCtrl, '請輸入座號', isNumber: true),
+                    if (_error != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red, fontSize: 13),
+                      ),
+                    ],
+                    const SizedBox(height: 32),
+                    _loginButton(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Step indicator
+          Positioned(
+            right: 40,
+            top: 0,
+            bottom: 0,
+            width: 160,
+            child: const Center(
+              child: StepIndicator(
+                steps: ['登陸帳號', '上傳個人頭貼', '完成'],
+                currentStep: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _label(String text) => Text(
+        text,
+        style: const TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.w700,
+          color: AppColors.labelText,
+        ),
+      );
+
+  Widget _textField(
+    TextEditingController ctrl,
+    String hint, {
+    bool isNumber = false,
+  }) {
+    return TextField(
+      controller: ctrl,
+      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      style: const TextStyle(color: Colors.white, fontSize: 16),
+      onChanged: (_) => setState(() => _error = null),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: AppColors.inputHint, fontSize: 14),
+        filled: true,
+        fillColor: AppColors.inputFieldBg,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(30),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(30),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(30),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+
+  Widget _loginButton() => SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          onPressed: _login,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.buttonDark,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+            elevation: 0,
+          ),
+          child: const Text(
+            '登 入',
+            style: TextStyle(fontSize: 20, letterSpacing: 6, fontWeight: FontWeight.w700),
+          ),
+        ),
+      );
+}
