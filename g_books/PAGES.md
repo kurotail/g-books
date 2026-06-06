@@ -78,14 +78,45 @@ flowchart TD
 - 顯示 G-BOOKS 蹟不可師 Logo 與載入進度。
 - 完成後進入登入頁。
 
-## 2. 登入 ✅
-**來源**：`登入頁面與主畫面/ipad-pro-12-9-2`（羊皮紙底、置中 Logo、底部古蹟剪影）
+## 2. 登入流程 ✅
 
-- 欄位：**姓名**（請輸入姓名）、**座號**（請輸入座號）。
-- 「登入」→ 進入古蹟選擇。
-- 角色判定（學生 / 老師）之後串 API；本階段預設學生。
+### 2.1 登入頁（/login）
+- 背景：羊皮紙底（`bg_view.png`）、置中 Logo 浮水印、底部古蹟剪影。
+- 欄位：**姓名** + **座號**。
+- 右側步驟指示器（目前步驟以圓角框標示）。
+- 登入成功後由 GoRouter redirect 自動導向。
 
-> ⚠️ 與後端目前 `username/password` 不同（後端登入欄位待協調）。
+> ⚠️ 後端登入欄位（姓名 / 座號 vs username / password）待協調；本階段使用 mock 資料。
+
+### 2.2 初次登入流程（首次 `hasCompletedSetup == false`）
+
+#### 一般學生
+```
+登入 → 上傳個人頭貼（/setup/personal-avatar）→ 完成 → 古蹟選擇
+```
+步驟指示器：登陸帳號 → **上傳個人頭貼** → 完成
+
+#### 組長（isLeader == true）
+```
+登入 → 上傳個人頭貼 → 上傳小組頭貼（/setup/group-avatar）→ 小組命名（/setup/group-name）→ 完成 → 古蹟選擇
+```
+步驟指示器：登陸帳號 → 上傳個人頭貼 → **上傳小組頭貼** → 小組命名 → 完成
+
+### 2.3 上傳頭貼頁（個人 / 小組共用元件 UploadAvatarScreen）
+- 標題說明文字（個人 / 小組版本）。
+- 圓形木框頭像預覽（CustomPaint 刻度框）。
+- 未選圖：**上傳照片**（gallery）+ **拍攝照片**（camera）按鈕，使用 `image_picker`。
+- 已選圖：**確定** + **重新上傳** 按鈕。
+- 右上角返回鍵（↩）、右下角「略過 >」。
+- 後端串接點已預留（`setPersonalAvatar` / `setGroupAvatar`）。
+
+### 2.4 小組命名頁（/setup/group-name）
+- 輸入小組名稱，確定後儲存並進入古蹟選擇。
+- 可略過（小組名稱留空）。
+- 後端串接點已預留（`setGroupName`）。
+
+### 2.5 再次登入（hasCompletedSetup == true）
+- GoRouter redirect 直接導向 `/heritage-selection`，跳過所有設定步驟。
 
 ## 3. 古蹟選擇 ✅
 **來源**：`遊戲流程/page.html`
@@ -155,6 +186,50 @@ flowchart TD
 ## 11. 老師介面 ⬜（預留，先不實作）
 - 指定當堂古蹟、開放 / 關閉採集與攻防、控制節奏、結算。
 - 前端保留路由與狀態切換掛點（本階段以開發用開關模擬遊戲階段）。
+
+---
+
+## Mock 資料（`lib/data/mock_data.dart`）
+
+> 本階段用於模擬後端回傳，之後串 API 時替換。
+
+### 使用者（mockUsers）
+
+| 姓名 | 座號 | 組別 | 是否組長 |
+|------|------|------|----------|
+| 王小明 | 1 | 1 | ✅ |
+| 李小花 | 2 | 1 | ❌ |
+| 張大山 | 3 | 2 | ✅ |
+| 陳小芳 | 4 | 2 | ❌ |
+| 林小豪 | 5 | 3 | ✅ |
+| 黃小玲 | 6 | 3 | ❌ |
+
+### 小組（mockGroups）
+
+| 組別 ID | 初始名稱 | 頭貼 |
+|---------|----------|------|
+| 1 | （空，待命名） | null |
+| 2 | （空，待命名） | null |
+| 3 | （空，待命名） | null |
+
+### UserModel 欄位
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `name` | String | 姓名 |
+| `seatNumber` | String | 座號 |
+| `groupId` | int | 所屬組別 ID |
+| `isLeader` | bool | 是否為組長 |
+| `hasCompletedSetup` | bool | 是否已完成初次設定（預設 false） |
+| `personalAvatarPath` | String? | 個人頭貼本地路徑，null = 未設定 |
+
+### GroupModel 欄位
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `id` | int | 組別 ID |
+| `name` | String | 小組名稱（預設空字串） |
+| `avatarPath` | String? | 小組頭貼本地路徑，null = 未設定 |
 
 ---
 
