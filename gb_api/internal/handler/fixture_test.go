@@ -89,6 +89,27 @@ func do(t *testing.T, fn http.HandlerFunc, token string, body map[string]any) *h
 	return rec
 }
 
+func doReq(t *testing.T, fn http.HandlerFunc, method, target, token string, body any, pathValues map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	var req *http.Request
+	if body != nil {
+		b, _ := json.Marshal(body)
+		req = httptest.NewRequest(method, target, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req = httptest.NewRequest(method, target, nil)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range pathValues {
+		req.SetPathValue(k, v)
+	}
+	rec := httptest.NewRecorder()
+	fn(rec, req)
+	return rec
+}
+
 // decodeMap parses a JSON object response into map[string]uint.
 func decodeMap(t *testing.T, rec *httptest.ResponseRecorder) map[string]uint {
 	t.Helper()
