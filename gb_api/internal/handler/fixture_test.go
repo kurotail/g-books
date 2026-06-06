@@ -37,18 +37,15 @@ func newFixture() *fixture {
 	}
 	groupRepo := &mock.GroupRepo{
 		UserGroups: map[string]uint{"user": 0},
-		Users:      map[string]bool{"user": true},
-		Roles:      map[string]uint{"user": model.RoleTeacher},
 	}
 	questionRepo := &mock.QuestionRepo{
-		Role:     model.RoleTeacher,
 		Sessions: map[string]model.QuestionSession{},
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
 		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo)),
-		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo)),
-		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo)),
+		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo, authRepo)),
+		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo)),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
 		authRepo:     authRepo,
 		groupRepo:    groupRepo,

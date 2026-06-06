@@ -340,7 +340,7 @@ func TestGroupHandler_SetGroup_MissingUsername(t *testing.T) {
 
 func TestGroupHandler_SetGroup_StudentForbidden(t *testing.T) {
 	f := newFixture()
-	f.groupRepo.Roles["user"] = model.RoleStudent
+	f.authRepo.Roles["user"] = model.RoleStudent
 	tok := f.login(t)
 
 	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 3, "username": "user"})
@@ -482,7 +482,7 @@ func TestQuestionHandler_StudentBlockedInNormalState(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateNormal)
-	f.questionRepo.Role = model.RoleStudent
+	f.authRepo.Roles["user"] = model.RoleStudent
 
 	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
 	if gen.Code != http.StatusForbidden {
@@ -498,7 +498,7 @@ func TestQuestionHandler_StudentAllowedInQuizState(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateQuiz)
-	f.questionRepo.Role = model.RoleStudent
+	f.authRepo.Roles["user"] = model.RoleStudent
 
 	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
 	if gen.Code != http.StatusOK {

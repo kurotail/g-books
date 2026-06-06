@@ -2,19 +2,22 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
+	apperr "gb-api/internal/error"
 	"gb-api/internal/model"
 	"gb-api/internal/repo"
 )
 
 type GroupSvc struct {
-	repo repo.GroupRepo
+	repo  repo.GroupRepo
+	users repo.UserRepo
 }
 
-func NewGroupSvc(r repo.GroupRepo) *GroupSvc {
-	return &GroupSvc{repo: r}
+func NewGroupSvc(r repo.GroupRepo, users repo.UserRepo) *GroupSvc {
+	return &GroupSvc{repo: r, users: users}
 }
 
 func (s *GroupSvc) SetGroup(accessToken, username string, groupID uint) (int, error) {
@@ -22,19 +25,18 @@ func (s *GroupSvc) SetGroup(accessToken, username string, groupID uint) (int, er
 	if err != nil {
 		return http.StatusUnauthorized, err
 	}
-	role, err := s.repo.GetRole(claims.Username)
+	role, err := s.users.GetRole(claims.Username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	if role <= model.RoleStudent {
 		return http.StatusForbidden, fmt.Errorf("權限不足")
 	}
-	ok, err := s.repo.UserExists(username)
-	if err != nil {
+	if _, err := s.users.GetRole(username); err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
+		}
 		return http.StatusInternalServerError, err
-	}
-	if !ok {
-		return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
 	}
 	if err := s.repo.SetUserGroup(username, groupID); err != nil {
 		return http.StatusInternalServerError, err

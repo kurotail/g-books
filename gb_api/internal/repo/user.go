@@ -35,7 +35,11 @@ func (_ *userRepo) GetAllUsers() ([]string, error) {
 func (_ *userRepo) GetRole(username string) (uint, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	return roleOf(username), nil
+	u := db.users[username]
+	if u == nil {
+		return 0, apperr.ErrUserNotFound
+	}
+	return u.Role, nil
 }
 
 func (_ *userRepo) CreateUser(username, password string, role uint) error {

@@ -19,9 +19,9 @@ import (
 func routes() (http.Handler, *handler.StateHandler) {
 	authHandler := handler.NewAuthHandler(service.NewAuthSvc(repo.InitUserRepo(), repo.InitRefreshTokenRepo()))
 	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo()))
-	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo()))
+	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo()))
 	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
-	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo()))
+	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo(), repo.InitUserRepo()))
 
 	mux := http.NewServeMux()
 
@@ -41,6 +41,10 @@ func routes() (http.Handler, *handler.StateHandler) {
 
 	mux.HandleFunc("POST /api/question/generate", questionHandler.Generate)
 	mux.HandleFunc("POST /api/question/answer", questionHandler.Answer)
+	mux.HandleFunc("POST /api/question/upload", questionHandler.Upload)
+	mux.HandleFunc("GET /api/question/search", questionHandler.Search)
+	mux.HandleFunc("PUT /api/question/{id}", questionHandler.Update)
+	mux.HandleFunc("DELETE /api/question/{id}", questionHandler.Delete)
 
 	mux.HandleFunc("GET /api/state", stateHandler.GetState)
 	mux.HandleFunc("POST /api/state", stateHandler.SetState)

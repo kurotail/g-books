@@ -4,8 +4,6 @@ type GroupRepo interface {
 	SetUserGroup(username string, groupID uint) error
 	GetUserGroup(username string) (uint, bool, error)
 	GetGroupMembers(groupID uint) ([]string, error)
-	UserExists(username string) (bool, error)
-	GetRole(username string) (uint, error)
 }
 
 type groupRepo struct{}
@@ -39,18 +37,6 @@ func (_ *groupRepo) GetGroupMembers(groupID uint) ([]string, error) {
 		}
 	}
 	return members, nil
-}
-
-func (_ *groupRepo) UserExists(username string) (bool, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	return db.users[username] != nil, nil
-}
-
-func (_ *groupRepo) GetRole(username string) (uint, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	return roleOf(username), nil
 }
 
 func InitGroupRepo() GroupRepo {
