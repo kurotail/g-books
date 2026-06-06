@@ -1,0 +1,86 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"gb-api/internal/handler"
+	"gb-api/internal/logger"
+	"gb-api/internal/repo"
+	"gb-api/internal/service"
+)
+
+func routes() (http.Handler, *handler.StateHandler) {
+	authHandler := handler.NewAuthHandler(service.NewAuthSvc(repo.InitUserRepo(), repo.InitRefreshTokenRepo()))
+	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo()))
+	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo()))
+	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
+	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo()))
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /api/login", authHandler.Login)
+	mux.HandleFunc("POST /api/register", authHandler.Register)
+	mux.HandleFunc("POST /api/refresh", authHandler.Refresh)
+	mux.HandleFunc("GET /api/users", authHandler.QueryUser)
+
+	mux.HandleFunc("POST /api/item/inv", itemHandler.QueryInv)
+	mux.HandleFunc("POST /api/item/slot", itemHandler.QuerySlot)
+	mux.HandleFunc("POST /api/item/inv2slot", itemHandler.TranInv2Slot)
+	mux.HandleFunc("POST /api/item/slot2inv", itemHandler.TranSlot2Inv)
+
+	mux.HandleFunc("POST /api/group/set", groupHandler.SetGroup)
+	mux.HandleFunc("GET /api/group", groupHandler.QueryGroup)
+	mux.HandleFunc("POST /api/group/members", groupHandler.QueryMember)
+
+	mux.HandleFunc("POST /api/question/generate", questionHandler.Generate)
+	mux.HandleFunc("POST /api/question/answer", questionHandler.Answer)
+
+	mux.HandleFunc("GET /api/state", stateHandler.GetState)
+	mux.HandleFunc("POST /api/state", stateHandler.SetState)
+	mux.HandleFunc("GET /api/state/ws", stateHandler.StateSocket)
+
+	return logger.RequestLogger(mux), stateHandler
+}
+
+func main() {
+	mux, stateHandler := routes()
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
+	go func() {
+		logger.L.Info("server started, port " + strings.TrimPrefix(server.Addr, ":"))
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.L.Error("server failed to start", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Block until an interrupt or terminate signal is received.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.L.Info("shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := stateHandler.Shutdown(ctx); err != nil {
+		logger.L.Warn("websocket forced to close", "err", err)
+	}
+
+	if err := server.Shutdown(ctx); err != nil {
+		logger.L.Error("server forced to shutdown", "err", err)
+		os.Exit(1)
+	}
+
+	logger.L.Info("server exited")
+}
