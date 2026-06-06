@@ -64,7 +64,6 @@ func (h *hub) subscribe() (<-chan model.ServerState, func()) {
 	return ch, unsub
 }
 
-
 func (h *hub) broadcast(s model.ServerState) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
