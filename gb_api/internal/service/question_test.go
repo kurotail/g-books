@@ -10,11 +10,11 @@ import (
 	"gb-api/internal/repo/mock"
 )
 
-func newMockQuestionRepo(role uint) *mock.QuestionRepo {
-	return &mock.QuestionRepo{
-		Role:     role,
-		Sessions: map[string]model.QuestionSession{},
-	}
+// newQuestionSvc builds a QuestionSvc whose every user reports the given role,
+// returning the service and its underlying question repo mock.
+func newQuestionSvc(role uint) (*QuestionSvc, *mock.QuestionRepo) {
+	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}}
+	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}), r
 }
 
 func accessTokenFor(t *testing.T, username string) string {
@@ -37,8 +37,7 @@ func useState(t *testing.T, s model.ServerState) {
 // --- Generate ---
 
 func TestQuestionSvc_Generate_TeacherSucceeds(t *testing.T) {
-	r := newMockQuestionRepo(model.RoleTeacher)
-	s := NewQuestionSvc(r)
+	s, _ := newQuestionSvc(model.RoleTeacher)
 
 	data, status, err := s.Generate(accessTokenFor(t, "teacher"), 0)
 	if err != nil {
@@ -67,7 +66,7 @@ func TestQuestionSvc_Generate_TeacherSucceeds(t *testing.T) {
 }
 
 func TestQuestionSvc_Generate_StudentForbiddenInNormal(t *testing.T) {
-	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
+	s, _ := newQuestionSvc(model.RoleStudent)
 
 	_, status, err := s.Generate(accessTokenFor(t, "student"), 0)
 	if err == nil {
@@ -79,7 +78,7 @@ func TestQuestionSvc_Generate_StudentForbiddenInNormal(t *testing.T) {
 }
 
 func TestQuestionSvc_Generate_InvalidToken(t *testing.T) {
-	s := NewQuestionSvc(newMockQuestionRepo(model.RoleAdmin))
+	s, _ := newQuestionSvc(model.RoleAdmin)
 
 	_, status, err := s.Generate("bad.token", 0)
 	if err == nil {
@@ -92,7 +91,7 @@ func TestQuestionSvc_Generate_InvalidToken(t *testing.T) {
 
 func TestQuestionSvc_Generate_StudentAllowedInQuizState(t *testing.T) {
 	useState(t, model.StateQuiz)
-	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
+	s, _ := newQuestionSvc(model.RoleStudent)
 
 	_, status, err := s.Generate(accessTokenFor(t, "student"), 0)
 	if err != nil {
@@ -103,12 +102,215 @@ func TestQuestionSvc_Generate_StudentAllowedInQuizState(t *testing.T) {
 	}
 }
 
+// --- Pool management (Upload / Search / Update / Delete) ---
+
+func TestQuestionSvc_Upload_TeacherSucceeds(t *testing.T) {
+	s, r := newQuestionSvc(model.RoleTeacher)
+
+	inputs := []model.QuestionInput{
+		{Description: "2+2?\n(a)3\n(b)4", Answer: 1},
+		{Description: "Capital of France?\n(a)Paris\n(b)Rome", Answer: 0},
+	}
+	data, status, err := s.Upload(accessTokenFor(t, "teacher"), inputs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", status)
+	}
+	var resp model.UploadQuestionsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(resp.Results))
+	}
+	for i, res := range resp.Results {
+		if res.Index != i {
+			t.Errorf("result %d: expected index %d, got %d", i, i, res.Index)
+		}
+		if res.Status != http.StatusCreated {
+			t.Errorf("result %d: expected 201, got %d", i, res.Status)
+		}
+		if res.ID == 0 {
+			t.Errorf("result %d: expected a non-zero id", i)
+		}
+	}
+	if resp.Results[0].ID == resp.Results[1].ID {
+		t.Errorf("expected distinct ids, got %+v", resp.Results)
+	}
+	if len(r.Questions) != 2 {
+		t.Errorf("expected pool to hold 2 questions, got %d", len(r.Questions))
+	}
+}
+
+func TestQuestionSvc_Upload_PartialInvalidContinues(t *testing.T) {
+	s, r := newQuestionSvc(model.RoleTeacher)
+
+	inputs := []model.QuestionInput{
+		{Description: "valid one", Answer: 1},
+		{Description: "", Answer: 0}, // invalid: empty description
+		{Description: "valid two", Answer: 2},
+	}
+	data, status, err := s.Upload(accessTokenFor(t, "teacher"), inputs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", status)
+	}
+	var resp model.UploadQuestionsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(resp.Results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(resp.Results))
+	}
+	// The two valid questions are created; the empty one is rejected but does
+	// not abort the batch.
+	if resp.Results[0].Status != http.StatusCreated || resp.Results[0].ID == 0 {
+		t.Errorf("result 0: expected created with id, got %+v", resp.Results[0])
+	}
+	if resp.Results[1].Status != http.StatusBadRequest || resp.Results[1].Error == "" {
+		t.Errorf("result 1: expected 400 with error, got %+v", resp.Results[1])
+	}
+	if resp.Results[1].ID != 0 {
+		t.Errorf("result 1: rejected question must not carry an id, got %d", resp.Results[1].ID)
+	}
+	if resp.Results[2].Status != http.StatusCreated || resp.Results[2].ID == 0 {
+		t.Errorf("result 2: expected created with id, got %+v", resp.Results[2])
+	}
+	if len(r.Questions) != 2 {
+		t.Errorf("expected pool to hold 2 questions, got %d", len(r.Questions))
+	}
+}
+
+func TestQuestionSvc_Upload_StudentForbidden(t *testing.T) {
+	s, _ := newQuestionSvc(model.RoleStudent)
+
+	_, status, err := s.Upload(accessTokenFor(t, "student"),
+		[]model.QuestionInput{{Description: "x", Answer: 0}})
+	if err == nil {
+		t.Fatal("expected error for student upload")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestQuestionSvc_Upload_EmptyList(t *testing.T) {
+	s, _ := newQuestionSvc(model.RoleTeacher)
+
+	_, status, err := s.Upload(accessTokenFor(t, "teacher"), nil)
+	if err == nil {
+		t.Fatal("expected error for empty list")
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", status)
+	}
+}
+
+func TestQuestionSvc_Upload_InvalidToken(t *testing.T) {
+	s, _ := newQuestionSvc(model.RoleTeacher)
+
+	_, status, err := s.Upload("bad.token",
+		[]model.QuestionInput{{Description: "x", Answer: 0}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
+}
+
+func TestQuestionSvc_Search_FindsMatch(t *testing.T) {
+	s, r := newQuestionSvc(model.RoleTeacher)
+	r.AddQuestions([]model.Question{
+		{Description: "What is six times three?", Answer: 1},
+		{Description: "Capital of France?", Answer: 0},
+	})
+
+	data, status, err := s.Search(accessTokenFor(t, "teacher"), "france")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	var resp model.QuestionListResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(resp.Questions) != 1 || resp.Questions[0].Description != "Capital of France?" {
+		t.Errorf("expected the France question, got %+v", resp.Questions)
+	}
+}
+
+func TestQuestionSvc_Update_Succeeds(t *testing.T) {
+	s, r := newQuestionSvc(model.RoleTeacher)
+	created, _ := s.repo.AddQuestions([]model.Question{{Description: "old", Answer: 0}})
+	id := created[0].ID
+
+	status, err := s.Update(accessTokenFor(t, "teacher"), id,
+		model.QuestionInput{Description: "new", Answer: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if got := r.Questions[id]; got.Description != "new" || got.Answer != 2 {
+		t.Errorf("expected question to be updated, got %+v", got)
+	}
+}
+
+func TestQuestionSvc_Update_NotFound(t *testing.T) {
+	s, _ := newQuestionSvc(model.RoleTeacher)
+
+	status, err := s.Update(accessTokenFor(t, "teacher"), 999,
+		model.QuestionInput{Description: "x", Answer: 0})
+	if err == nil {
+		t.Fatal("expected error for missing question")
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", status)
+	}
+}
+
+func TestQuestionSvc_Delete_Succeeds(t *testing.T) {
+	s, r := newQuestionSvc(model.RoleTeacher)
+	created, _ := s.repo.AddQuestions([]model.Question{{Description: "doomed", Answer: 0}})
+	id := created[0].ID
+
+	status, err := s.Delete(accessTokenFor(t, "teacher"), id)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if _, ok := r.Questions[id]; ok {
+		t.Error("expected question to be deleted")
+	}
+}
+
+func TestQuestionSvc_Delete_NotFound(t *testing.T) {
+	s, _ := newQuestionSvc(model.RoleTeacher)
+
+	status, err := s.Delete(accessTokenFor(t, "teacher"), 999)
+	if err == nil {
+		t.Fatal("expected error for missing question")
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", status)
+	}
+}
+
 // --- Answer ---
 
 func TestQuestionSvc_Answer_Correct(t *testing.T) {
 	useState(t, model.StateQuiz) // let the student through the gate
-	r := newMockQuestionRepo(model.RoleStudent)
-	s := NewQuestionSvc(r)
+	s, r := newQuestionSvc(model.RoleStudent)
 	r.CreateSession(0) // seeds answer = 1
 	id := r.Created
 
@@ -134,8 +336,7 @@ func TestQuestionSvc_Answer_Correct(t *testing.T) {
 
 func TestQuestionSvc_Answer_Wrong(t *testing.T) {
 	useState(t, model.StateQuiz)
-	r := newMockQuestionRepo(model.RoleStudent)
-	s := NewQuestionSvc(r)
+	s, r := newQuestionSvc(model.RoleStudent)
 	r.CreateSession(0)
 	id := r.Created
 
@@ -156,8 +357,7 @@ func TestQuestionSvc_Answer_Wrong(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_StudentForbiddenInNormal(t *testing.T) {
-	r := newMockQuestionRepo(model.RoleStudent)
-	s := NewQuestionSvc(r)
+	s, r := newQuestionSvc(model.RoleStudent)
 	r.CreateSession(0)
 	id := r.Created
 
@@ -175,8 +375,7 @@ func TestQuestionSvc_Answer_StudentForbiddenInNormal(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_TeacherAllowedInNormal(t *testing.T) {
-	r := newMockQuestionRepo(model.RoleTeacher)
-	s := NewQuestionSvc(r)
+	s, r := newQuestionSvc(model.RoleTeacher)
 	r.CreateSession(0)
 	id := r.Created
 
@@ -191,7 +390,7 @@ func TestQuestionSvc_Answer_TeacherAllowedInNormal(t *testing.T) {
 
 func TestQuestionSvc_Answer_UnknownSession(t *testing.T) {
 	useState(t, model.StateQuiz)
-	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
+	s, _ := newQuestionSvc(model.RoleStudent)
 
 	_, status, err := s.Answer(accessTokenFor(t, "student"), "nope", 1)
 	if err == nil {
@@ -204,8 +403,7 @@ func TestQuestionSvc_Answer_UnknownSession(t *testing.T) {
 
 func TestQuestionSvc_Answer_Expired(t *testing.T) {
 	useState(t, model.StateQuiz)
-	r := newMockQuestionRepo(model.RoleStudent)
-	s := NewQuestionSvc(r)
+	s, r := newQuestionSvc(model.RoleStudent)
 	r.Sessions["expired"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(-time.Minute),
 		Question:  model.Question{Answer: 1},
@@ -221,7 +419,7 @@ func TestQuestionSvc_Answer_Expired(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_InvalidToken(t *testing.T) {
-	s := NewQuestionSvc(newMockQuestionRepo(model.RoleStudent))
+	s, _ := newQuestionSvc(model.RoleStudent)
 
 	_, status, err := s.Answer("bad.token", "session-id", 1)
 	if err == nil {

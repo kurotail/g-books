@@ -3,8 +3,11 @@ package handler_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"gb-api/internal/model"
@@ -340,7 +343,7 @@ func TestGroupHandler_SetGroup_MissingUsername(t *testing.T) {
 
 func TestGroupHandler_SetGroup_StudentForbidden(t *testing.T) {
 	f := newFixture()
-	f.groupRepo.Roles["user"] = model.RoleStudent
+	f.authRepo.Roles["user"] = model.RoleStudent
 	tok := f.login(t)
 
 	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 3, "username": "user"})
@@ -482,7 +485,7 @@ func TestQuestionHandler_StudentBlockedInNormalState(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateNormal)
-	f.questionRepo.Role = model.RoleStudent
+	f.authRepo.Roles["user"] = model.RoleStudent
 
 	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
 	if gen.Code != http.StatusForbidden {
@@ -498,7 +501,7 @@ func TestQuestionHandler_StudentAllowedInQuizState(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateQuiz)
-	f.questionRepo.Role = model.RoleStudent
+	f.authRepo.Roles["user"] = model.RoleStudent
 
 	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
 	if gen.Code != http.StatusOK {
@@ -545,5 +548,243 @@ func TestQuestionHandler_SetState_StudentForbidden(t *testing.T) {
 	rec := do(t, f.state.SetState, tok, map[string]any{"state": "QUIZ"})
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("SetState as student: expected 403, got %d", rec.Code)
+	}
+}
+
+// ---- question pool management handler tests ----
+
+func uploadQuestions(t *testing.T, f *fixture, tok string, inputs []model.QuestionInput) []model.QuestionUploadResult {
+	t.Helper()
+	rec := doReq(t, f.question.Upload, http.MethodPost, "/api/question/upload", tok,
+		model.UploadQuestionsRequest{Questions: inputs}, nil)
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("Upload: expected 207, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp model.UploadQuestionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Upload: invalid JSON: %v", err)
+	}
+	if len(resp.Results) != len(inputs) {
+		t.Fatalf("Upload: expected %d results, got %d", len(inputs), len(resp.Results))
+	}
+	return resp.Results
+}
+
+func createdIDs(results []model.QuestionUploadResult) []uint {
+	ids := make([]uint, 0, len(results))
+	for _, r := range results {
+		if r.Status == http.StatusCreated {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids
+}
+
+func searchQuestions(t *testing.T, f *fixture, tok, q string) []model.QuestionRecord {
+	t.Helper()
+	target := "/api/question/search"
+	if q != "" {
+		target += "?q=" + url.QueryEscape(q)
+	}
+	rec := doReq(t, f.question.Search, http.MethodGet, target, tok, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Search(%q): expected 200, got %d: %s", q, rec.Code, rec.Body.String())
+	}
+	var resp model.QuestionListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Search(%q): invalid JSON: %v", q, err)
+	}
+	return resp.Questions
+}
+
+func updateQuestion(t *testing.T, f *fixture, tok string, id uint, in model.QuestionInput) int {
+	t.Helper()
+	idStr := strconv.FormatUint(uint64(id), 10)
+	rec := doReq(t, f.question.Update, http.MethodPut, "/api/question/"+idStr, tok, in,
+		map[string]string{"id": idStr})
+	return rec.Code
+}
+
+func deleteQuestion(t *testing.T, f *fixture, tok string, id uint) int {
+	t.Helper()
+	idStr := strconv.FormatUint(uint64(id), 10)
+	rec := doReq(t, f.question.Delete, http.MethodDelete, "/api/question/"+idStr, tok, nil,
+		map[string]string{"id": idStr})
+	return rec.Code
+}
+
+func TestQuestionHandler_UploadAppendsRepeatedly(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t) // "user" is a Teacher by fixture default
+
+	total := 0
+	for round := 1; round <= 3; round++ {
+		inputs := []model.QuestionInput{
+			{Description: fmt.Sprintf("round %d q1\n(a)x\n(b)y", round), Answer: 0},
+			{Description: fmt.Sprintf("round %d q2\n(a)x\n(b)y", round), Answer: 1},
+		}
+		for i, r := range uploadQuestions(t, f, tok, inputs) {
+			if r.Status != http.StatusCreated || r.ID == 0 {
+				t.Errorf("round %d result %d: expected created with id, got %+v", round, i, r)
+			}
+		}
+		total += len(inputs)
+	}
+
+	all := searchQuestions(t, f, tok, "")
+	if len(all) != total {
+		t.Errorf("expected %d questions in pool, got %d", total, len(all))
+	}
+	// IDs must stay unique across repeated appends.
+	seen := map[uint]bool{}
+	for _, q := range all {
+		if seen[q.ID] {
+			t.Errorf("duplicate id %d in pool", q.ID)
+		}
+		seen[q.ID] = true
+	}
+}
+
+func TestQuestionHandler_UploadPartialInvalid(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	results := uploadQuestions(t, f, tok, []model.QuestionInput{
+		{Description: "valid one", Answer: 0},
+		{Description: "", Answer: 0}, // invalid: empty description
+		{Description: "valid two", Answer: 1},
+	})
+	if results[0].Status != http.StatusCreated || results[0].ID == 0 {
+		t.Errorf("result 0: expected created with id, got %+v", results[0])
+	}
+	if results[1].Status != http.StatusBadRequest || results[1].Error == "" {
+		t.Errorf("result 1: expected 400 with error, got %+v", results[1])
+	}
+	if results[2].Status != http.StatusCreated || results[2].ID == 0 {
+		t.Errorf("result 2: expected created with id, got %+v", results[2])
+	}
+	if got := searchQuestions(t, f, tok, ""); len(got) != 2 {
+		t.Errorf("expected pool to hold 2 questions, got %d", len(got))
+	}
+}
+
+func TestQuestionHandler_SearchSeveralTimes(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	uploadQuestions(t, f, tok, []model.QuestionInput{
+		{Description: "What is six times three?", Answer: 1},
+		{Description: "Capital of France?", Answer: 0},
+		{Description: "Capital of Italy?", Answer: 2},
+		{Description: "Largest planet?", Answer: 3},
+	})
+
+	cases := []struct {
+		query string
+		want  int
+	}{
+		{"capital", 2}, // case-insensitive substring
+		{"France", 1},
+		{"planet", 1},
+		{"six", 1},
+		{"nomatch", 0},
+		{"", 4}, // empty query lists all
+	}
+	for _, c := range cases {
+		if got := searchQuestions(t, f, tok, c.query); len(got) != c.want {
+			t.Errorf("search %q: expected %d matches, got %d (%+v)", c.query, c.want, len(got), got)
+		}
+	}
+}
+
+func TestQuestionHandler_UpdateSeveralTimes(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	ids := createdIDs(uploadQuestions(t, f, tok, []model.QuestionInput{
+		{Description: "old one", Answer: 0},
+		{Description: "old two", Answer: 0},
+		{Description: "old three", Answer: 0},
+	}))
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 created ids, got %d", len(ids))
+	}
+
+	for i, id := range ids {
+		if code := updateQuestion(t, f, tok, id,
+			model.QuestionInput{Description: fmt.Sprintf("updated %d", i), Answer: uint(i)}); code != http.StatusOK {
+			t.Fatalf("Update id %d: expected 200, got %d", id, code)
+		}
+	}
+
+	// Every question now carries its updated description.
+	if got := searchQuestions(t, f, tok, "updated"); len(got) != 3 {
+		t.Errorf("expected 3 updated questions, got %d", len(got))
+	}
+
+	// Updating a missing id returns 404; a non-numeric id returns 400.
+	if code := updateQuestion(t, f, tok, 9999, model.QuestionInput{Description: "nope", Answer: 0}); code != http.StatusNotFound {
+		t.Errorf("Update missing id: expected 404, got %d", code)
+	}
+	bad := doReq(t, f.question.Update, http.MethodPut, "/api/question/abc", tok,
+		model.QuestionInput{Description: "nope", Answer: 0}, map[string]string{"id": "abc"})
+	if bad.Code != http.StatusBadRequest {
+		t.Errorf("Update non-numeric id: expected 400, got %d", bad.Code)
+	}
+}
+
+func TestQuestionHandler_DeleteSeveralTimes(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	ids := createdIDs(uploadQuestions(t, f, tok, []model.QuestionInput{
+		{Description: "doomed one", Answer: 0},
+		{Description: "doomed two", Answer: 0},
+		{Description: "doomed three", Answer: 0},
+	}))
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 created ids, got %d", len(ids))
+	}
+
+	for _, id := range ids {
+		if code := deleteQuestion(t, f, tok, id); code != http.StatusOK {
+			t.Fatalf("Delete id %d: expected 200, got %d", id, code)
+		}
+		// Deleting the same id again returns 404.
+		if code := deleteQuestion(t, f, tok, id); code != http.StatusNotFound {
+			t.Errorf("Delete id %d twice: expected 404, got %d", id, code)
+		}
+	}
+
+	if remaining := searchQuestions(t, f, tok, ""); len(remaining) != 0 {
+		t.Errorf("expected empty pool after deletes, got %d", len(remaining))
+	}
+}
+
+func TestQuestionHandler_PoolManagement_StudentForbidden(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+	// Seed one question as a teacher, then demote the caller to Student.
+	ids := createdIDs(uploadQuestions(t, f, tok, []model.QuestionInput{{Description: "seed", Answer: 0}}))
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 created id, got %d", len(ids))
+	}
+	id := ids[0]
+	f.authRepo.Roles["user"] = model.RoleStudent
+
+	upload := doReq(t, f.question.Upload, http.MethodPost, "/api/question/upload", tok,
+		model.UploadQuestionsRequest{Questions: []model.QuestionInput{{Description: "x", Answer: 0}}}, nil)
+	if upload.Code != http.StatusForbidden {
+		t.Errorf("student upload: expected 403, got %d", upload.Code)
+	}
+	search := doReq(t, f.question.Search, http.MethodGet, "/api/question/search", tok, nil, nil)
+	if search.Code != http.StatusForbidden {
+		t.Errorf("student search: expected 403, got %d", search.Code)
+	}
+	if code := updateQuestion(t, f, tok, id, model.QuestionInput{Description: "x", Answer: 0}); code != http.StatusForbidden {
+		t.Errorf("student update: expected 403, got %d", code)
+	}
+	if code := deleteQuestion(t, f, tok, id); code != http.StatusForbidden {
+		t.Errorf("student delete: expected 403, got %d", code)
 	}
 }

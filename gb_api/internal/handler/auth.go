@@ -21,6 +21,12 @@ func writeJSON(w http.ResponseWriter, data []byte) {
 	w.Write(data)
 }
 
+func writeJSONStatus(w http.ResponseWriter, status int, data []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write(data)
+}
+
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "只接受 POST 請求", http.StatusMethodNotAllowed)
