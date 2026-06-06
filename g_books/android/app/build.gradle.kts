@@ -19,7 +19,8 @@ android {
         applicationId = "com.example.g_books"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // App targets Android 14 (API 34) and above.
+        minSdk = 34
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
