@@ -61,6 +61,10 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/item/slot2inv` | Bearer | Return a slotted item to the inventory |
 | `POST /api/question/generate` | Bearer | Issue a random question + single-use session (students only in `QUIZ` state) |
 | `POST /api/question/answer` | Bearer | Answer a question session (students only in `QUIZ` state); returns whether it was correct |
+| `POST /api/question/upload` | Bearer (> Student) | Bulk-add questions to the pool; returns a `207` per-question result list |
+| `GET /api/question/search` | Bearer (> Student) | Search the question pool by description substring |
+| `PUT /api/question/{id}` | Bearer (> Student) | Update a pooled question by ID |
+| `DELETE /api/question/{id}` | Bearer (> Student) | Delete a pooled question by ID |
 | `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ`) |
 | `POST /api/state` | Bearer (> Student) | Transition the server state |
 | `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every `NORMAL` ⇄ `QUIZ` transition |
@@ -353,6 +357,133 @@ Answer a question session. The answer is the zero-based index of the chosen opti
 | `400`  | Malformed JSON body, missing `session`, or the session is unknown/already used/expired |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller is a Student and the server is in `NORMAL` state |
+
+---
+
+### Question pool management
+
+The questions handed out by `generate` are drawn from a shared **question pool**.
+Teachers and Admins manage this pool: bulk-upload new questions, search existing
+ones, and update or delete them by ID. All four endpoints require a valid access
+token and a role above Student — Students receive `403`.
+
+Each question is `{ description, answer }`, where `answer` is the zero-based index
+of the correct option and the options are embedded as text inside `description`.
+
+```
+Authorization: Bearer <access_token>
+```
+
+### `POST /api/question/upload`
+
+Add a batch of questions in a single request. Invalid questions (empty
+`description`) are skipped rather than failing the whole batch, so the response is
+a **`207 Multi-Status`** carrying one result per submitted question, in request
+order.
+
+**Request**
+
+```json
+{
+  "questions": [
+    { "description": "2+2?\n(a)3\n(b)4", "answer": 1 },
+    { "description": "", "answer": 0 },
+    { "description": "Capital of France?\n(a)Paris\n(b)Rome", "answer": 0 }
+  ]
+}
+```
+
+**Response `207 Multi-Status`** — each result's `status` is `201` for a created
+question (with its new `id`) or `400` for a rejected one (with an `error`)
+
+```json
+{
+  "results": [
+    { "index": 0, "status": 201, "id": 3 },
+    { "index": 1, "status": 400, "error": "description 不可為空" },
+    { "index": 2, "status": 201, "id": 4 }
+  ]
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or an empty `questions` list |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+
+---
+
+### `GET /api/question/search`
+
+Search the pool by case-insensitive substring of the question description. Omit
+`q` (or pass it empty) to list every question.
+
+**Request** — query parameter
+
+```
+GET /api/question/search?q=france
+```
+
+**Response `200 OK`** — matches in ascending `id` order; the answer is included
+(teacher-facing)
+
+```json
+{
+  "questions": [
+    { "id": 4, "description": "Capital of France?\n(a)Paris\n(b)Rome", "answer": 0 }
+  ]
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+
+---
+
+### `PUT /api/question/{id}`
+
+Overwrite the pooled question with the given `id`.
+
+**Request**
+
+```json
+{ "description": "2+2?\n(a)3\n(b)4", "answer": 1 }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, a non-numeric `{id}`, or an empty `description` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | No question with that `id` |
+
+---
+
+### `DELETE /api/question/{id}`
+
+Remove the pooled question with the given `id`.
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | No question with that `id` |
 
 ---
 

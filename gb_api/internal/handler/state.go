@@ -143,7 +143,6 @@ func (h *StateHandler) StateSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.untrack(conn)
 
-	
 	ctx := conn.CloseRead(r.Context())
 
 	if err := wsjson.Write(ctx, conn, model.StateResponse{State: cur}); err != nil {

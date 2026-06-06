@@ -12,8 +12,6 @@ import (
 func newMockGroupRepo() *mock.GroupRepo {
 	return &mock.GroupRepo{
 		UserGroups: map[string]uint{"alice": 1, "bob": 1, "carol": 2},
-		Users:      map[string]bool{"alice": true, "bob": true, "carol": true, "teacher": true, "student": true},
-		Roles:      map[string]uint{"teacher": model.RoleTeacher, "student": model.RoleStudent},
 	}
 }
 
@@ -29,7 +27,16 @@ func tokenFor(t *testing.T, username string) string {
 
 func newGroupSvc() (*GroupSvc, *mock.GroupRepo) {
 	r := newMockGroupRepo()
-	return NewGroupSvc(r), r
+	users := &mock.AuthRepo{
+		Roles: map[string]uint{
+			"teacher": model.RoleTeacher,
+			"student": model.RoleStudent,
+			"alice":   model.RoleStudent,
+			"bob":     model.RoleStudent,
+			"carol":   model.RoleStudent,
+		},
+	}
+	return NewGroupSvc(r, users), r
 }
 
 // --- SetGroup ---

@@ -25,23 +25,13 @@ type Group struct {
 // Database is an in-memory, relationally-structured store: a set of tables keyed
 // by primary key, guarded by one RWMutex (a single serialized "connection").
 type Database struct {
-	mu            sync.RWMutex
-	users         map[string]*User                 // PK: username
-	groups        map[uint]*Group                  // PK: id
-	sessions      map[string]model.QuestionSession // PK: session_id
-	refreshTokens map[string]struct{}              // PK: jti (refresh token id)
-}
-
-// questionList is the reference set of questions sessions are drawn from.
-var questionList = []model.Question{
-	{
-		Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
-		Answer:      1,
-	},
-	{
-		Description: "Who is F\n(a)HRM\n(b)M's child\n(c)White cat\n(d)O's Big sis",
-		Answer:      0,
-	},
+	mu             sync.RWMutex
+	users          map[string]*User                 // PK: username
+	groups         map[uint]*Group                  // PK: id
+	sessions       map[string]model.QuestionSession // PK: session_id
+	refreshTokens  map[string]struct{}              // PK: jti (refresh token id)
+	questions      map[uint]model.Question          // PK: question id; the pool sessions are drawn from
+	nextQuestionID uint                             // next id to assign on insert
 }
 
 // db is the process-wide store. It replaces the former denormalized mem_db.
@@ -76,14 +66,16 @@ func newDatabase() *Database {
 			},
 		},
 		refreshTokens: map[string]struct{}{},
+		questions: map[uint]model.Question{
+			1: {
+				Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
+				Answer:      1,
+			},
+			2: {
+				Description: "Who is F\n(a)HRM\n(b)M's child\n(c)White cat\n(d)O's Big sis",
+				Answer:      0,
+			},
+		},
+		nextQuestionID: 3,
 	}
-}
-
-// roleOf returns a user's role, defaulting unknown users to RoleStudent (0).
-// Callers must hold at least db.mu.RLock.
-func roleOf(username string) uint {
-	if u := db.users[username]; u != nil {
-		return u.Role
-	}
-	return 0
 }

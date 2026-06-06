@@ -4,6 +4,8 @@ package mock
 
 import (
 	"maps"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,14 +16,13 @@ import (
 
 var (
 	_ repo.UserRepo         = (*AuthRepo)(nil)
+	_ repo.UserRepo         = (*RoleRepo)(nil)
 	_ repo.RefreshTokenRepo = (*AuthRepo)(nil)
 	_ repo.ItemRepo         = (*ItemRepo)(nil)
 	_ repo.GroupRepo        = (*GroupRepo)(nil)
 	_ repo.QuestionRepo     = (*QuestionRepo)(nil)
 )
 
-// AuthRepo is an in-memory user-account + refresh-token store, implementing
-// both repo.UserRepo and repo.RefreshTokenRepo.
 type AuthRepo struct {
 	Users         map[string]string
 	Roles         map[string]uint
@@ -52,7 +53,11 @@ func (m *AuthRepo) GetAllUsers() ([]string, error) {
 }
 
 func (m *AuthRepo) GetRole(username string) (uint, error) {
-	return m.Roles[username], nil
+	role, ok := m.Roles[username]
+	if !ok {
+		return 0, apperr.ErrUserNotFound
+	}
+	return role, nil
 }
 
 func (m *AuthRepo) CreateUser(username, password string, role uint) error {
@@ -70,7 +75,15 @@ func (m *AuthRepo) CreateUser(username, password string, role uint) error {
 	return nil
 }
 
-// ItemRepo is an in-memory repo.ItemRepo.
+type RoleRepo struct {
+	Role uint
+}
+
+func (m *RoleRepo) ValidateCredentials(_, _ string) (bool, error) { return false, nil }
+func (m *RoleRepo) GetAllUsers() ([]string, error)                { return nil, nil }
+func (m *RoleRepo) GetRole(_ string) (uint, error)                { return m.Role, nil }
+func (m *RoleRepo) CreateUser(_, _ string, _ uint) error          { return nil }
+
 type ItemRepo struct {
 	Inv  map[uint]uint
 	Slot map[uint]uint
@@ -110,11 +123,8 @@ func (m *ItemRepo) SetSlot(_, slotID, itemID uint) error {
 	return nil
 }
 
-// GroupRepo is an in-memory repo.GroupRepo.
 type GroupRepo struct {
 	UserGroups map[string]uint
-	Users      map[string]bool
-	Roles      map[string]uint
 }
 
 func (m *GroupRepo) SetUserGroup(username string, groupID uint) error {
@@ -137,20 +147,11 @@ func (m *GroupRepo) GetGroupMembers(groupID uint) ([]string, error) {
 	return members, nil
 }
 
-func (m *GroupRepo) UserExists(username string) (bool, error) {
-	return m.Users[username], nil
-}
-
-func (m *GroupRepo) GetRole(username string) (uint, error) {
-	return m.Roles[username], nil
-}
-
-// QuestionRepo is an in-memory repo.QuestionRepo. Role is the role level
-// reported for every user; Created records the last session id handed out.
 type QuestionRepo struct {
-	Role     uint
-	Sessions map[string]model.QuestionSession
-	Created  string
+	Sessions  map[string]model.QuestionSession
+	Created   string
+	Questions map[uint]model.Question
+	NextID    uint
 }
 
 func (m *QuestionRepo) CreateSession(groupID uint) (string, model.Question, error) {
@@ -176,6 +177,47 @@ func (m *QuestionRepo) ConsumeSession(session string) (model.QuestionSession, bo
 	return qs, ok, nil
 }
 
-func (m *QuestionRepo) GetRole(_ string) (uint, error) {
-	return m.Role, nil
+func (m *QuestionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord, error) {
+	if m.Questions == nil {
+		m.Questions = map[uint]model.Question{}
+	}
+	if m.NextID == 0 {
+		m.NextID = 1
+	}
+	records := make([]model.QuestionRecord, 0, len(qs))
+	for _, q := range qs {
+		id := m.NextID
+		m.NextID++
+		m.Questions[id] = q
+		records = append(records, model.QuestionRecord{ID: id, Description: q.Description, Answer: q.Answer})
+	}
+	return records, nil
+}
+
+func (m *QuestionRepo) SearchQuestions(query string) ([]model.QuestionRecord, error) {
+	needle := strings.ToLower(query)
+	records := make([]model.QuestionRecord, 0, len(m.Questions))
+	for id, q := range m.Questions {
+		if needle == "" || strings.Contains(strings.ToLower(q.Description), needle) {
+			records = append(records, model.QuestionRecord{ID: id, Description: q.Description, Answer: q.Answer})
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return records, nil
+}
+
+func (m *QuestionRepo) UpdateQuestion(id uint, q model.Question) (bool, error) {
+	if _, ok := m.Questions[id]; !ok {
+		return false, nil
+	}
+	m.Questions[id] = q
+	return true, nil
+}
+
+func (m *QuestionRepo) DeleteQuestion(id uint) (bool, error) {
+	if _, ok := m.Questions[id]; !ok {
+		return false, nil
+	}
+	delete(m.Questions, id)
+	return true, nil
 }

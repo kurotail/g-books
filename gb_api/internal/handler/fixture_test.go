@@ -37,18 +37,15 @@ func newFixture() *fixture {
 	}
 	groupRepo := &mock.GroupRepo{
 		UserGroups: map[string]uint{"user": 0},
-		Users:      map[string]bool{"user": true},
-		Roles:      map[string]uint{"user": model.RoleTeacher},
 	}
 	questionRepo := &mock.QuestionRepo{
-		Role:     model.RoleTeacher,
 		Sessions: map[string]model.QuestionSession{},
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
 		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo)),
-		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo)),
-		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo)),
+		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo, authRepo)),
+		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo)),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
 		authRepo:     authRepo,
 		groupRepo:    groupRepo,
@@ -86,6 +83,27 @@ func do(t *testing.T, fn http.HandlerFunc, token string, body map[string]any) *h
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	fn(rec, req)
+	return rec
+}
+
+func doReq(t *testing.T, fn http.HandlerFunc, method, target, token string, body any, pathValues map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	var req *http.Request
+	if body != nil {
+		b, _ := json.Marshal(body)
+		req = httptest.NewRequest(method, target, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req = httptest.NewRequest(method, target, nil)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range pathValues {
+		req.SetPathValue(k, v)
 	}
 	rec := httptest.NewRecorder()
 	fn(rec, req)
