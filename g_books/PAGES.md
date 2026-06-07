@@ -12,6 +12,18 @@
 
 ---
 
+## Assets 使用規範
+
+| 檔案 | 用途 | 限用頁面 |
+|------|------|----------|
+| `assets/images/bg_view.png` | 古蹟檢視背景 | 古蹟檢視頁 |
+| `assets/images/edit_grid.png` | 古蹟編輯背景 | 編輯古蹟頁 |
+| `assets/images/fight_map.png` | 攻防戰地圖背景 | 攻防戰頁 |
+| `assets/logo.png` | G-BOOKS Logo | 登入頁（浮水印）、啟動頁 |
+| 登入 / 設定頁背景 | 純色 `AppColors.parchmentBg`（`#C8A87A`）暫代，之後補圖 | 登入、頭貼上傳、小組命名 |
+
+---
+
 ## Figma 檔案對應
 
 | 畫面 | 對應檔案 |
@@ -106,9 +118,25 @@ flowchart TD
 - 標題說明文字（個人 / 小組版本）。
 - 圓形木框頭像預覽（CustomPaint 刻度框）。
 - 未選圖：**上傳照片**（gallery）+ **拍攝照片**（camera）按鈕，使用 `image_picker`。
-- 已選圖：**確定** + **重新上傳** 按鈕。
-- 右上角返回鍵（↩）、右下角「略過 >」。
-- 後端串接點已預留（`setPersonalAvatar` / `setGroupAvatar`）。
+- 選圖後自動進入 `image_cropper` 圓形裁切介面（可拖曳 / 縮放調整位置）。
+- 已選圖：**確定**（上傳）+ **重新上傳** + **重新拍攝** 按鈕；上傳中顯示 loading，失敗顯示錯誤訊息。
+- 右上角返回鍵（↩，上傳中停用）、右下角「略過 >」（略過不上傳）。
+
+**頭像上傳流程（`AvatarService`）：**
+```
+裁切完成（本地路徑）
+  → AvatarService.upload(localPath)
+  → 後端回傳遠端 URL
+  → AppState 儲存 URL（personalAvatarUrl / avatarUrl）
+  → AvatarFrame 以 URL 顯示（換裝置登入位置不跑掉）
+```
+
+| 環境 | 實作 | 說明 |
+|------|------|------|
+| Mock（現階段）| `MockAvatarService` | 回傳本地路徑，同裝置預覽 |
+| 正式 | `ApiAvatarUploadService`（待實作）| POST multipart 至後端，回傳遠端 URL |
+
+`AvatarFrame.imageUrl` 同時支援 `https://...` 遠端 URL 與本地路徑，切換後端無需改 UI。
 
 ### 2.4 小組命名頁（/setup/group-name）
 - 輸入小組名稱，確定後儲存並進入古蹟選擇。

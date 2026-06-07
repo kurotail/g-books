@@ -5,9 +5,11 @@ import '../theme/app_colors.dart';
 
 class AvatarFrame extends StatelessWidget {
   final double size;
-  final String? imagePath;
 
-  const AvatarFrame({super.key, this.size = 220, this.imagePath});
+  /// 遠端 URL（https://...）或本地路徑，null 顯示預設人像
+  final String? imageUrl;
+
+  const AvatarFrame({super.key, this.size = 220, this.imageUrl});
 
   @override
   Widget build(BuildContext context) {
@@ -25,8 +27,11 @@ class AvatarFrame extends StatelessWidget {
   }
 
   Widget _buildImage() {
-    if (imagePath != null) {
-      return Image.file(File(imagePath!), fit: BoxFit.cover);
+    if (imageUrl != null) {
+      final isRemote = imageUrl!.startsWith('http://') || imageUrl!.startsWith('https://');
+      return isRemote
+          ? Image.network(imageUrl!, fit: BoxFit.cover)
+          : Image.file(File(imageUrl!), fit: BoxFit.cover);
     }
     return Container(
       color: const Color(0xFFDDD0BA),

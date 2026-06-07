@@ -39,7 +39,12 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ParchmentScaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) context.go('/setup/group-avatar');
+      },
+      child: ParchmentScaffold(
       child: Stack(
         children: [
           // Back arrow
@@ -68,11 +73,7 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
             ),
           ),
           // Main content
-          Positioned(
-            left: 0,
-            right: 220,
-            top: 0,
-            bottom: 0,
+          Positioned.fill(
             child: Center(
               child: SizedBox(
                 width: 340,
@@ -162,6 +163,7 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
           ),
         ],
       ),
+    ),
     );
   }
 }

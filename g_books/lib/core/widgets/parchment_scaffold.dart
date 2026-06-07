@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
 
 class ParchmentScaffold extends StatelessWidget {
   final Widget child;
@@ -8,17 +9,8 @@ class ParchmentScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/bg_view.png',
-              fit: BoxFit.cover,
-            ),
-          ),
-          child,
-        ],
-      ),
+      backgroundColor: AppColors.parchmentBg,
+      body: child,
     );
   }
 }
