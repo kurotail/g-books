@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/parchment_scaffold.dart';
 import '../../core/widgets/step_indicator.dart';
+import '../../core/widgets/avatar_frame.dart';
 import '../../state/app_state.dart';
 
 class GroupNamingScreen extends StatefulWidget {
@@ -17,6 +18,13 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
   final _ctrl = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // 回到此頁時帶回先前輸入的組名（返回上一步不遺失已設定資料）。
+    _ctrl.text = context.read<AppState>().currentGroup?.name ?? '';
+  }
+
+  @override
   void dispose() {
     _ctrl.dispose();
     super.dispose();
@@ -25,20 +33,13 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
   void _confirm() {
     final name = _ctrl.text.trim();
     if (name.isEmpty) return;
-    final state = context.read<AppState>();
-    state.setGroupName(name);
-    state.completeSetup();
-    context.go('/heritage-selection');
-  }
-
-  void _skip() {
-    final state = context.read<AppState>();
-    state.completeSetup();
-    context.go('/heritage-selection');
+    context.read<AppState>().setGroupName(name);
+    context.go('/group-overview');
   }
 
   @override
   Widget build(BuildContext context) {
+    final group = context.watch<AppState>().currentGroup;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -47,15 +48,16 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
       child: ParchmentScaffold(
       child: Stack(
         children: [
-          // Back arrow
+          // Back arrow（往畫面內側收一點，避免太靠近螢幕邊緣）
           Positioned(
             top: 36,
-            right: 48,
+            right: 64,
             child: GestureDetector(
               onTap: () => context.go('/setup/group-avatar'),
-              child: const Text(
-                '↩',
-                style: TextStyle(fontSize: 30, color: Color(0xFF6A6A6A)),
+              child: const Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: 24,
+                color: Color(0xFF6A6A6A),
               ),
             ),
           ),
@@ -67,8 +69,8 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
             width: 160,
             child: Center(
               child: StepIndicator(
-                steps: ['登陸帳號', '上傳個人頭貼', '上傳小組頭貼', '小組命名', '完成'],
-                currentStep: 3,
+                steps: ['登陸帳號', '小組頭像', '小組命名', '小組建立成功'],
+                currentStep: 2,
               ),
             ),
           ),
@@ -80,6 +82,9 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // 顯示前一頁設定好的小組頭像
+                    AvatarFrame(size: 130, imageUrl: group?.avatarUrl),
+                    const SizedBox(height: 24),
                     const Text(
                       '為你的小組命名吧！',
                       style: TextStyle(
@@ -142,22 +147,6 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
                     ),
                   ],
                 ),
-              ),
-            ),
-          ),
-          // Skip
-          Positioned(
-            bottom: 20,
-            right: 48,
-            child: GestureDetector(
-              onTap: _skip,
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('略 過', style: TextStyle(color: AppColors.labelText, fontSize: 16)),
-                  SizedBox(width: 4),
-                  Icon(Icons.chevron_right, color: AppColors.labelText, size: 18),
-                ],
               ),
             ),
           ),

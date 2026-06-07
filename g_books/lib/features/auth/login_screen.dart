@@ -59,49 +59,83 @@ class _LoginScreenState extends State<LoginScreen> {
       },
       child: ParchmentScaffold(
         child: Stack(
-        children: [
-          // Watermark logo
-          Center(
-            child: Opacity(
-              opacity: 0.10,
-              child: Image.asset('assets/logo.png', width: 300),
+          children: [
+            // Watermark logo
+            Center(
+              child: Opacity(
+                opacity: 0.10,
+                child: Image.asset('assets/logo.png', width: 300),
+              ),
             ),
-          ),
-          // Login form
-          Positioned.fill(
-            child: Center(
-              child: SizedBox(
-                width: 300,
+            // Login form
+            Positioned.fill(
+              child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _label('姓名'),
-                    const SizedBox(height: 8),
-                    _textField(_nameCtrl, '請輸入姓名'),
-                    const SizedBox(height: 20),
-                    _label('座號'),
-                    const SizedBox(height: 8),
-                    _textField(_seatCtrl, '請輸入座號', isNumber: true),
-                    if (_error != null) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        _error!,
-                        style: const TextStyle(color: Colors.red, fontSize: 13),
+                    _infoBanner(),
+                    const SizedBox(height: 28),
+                    SizedBox(
+                      width: 300,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _label('姓名'),
+                          const SizedBox(height: 8),
+                          _textField(_nameCtrl, '請輸入姓名'),
+                          const SizedBox(height: 20),
+                          _label('座號'),
+                          const SizedBox(height: 8),
+                          _textField(_seatCtrl, '請輸入座號', isNumber: true),
+                          if (_error != null) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              _error!,
+                              style: const TextStyle(
+                                color: Colors.red,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 32),
+                          _loginButton(),
+                        ],
                       ),
-                    ],
-                    const SizedBox(height: 32),
-                    _loginButton(),
+                    ),
                   ],
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
     );
   }
+
+  Widget _infoBanner() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+    decoration: BoxDecoration(
+      color: const Color(0x14000000),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0x33000000)),
+    ),
+    child: const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.info_outline_rounded, size: 20, color: AppColors.labelText),
+        SizedBox(width: 10),
+        Text(
+          '請小組長輸入資料來進行登入',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: AppColors.labelText,
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _label(String text) => Text(
     text,

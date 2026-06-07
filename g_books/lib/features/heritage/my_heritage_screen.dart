@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/widgets/avatar_frame.dart';
@@ -26,7 +27,6 @@ class MyHeritageScreen extends StatefulWidget {
 class _MyHeritageScreenState extends State<MyHeritageScreen>
     with TickerProviderStateMixin {
   static const double _panelWidth = 220.0;
-  static const double _handleWidth = 108.0; // 收合時的寬度（頭像 + chevron）
   static const double _btnIconSize = 54.0;
   // 編輯底部「原料庫 / 物品欄」面板底色（暖色深木調）。
   static const Color _panelBg = Color(0xF03A332E);
@@ -198,6 +198,13 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
 
   void _logout() => context.read<AppState>().logout();
 
+  /// 進入小組總攬（檢視古蹟時補設組員頭像）。先收起面板再推入，返回時回到本頁。
+  void _openGroupOverview() {
+    setState(() => _isPanelOpen = false);
+    _panelCtrl.reverse();
+    context.push('/group-overview');
+  }
+
   /// 開始拆卸確認：記住目前鏡頭、推近聚焦該 slot（置中、留左側空間給確認框），
   /// 並讓該原料閃爍。確認框由 build 依當下 transform 畫在原料左側。
   void _beginUninstall(HeritageSlot slot, ComponentModel comp, Rect sceneRect) {
@@ -295,10 +302,17 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
             SafeArea(
               child: Stack(
                 children: [
-                  if (!_editMode)
-                    _buildPanel(state)
-                  else if (!confirming)
-                    _buildEditTopBar(),
+                  // 面板永遠保持掛載（用 Offstage 切換顯示），切換編輯模式時頭像與
+                  // 按鈕圖不會被卸載重建、不再重新解碼造成閃爍。
+                  Positioned(
+                    left: 12,
+                    top: 12,
+                    child: Offstage(
+                      offstage: _editMode,
+                      child: _buildPanel(state),
+                    ),
+                  ),
+                  if (_editMode && !confirming) _buildEditTopBar(),
                   if (!confirming) _buildZoomControls(),
                 ],
               ),
@@ -514,6 +528,8 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
                   child: Image.asset(
                     'assets/images/bg_view.png',
                     fit: BoxFit.cover,
+                    // 從別的頁面返回時保留上一影格，避免快取重解碼造成背景閃一下。
+                    gaplessPlayback: true,
                   ),
                 ),
                 // bg_view 與 main 之間的 edit_grid：永遠掛載（隨頁面預載解碼），
@@ -527,6 +543,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
                       child: Image.asset(
                         'assets/images/edit_grid.png',
                         fit: BoxFit.cover,
+                        gaplessPlayback: true,
                         errorBuilder: (_, _, _) => const SizedBox.shrink(),
                       ),
                     ),
@@ -537,6 +554,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
                   child: Image.asset(
                     'assets/images/heritages/${_heritage.id}/main.png',
                     fit: BoxFit.fill,
+                    gaplessPlayback: true,
                     errorBuilder: (_, _, _) => const SizedBox.shrink(),
                   ),
                 ),
@@ -1008,20 +1026,15 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     final groupName = group?.name ?? '';
     final groupId = group?.id;
 
-    return Positioned(
-      left: 12,
-      top: 12,
-      child: AnimatedBuilder(
-        animation: _panelCurve,
-        builder: (_, _) =>
-            _panelSurface(_panelCurve.value, avatarPath, groupName, groupId),
-      ),
+    return AnimatedBuilder(
+      animation: _panelCurve,
+      builder: (_, _) =>
+          _panelSurface(_panelCurve.value, avatarPath, groupName, groupId),
     );
   }
 
-  /// 依展開進度 [t]（0=收合，1=展開）繪製左上角面板：頭像固定不動，背景/邊框淡入、
-  /// 寬度展開；下方選單以「高度展開 + 淡入」揭露；頭像右側收合時為 chevron、
-  /// 展開時為組名（前後半段交叉淡入）。
+  /// 左上角面板。標頭（頭像 + 組名）常駐顯示；選單依展開進度 [t]（0=收合，1=展開）
+  /// 向下摺疊（高度 0→滿 + 淡入）。標頭右側 chevron 收合時朝下、展開時轉為朝上。
   Widget _panelSurface(
     double t,
     String? avatarPath,
@@ -1030,30 +1043,40 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
   ) {
     final tc = t.clamp(0.0, 1.0);
     return Container(
-      width: _handleWidth + (_panelWidth - _handleWidth) * tc,
+      width: _panelWidth,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       decoration: BoxDecoration(
-        color: Color.fromRGBO(31, 34, 37, 0.92 * tc),
+        color: const Color(0xEB1F2225),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.24 * tc)),
+        border: Border.all(color: Colors.white24),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              GestureDetector(
-                onTap: _togglePanel,
-                child: AvatarFrame(size: 52, imageUrl: avatarPath),
-              ),
-              const SizedBox(width: 10),
-              Expanded(child: _panelHeaderTrailing(tc, groupName, groupId)),
-            ],
+          // 常駐標頭：頭像 + 組名 + chevron，點整列即可展開／收合。
+          GestureDetector(
+            onTap: _togglePanel,
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              children: [
+                AvatarFrame(size: 52, imageUrl: avatarPath),
+                const SizedBox(width: 10),
+                Expanded(child: _panelHeaderText(groupName, groupId)),
+                Transform.rotate(
+                  angle: tc * math.pi,
+                  child: const Icon(
+                    Icons.keyboard_arrow_down,
+                    color: Colors.white54,
+                    size: 24,
+                  ),
+                ),
+              ],
+            ),
           ),
-          // 下方選單：高度由 0→滿、同時淡入。永遠保持建構（收合時高度 0、不透明度 0
-          // → 既不顯示、零高度的 ClipRect 也吃掉點擊），讓按鈕圖只在首次掛載時解碼一次，
-          // 不再每次展開都重新掛載 Image.asset 而閃爍。
+          // 選單向下摺疊：高度由 0→滿、同時淡入。永遠保持建構（收合時高度 0、不透明度
+          // 0 → 既不顯示、零高度的 ClipRect 也吃掉點擊），讓按鈕圖只在首次掛載時解碼一
+          // 次，不再每次展開都重新掛載 Image.asset 而閃爍。
           ClipRect(
             child: Align(
               alignment: Alignment.topLeft,
@@ -1066,49 +1089,33 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     );
   }
 
-  /// 頭像右側：收合時顯示可點開的 chevron，展開時顯示組名 / GROUP 編號。
-  Widget _panelHeaderTrailing(double t, String groupName, int? groupId) {
-    if (t < 0.5) {
-      return GestureDetector(
-        onTap: _togglePanel,
-        behavior: HitTestBehavior.opaque,
-        child: Opacity(
-          opacity: (1 - t * 2).clamp(0.0, 1.0),
-          child: const Align(
-            alignment: Alignment.centerLeft,
-            child: Icon(Icons.chevron_right, color: Colors.white54, size: 22),
+  /// 標頭文字：常駐顯示組名與 GROUP 編號。
+  Widget _panelHeaderText(String groupName, int? groupId) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          groupName.isEmpty ? '未命名小組' : groupName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1,
           ),
         ),
-      );
-    }
-    return Opacity(
-      opacity: ((t - 0.5) * 2).clamp(0.0, 1.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (groupName.isNotEmpty)
-            Text(
-              groupName,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1,
-              ),
-              overflow: TextOverflow.ellipsis,
+        if (groupId != null)
+          Text(
+            'GROUP $groupId',
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 11,
+              letterSpacing: 2,
             ),
-          if (groupId != null)
-            Text(
-              'GROUP $groupId',
-              style: const TextStyle(
-                color: Colors.white38,
-                fontSize: 11,
-                letterSpacing: 2,
-              ),
-            ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -1117,20 +1124,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        GestureDetector(
-          onTap: _togglePanel,
-          behavior: HitTestBehavior.opaque,
-          child: const Padding(
-            padding: EdgeInsets.symmetric(vertical: 4),
-            child: Center(
-              child: Icon(
-                Icons.keyboard_arrow_up,
-                color: Colors.white38,
-                size: 20,
-              ),
-            ),
-          ),
-        ),
+        const SizedBox(height: 8),
         const Divider(color: Colors.white12, height: 1),
         const SizedBox(height: 6),
         _menuBtn(
@@ -1158,6 +1152,12 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 6),
           child: Divider(color: Colors.white12, height: 1),
+        ),
+        _menuBtn(
+          null,
+          '小組資訊',
+          icon: Icons.groups_rounded,
+          onTap: _openGroupOverview,
         ),
         _menuBtn(null, '登出', icon: Icons.logout_rounded, onTap: _logout),
       ],
