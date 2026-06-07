@@ -97,9 +97,10 @@ func (m *RoleRepo) GetUser(username string) (model.User, error) {
 func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error { return nil }
 
 type ItemRepo struct {
-	Inv   map[uint]struct{}   // owned (unslotted) item ids
-	Slot  map[uint]int        // slot_id -> signed item_id
-	Items map[uint]model.Item // item table
+	Inv        map[uint]struct{}   // owned (unslotted) item ids
+	Slot       map[uint]int        // slot_id -> signed item_id
+	Items      map[uint]model.Item // item table
+	NextItemID uint                // next id assigned by CreateItem
 }
 
 func (m *ItemRepo) QueryInv(_ uint) ([]uint, error) {
@@ -120,6 +121,19 @@ func (m *ItemRepo) QuerySlot(_ uint) (map[uint]int, error) {
 func (m *ItemRepo) GetItem(itemID uint) (model.Item, bool, error) {
 	it, ok := m.Items[itemID]
 	return it, ok, nil
+}
+
+func (m *ItemRepo) CreateItem(itemType, questionID uint) (uint, error) {
+	if m.Items == nil {
+		m.Items = map[uint]model.Item{}
+	}
+	if m.NextItemID == 0 {
+		m.NextItemID = 1000 // high base to avoid colliding with seeded item ids
+	}
+	id := m.NextItemID
+	m.NextItemID++
+	m.Items[id] = model.Item{ItemID: id, Type: itemType, QuestionID: questionID}
+	return id, nil
 }
 
 func (m *ItemRepo) AddInvItem(_, itemID uint) error {
@@ -229,19 +243,40 @@ type QuestionRepo struct {
 	NextID    uint
 }
 
-func (m *QuestionRepo) CreateSession(groupID uint) (string, model.Question, error) {
-	q := model.Question{Description: "What is six times three?", Answer: 1}
+// StoreSession stores the session under a fixed id "session-id" (tests read it back
+// via Created / Sessions).
+func (m *QuestionRepo) StoreSession(sess model.QuestionSession) (string, error) {
 	id := "session-id"
 	if m.Sessions == nil {
 		m.Sessions = map[string]model.QuestionSession{}
 	}
-	m.Sessions[id] = model.QuestionSession{
-		ExpiresAt: time.Now().Add(15 * time.Minute),
-		GroupID:   groupID,
-		Question:  q,
+	if sess.ExpiresAt.IsZero() {
+		sess.ExpiresAt = time.Now().Add(15 * time.Minute)
 	}
+	m.Sessions[id] = sess
 	m.Created = id
-	return id, q, nil
+	return id, nil
+}
+
+// RandomQuestion returns the first question matching area (and difficulty when
+// non-nil). Map iteration order is unspecified, which is fine for tests that seed a
+// single matching question.
+func (m *QuestionRepo) RandomQuestion(area uint, difficulty *uint) (uint, model.Question, bool, error) {
+	for id, q := range m.Questions {
+		if q.Area != area {
+			continue
+		}
+		if difficulty != nil && q.Difficulty != *difficulty {
+			continue
+		}
+		return id, q, true, nil
+	}
+	return 0, model.Question{}, false, nil
+}
+
+func (m *QuestionRepo) GetQuestion(id uint) (model.Question, bool, error) {
+	q, ok := m.Questions[id]
+	return q, ok, nil
 }
 
 func (m *QuestionRepo) ConsumeSession(session string) (model.QuestionSession, bool, error) {

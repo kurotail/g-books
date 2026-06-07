@@ -81,13 +81,15 @@ func newDatabase() *Database {
 		items: map[uint]model.Item{
 			1: {ItemID: 1, Type: 10, QuestionID: 1},
 			2: {ItemID: 2, Type: 20, QuestionID: 2},
-			3: {ItemID: 3, Type: 10},
+			3: {ItemID: 3, Type: 10, QuestionID: 1}, // slotted; has a question so it can be attacked
 			4: {ItemID: 4, Type: 30},
 		},
 		sessions: map[string]model.QuestionSession{
 			"0123456789abcdef0123456789abcdef": {
 				ExpiresAt: time.Now().Add(15 * time.Minute),
 				GroupID:   1,
+				Kind:      model.KindItem,
+				ItemID:    4,
 				Question: model.Question{
 					Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
 					Answer:      1,

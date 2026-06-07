@@ -19,26 +19,55 @@ func NewQuestionHandler(s *service.QuestionSvc) *QuestionHandler {
 	return &QuestionHandler{svc: s}
 }
 
-func (h *QuestionHandler) Generate(w http.ResponseWriter, r *http.Request) {
+// GenerateItem issues an item-earning session (NORMAL state).
+func (h *QuestionHandler) GenerateItem(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	var req model.GenerateQuestionRequest
+	var req model.GenerateItemRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	if req.GroupID == nil {
-		http.Error(w, "缺少 group_id", http.StatusBadRequest)
+	if req.Difficulty == nil {
+		http.Error(w, "缺少 difficulty", http.StatusBadRequest)
 		return
 	}
-	if *req.GroupID == 0 {
-		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
+	data, status, err := h.svc.GenerateItem(token, *req.Difficulty)
+	if err != nil {
+		http.Error(w, err.Error(), status)
 		return
 	}
-	data, status, err := h.svc.Generate(token, *req.GroupID)
+	writeJSON(w, data)
+}
+
+// GenerateTarget issues an attack/repair session against a group's slot (QUIZ state).
+func (h *QuestionHandler) GenerateTarget(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.GenerateTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if req.TargetGroupID == nil {
+		http.Error(w, "缺少 target_group_id", http.StatusBadRequest)
+		return
+	}
+	if *req.TargetGroupID == 0 {
+		http.Error(w, "target_group_id 必須大於 0", http.StatusBadRequest)
+		return
+	}
+	if req.TargetSlotID == nil {
+		http.Error(w, "缺少 target_slot_id", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.GenerateTarget(token, *req.TargetGroupID, *req.TargetSlotID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

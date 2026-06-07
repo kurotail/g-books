@@ -38,6 +38,10 @@ func studentBlockedByState(role uint) bool {
 	return role <= model.RoleStudent && getState() != model.StateQuiz
 }
 
+func studentBlockedUnlessNormal(role uint) bool {
+	return role <= model.RoleStudent && getState() != model.StateNormal
+}
+
 func studentBlockedDuringQuiz(role uint) bool {
 	return role <= model.RoleStudent && getState() == model.StateQuiz
 }

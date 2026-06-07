@@ -8,15 +8,16 @@ import (
 	"strings"
 	"time"
 
-	apperr "gb-api/internal/error"
 	"gb-api/internal/model"
 )
 
 const sessionTTL = 15 * time.Minute
 
 type QuestionRepo interface {
-	CreateSession(groupID uint) (string, model.Question, error)
+	StoreSession(sess model.QuestionSession) (string, error)
 	ConsumeSession(session string) (model.QuestionSession, bool, error)
+	RandomQuestion(area uint, difficulty *uint) (uint, model.Question, bool, error)
+	GetQuestion(id uint) (model.Question, bool, error)
 	AddQuestions(qs []model.Question) ([]model.QuestionRecord, error)
 	SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error)
 	UpdateQuestion(id uint, q model.Question) (bool, error)
@@ -33,39 +34,50 @@ func newSessionID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (_ *questionRepo) CreateSession(groupID uint) (string, model.Question, error) {
+// StoreSession assigns the session's TTL and a fresh id, then stores it.
+func (_ *questionRepo) StoreSession(sess model.QuestionSession) (string, error) {
 	id, err := newSessionID()
 	if err != nil {
-		return "", model.Question{}, err
+		return "", err
 	}
+	sess.ExpiresAt = time.Now().Add(sessionTTL)
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	q, ok := randomQuestion()
-	if !ok {
-		return "", model.Question{}, apperr.ErrNoQuestions
-	}
-	db.sessions[id] = model.QuestionSession{
-		ExpiresAt: time.Now().Add(sessionTTL),
-		GroupID:   groupID,
-		Question:  q,
-	}
-	return id, q, nil
+	db.sessions[id] = sess
+	return id, nil
 }
 
-func randomQuestion() (model.Question, bool) {
-	n := len(db.questions)
-	if n == 0 {
-		return model.Question{}, false
+// RandomQuestion returns a random pool question (and its id) matching area, and
+// difficulty when non-nil. ok is false when none match.
+func (_ *questionRepo) RandomQuestion(area uint, difficulty *uint) (uint, model.Question, bool, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	type entry struct {
+		id uint
+		q  model.Question
 	}
-	pick := mrand.Intn(n)
-	i := 0
-	for _, q := range db.questions {
-		if i == pick {
-			return q, true
+	var matches []entry
+	for id, q := range db.questions {
+		if q.Area != area {
+			continue
 		}
-		i++
+		if difficulty != nil && q.Difficulty != *difficulty {
+			continue
+		}
+		matches = append(matches, entry{id, q})
 	}
-	return model.Question{}, false
+	if len(matches) == 0 {
+		return 0, model.Question{}, false, nil
+	}
+	pick := matches[mrand.Intn(len(matches))]
+	return pick.id, pick.q, true, nil
+}
+
+func (_ *questionRepo) GetQuestion(id uint) (model.Question, bool, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	q, ok := db.questions[id]
+	return q, ok, nil
 }
 
 func (_ *questionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord, error) {

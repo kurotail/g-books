@@ -524,13 +524,14 @@ func (f *fixture) forceState(t *testing.T, tok string, s model.ServerState) {
 func TestQuestionHandler_MissingToken(t *testing.T) {
 	f := newFixture()
 	cases := map[string]http.HandlerFunc{
-		"Generate": f.question.Generate,
-		"Answer":   f.question.Answer,
-		"GetState": f.state.GetState,
-		"SetState": f.state.SetState,
+		"GenerateItem":   f.question.GenerateItem,
+		"GenerateTarget": f.question.GenerateTarget,
+		"Answer":         f.question.Answer,
+		"GetState":       f.state.GetState,
+		"SetState":       f.state.SetState,
 	}
 	for name, fn := range cases {
-		rec := do(t, fn, "", map[string]any{"group_id": 1, "state": "QUIZ"})
+		rec := do(t, fn, "", map[string]any{"difficulty": 1, "state": "QUIZ"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
 		}
@@ -564,62 +565,60 @@ func TestQuestionHandler_GetState_ReflectsTransitions(t *testing.T) {
 	}
 }
 
-func TestQuestionHandler_StudentBlockedInNormalState(t *testing.T) {
-	f := newFixture()
-	tok := f.login(t)
-	f.forceState(t, tok, model.StateNormal)
-	f.authRepo.Roles["user"] = model.RoleStudent
-
-	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 1})
-	if gen.Code != http.StatusForbidden {
-		t.Errorf("Generate as student in NORMAL: expected 403, got %d", gen.Code)
-	}
-	ans := do(t, f.question.Answer, tok, map[string]any{"session": "session-id", "answer": 1})
-	if ans.Code != http.StatusForbidden {
-		t.Errorf("Answer as student in NORMAL: expected 403, got %d", ans.Code)
-	}
-}
-
-func TestQuestionHandler_StudentAllowedInQuizState(t *testing.T) {
+func TestQuestionHandler_StudentItemBlockedOutsideNormal(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateQuiz)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 1})
+	gen := do(t, f.question.GenerateItem, tok, map[string]any{"difficulty": 1})
+	if gen.Code != http.StatusForbidden {
+		t.Errorf("GenerateItem as student in QUIZ: expected 403, got %d", gen.Code)
+	}
+}
+
+func TestQuestionHandler_StudentTargetBlockedOutsideQuiz(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+	f.forceState(t, tok, model.StateNormal)
+	f.authRepo.Roles["user"] = model.RoleStudent
+
+	gen := do(t, f.question.GenerateTarget, tok, map[string]any{"target_group_id": 2, "target_slot_id": 0})
+	if gen.Code != http.StatusForbidden {
+		t.Errorf("GenerateTarget as student in NORMAL: expected 403, got %d", gen.Code)
+	}
+}
+
+// Item flow end-to-end at the handler level: a student in NORMAL earns an item by
+// generating and answering correctly.
+func TestQuestionHandler_ItemFlow(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+	f.forceState(t, tok, model.StateNormal)
+	f.authRepo.Roles["user"] = model.RoleStudent
+
+	gen := do(t, f.question.GenerateItem, tok, map[string]any{"difficulty": 1})
 	if gen.Code != http.StatusOK {
-		t.Fatalf("Generate as student in QUIZ: expected 200, got %d: %s", gen.Code, gen.Body.String())
+		t.Fatalf("GenerateItem: expected 200, got %d: %s", gen.Code, gen.Body.String())
 	}
 	var qr model.QuestionResponse
 	if err := json.Unmarshal(gen.Body.Bytes(), &qr); err != nil {
-		t.Fatalf("Generate: invalid JSON: %v", err)
+		t.Fatalf("GenerateItem: invalid JSON: %v", err)
 	}
 	if qr.Session == "" {
-		t.Fatal("Generate: expected a session in response")
+		t.Fatal("GenerateItem: expected a session in response")
 	}
 
 	ans := do(t, f.question.Answer, tok, map[string]any{"session": qr.Session, "answer": 1})
 	if ans.Code != http.StatusOK {
-		t.Fatalf("Answer as student in QUIZ: expected 200, got %d: %s", ans.Code, ans.Body.String())
+		t.Fatalf("Answer: expected 200, got %d: %s", ans.Code, ans.Body.String())
 	}
 	var ar model.AnswerResponse
 	if err := json.Unmarshal(ans.Body.Bytes(), &ar); err != nil {
 		t.Fatalf("Answer: invalid JSON: %v", err)
 	}
-	if !ar.Correct {
-		t.Error("Answer: expected correct=true for answer 1")
-	}
-}
-
-func TestQuestionHandler_TeacherAllowedInNormalState(t *testing.T) {
-	f := newFixture()
-	tok := f.login(t)
-	f.forceState(t, tok, model.StateNormal)
-	// role stays RoleTeacher (fixture default)
-
-	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 1})
-	if gen.Code != http.StatusOK {
-		t.Errorf("Generate as teacher in NORMAL: expected 200, got %d: %s", gen.Code, gen.Body.String())
+	if !ar.Correct || ar.ItemID == 0 {
+		t.Errorf("Answer: expected correct with a granted item_id, got %+v", ar)
 	}
 }
 

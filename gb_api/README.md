@@ -67,8 +67,9 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/item` | Bearer | Read all of a group's items (inventory + slots) |
 | `POST /api/item/inv2slot` | Bearer (not Student in QUIZ) | Move one item from inventory into a slot (swaps out any normal item already there) |
 | `POST /api/item/slot2inv` | Bearer (not Student in QUIZ) | Return a slotted item to the inventory |
-| `POST /api/question/generate` | Bearer | Issue a random question + single-use session (students only in `QUIZ` state) |
-| `POST /api/question/answer` | Bearer | Answer a question session (students only in `QUIZ` state); returns whether it was correct |
+| `POST /api/question/generate` | Bearer (NORMAL) | Roll a new item + open a session to claim it (students NORMAL-only) |
+| `POST /api/question/target` | Bearer (QUIZ) | Open an attack/repair session against a group's slot (students QUIZ-only) |
+| `POST /api/question/answer` | Bearer | Answer the held session: grant item, or break/repair the target |
 | `POST /api/question/upload` | Bearer (> Student) | Bulk-add questions to the pool; returns a `207` per-question result list |
 | `GET /api/question/search` | Bearer (> Student) | Search the question pool by description substring |
 | `PUT /api/question/{id}` | Bearer (> Student) | Update a pooled question by ID |
@@ -589,46 +590,49 @@ Return the item held in `slot_id` to the group's inventory and clear the slot. O
 
 ## Questions
 
-A quiz flow split into two steps:
+The quiz drives the game loop. A **generate** endpoint opens a **single-use session**
+(15 min TTL); the shared **answer** endpoint consumes it and acts on the session's kind.
+There are two generate endpoints, gated by the server state:
 
-- `generate` picks a random question and opens a **single-use session** (15 min TTL).
-- `answer` submits a session's answer. The session is **deleted on use** and the
-  server replies whether the answer was correct.
+- **`POST /api/question/generate`** (NORMAL) — *earn an item*. Creates a brand-new item of a
+  random type (drawn from the caller-group's building `difficulty_type` for the requested
+  difficulty) tied to a random `area 1` question of that difficulty. Answering **correctly**
+  adds the item to the group's inventory.
+- **`POST /api/question/target`** (QUIZ) — *attack / repair*. Targets a group's slot.
+  Answering **correctly** breaks an enemy's slotted item or repairs your own broken one.
 
-Both are gated by the **server state machine** (see below): Teachers and Admins may
-always generate and answer, while Students may only do so while the server is in `QUIZ`
-state.
+The caller's own group comes from their token; the caller must be in a group. The graded
+answer is never leaked in the generate response.
 
 ### Server state machine
 
-The server holds a single global state, either `NORMAL` (default) or `QUIZ`,
-maintained in-process by the service layer:
+The server holds a single global state, either `NORMAL` (default) or `QUIZ`. Students are
+restricted to the matching endpoint; **Teachers and Admins bypass the state gate**:
 
-| State    | Student `generate` / `answer` | Teacher / Admin |
-|----------|-------------------------------|-----------------|
-| `NORMAL` | ❌ `403`                      | ✅              |
-| `QUIZ`   | ✅                            | ✅              |
+| Endpoint | Student may call in | Teacher / Admin |
+|----------|---------------------|-----------------|
+| `POST /api/question/generate` (item) | `NORMAL` only | any state |
+| `POST /api/question/target` (attack/repair) | `QUIZ` only | any state |
+| `POST /api/question/answer` | any state | any state |
 
 Read the state with `GET /api/state`; transition it with `POST /api/state`
-(Teacher / Admin only).
-
-Both endpoints require a valid access token:
+(Teacher / Admin only). All endpoints require a valid access token:
 
 ```
 Authorization: Bearer <access_token>
 ```
 
-### `POST /api/question/generate`
+### `POST /api/question/generate` — earn an item (NORMAL)
 
-Issue a new question session.
+Roll a new item for the requested `difficulty` and open a session to claim it.
 
 **Request**
 
 ```json
-{ "group_id": 1 }
+{ "difficulty": 1 }
 ```
 
-**Response `200 OK`** — the question text and its session ID (the answer is never returned)
+**Response `200 OK`** — the question text and its session id (the answer is never returned)
 
 ```json
 {
@@ -641,15 +645,43 @@ Issue a new question session.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
+| `400`  | Malformed JSON body or missing `difficulty`; caller is in no group; the group's building lists no type for the difficulty; or no `area 1` question matches the difficulty |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is a Student and the server is in `NORMAL` state |
+| `403`  | Caller is a Student and the server is not in `NORMAL` state |
+
+---
+
+### `POST /api/question/target` — attack / repair (QUIZ)
+
+Open a session against `target_slot_id` in `target_group_id`. **Valid** only when:
+
+- **attack** — the target is **another** group and its slot item is **not broken**; the
+  graded question is that item's own question, and a correct answer **breaks** it; or
+- **repair** — the target is the caller's **own** group and its slot item **is broken**; the
+  graded question is a random `area 2` question, and a correct answer **repairs** it.
+
+**Request**
+
+```json
+{ "target_group_id": 2, "target_slot_id": 0 }
+```
+
+**Response `200 OK`** — `{ "session", "description" }`, same shape as above.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body; `target_group_id` missing / not greater than 0; `target_slot_id` missing; the target slot is empty; the target item has no question; or the target is invalid (own non-broken slot, or another group's broken slot) |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller is a Student and the server is not in `QUIZ` state |
 
 ---
 
 ### `POST /api/question/answer`
 
-Answer a question session. The answer is the zero-based index of the chosen option.
+Answer the held session (the zero-based index of the chosen option). The session is
+**deleted on use** and the action depends on its kind.
 
 **Request**
 
@@ -657,10 +689,17 @@ Answer a question session. The answer is the zero-based index of the chosen opti
 { "session": "0123456789abcdef0123456789abcdef", "answer": 1 }
 ```
 
-**Response `200 OK`**
+**Response `200 OK`** — `correct` is always present. `item_id` is set when an **item**
+session's correct answer grants an item. `success` is set for **target** sessions and reports
+whether the break/repair actually happened (`false` if the slot's broken state no longer
+allows it; a wrong answer omits it).
 
 ```json
-{ "correct": true }
+{ "correct": true, "item_id": 5 }
+```
+
+```json
+{ "correct": true, "success": true }
 ```
 
 **Error responses**
@@ -669,7 +708,6 @@ Answer a question session. The answer is the zero-based index of the chosen opti
 |--------|-----------|
 | `400`  | Malformed JSON body, missing `session` or `answer`, or the session is unknown/already used/expired |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is a Student and the server is in `NORMAL` state |
 
 ---
 
@@ -682,8 +720,9 @@ token and a role above Student — Students receive `403`.
 
 Each question is `{ description, answer, difficulty, area }`, where `answer` is the
 zero-based index of the correct option and the options are embedded as text inside
-`description`. `difficulty` and `area` are optional `uint` classifiers (default `0`)
-used to filter [search](#get-apiquestionsearch); they do not affect `generate` / `answer`.
+`description`. `difficulty` and `area` are `uint` classifiers (default `0`): they drive
+which question the generate endpoints draw (item → `area 1` + the requested difficulty;
+repair → `area 2`) and also filter [search](#get-apiquestionsearch).
 
 ```
 Authorization: Bearer <access_token>

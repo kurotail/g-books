@@ -10,6 +10,7 @@ type ItemRepo interface {
 	QueryInv(groupID uint) ([]uint, error)        // owned (unslotted) item ids, sorted
 	QuerySlot(groupID uint) (map[uint]int, error) // slot_id -> signed item_id (negative = broken)
 	GetItem(itemID uint) (model.Item, bool, error)
+	CreateItem(itemType, questionID uint) (uint, error)
 	AddInvItem(groupID, itemID uint) error
 	RemoveInvItem(groupID, itemID uint) error
 	SetSlot(groupID, slotID uint, itemID int) error // itemID 0 clears the slot
@@ -63,6 +64,16 @@ func (_ *itemRepo) GetItem(itemID uint) (model.Item, bool, error) {
 	defer db.mu.RUnlock()
 	it, ok := db.items[itemID]
 	return it, ok, nil
+}
+
+// CreateItem inserts a new item with the given type and question, returning its id.
+func (_ *itemRepo) CreateItem(itemType, questionID uint) (uint, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	id := db.nextItemID
+	db.nextItemID++
+	db.items[id] = model.Item{ItemID: id, Type: itemType, QuestionID: questionID}
+	return id, nil
 }
 
 func (_ *itemRepo) AddInvItem(groupID, itemID uint) error {

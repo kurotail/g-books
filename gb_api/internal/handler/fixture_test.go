@@ -52,17 +52,24 @@ func newFixture() *fixture {
 	}
 	buildingRepo := &mock.BuildingRepo{
 		Buildings: map[uint]model.Building{
-			1: {ID: 1, TypeAllowedSlot: map[uint][]uint{10: {0, 1, 5}, 20: {0, 1, 2, 5}}},
+			1: {
+				ID:              1,
+				TypeAllowedSlot: map[uint][]uint{10: {0, 1, 5}, 20: {0, 1, 2, 5}},
+				DifficultyType:  map[uint][]uint{1: {10}}, // difficulty 1 -> type 10 (for GenerateItem)
+			},
 		},
 	}
 	questionRepo := &mock.QuestionRepo{
 		Sessions: map[string]model.QuestionSession{},
+		Questions: map[uint]model.Question{
+			1: {Description: "2+2?\n(a)3\n(b)4", Answer: 1, Difficulty: 1, Area: 1},
+		},
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
 		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, authRepo, groupRepo, buildingRepo)),
 		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo, authRepo)),
-		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo)),
+		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, groupRepo, buildingRepo, itemRepo)),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
 		authRepo:     authRepo,
 		groupRepo:    groupRepo,

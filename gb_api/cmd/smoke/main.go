@@ -358,15 +358,20 @@ func main() {
 	st, body = req("POST", "/api/state", access, map[string]any{"state": "BOGUS"})
 	show("set invalid state value", st, 400, body)
 
-	st, body = req("POST", "/api/question/generate", access, map[string]any{"group_id": 1})
-	show("teacher generates a question", st, 200, body)
 	var q struct {
 		Session string `json:"session"`
 	}
+
+	// --- item flow (NORMAL): generate a new item, answer correctly to earn it ---
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
+	show("teacher sets state NORMAL", st, 200, "")
+
+	st, body = req("POST", "/api/question/generate", access, map[string]any{"difficulty": 1})
+	show("teacher generates an item (difficulty 1)", st, 200, body)
 	json.Unmarshal([]byte(body), &q)
 
 	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 1})
-	show("answer generated question (answer=1)", st, 200, body)
+	show("answer correctly -> item granted (item_id)", st, 200, body)
 
 	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 1})
 	show("answer same session again (consumed)", st, 400, body)
@@ -374,11 +379,43 @@ func main() {
 	st, body = req("POST", "/api/question/answer", access, map[string]any{"answer": 0})
 	show("answer missing session", st, 400, body)
 
+	st, body = req("POST", "/api/question/generate", access, map[string]any{"difficulty": 9})
+	show("generate item for a difficulty with no type (rejected)", st, 400, body)
+
+	// --- attack/repair flow (QUIZ) ---
+	st, _ = req("POST", "/api/register", access, map[string]any{"username": "quizzer", "password": "pw", "role": 0, "group_id": 2})
+	show("register attacker quizzer in group 2", st, 201, "")
+	_, body = req("POST", "/api/login", "", map[string]any{"username": "quizzer", "password": "pw"})
+	qAccess, _ := tokens(body)
+
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "QUIZ"})
+	show("teacher sets state QUIZ", st, 200, "")
+
+	// group-2 student attacks group-1 slot 0 (item 3, normal, carries a question)
+	st, body = req("POST", "/api/question/target", qAccess, map[string]any{"target_group_id": 1, "target_slot_id": 0})
+	show("group-2 student targets group-1 slot 0 (attack)", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+	st, body = req("POST", "/api/question/answer", qAccess, map[string]any{"session": q.Session, "answer": 1})
+	show("answer correctly -> break the item (success)", st, 200, body)
+
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
+	show("group 1 items (slot 0 now broken)", st, 200, body)
+
+	// teacher repairs their own now-broken slot (repair question is area 2, answer 0)
+	st, body = req("POST", "/api/question/target", access, map[string]any{"target_group_id": 1, "target_slot_id": 0})
+	show("teacher targets own broken slot (repair)", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 0})
+	show("answer correctly -> repair the item (success)", st, 200, body)
+
+	st, body = req("POST", "/api/question/target", access, map[string]any{"target_group_id": 1, "target_slot_id": 0})
+	show("target own non-broken slot (invalid)", st, 400, body)
+
+	st, body = req("POST", "/api/question/generate", qAccess, map[string]any{"difficulty": 1})
+	show("student generates item in QUIZ (blocked)", st, 403, body)
+
 	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
 	show("teacher sets state NORMAL", st, 200, "")
-
-	st, body = req("POST", "/api/question/generate", sAccess, map[string]any{"group_id": 1})
-	show("student generates in NORMAL (blocked)", st, 403, body)
 
 	section("STATE WEBSOCKET")
 	wsChecks(access, sAccess)
