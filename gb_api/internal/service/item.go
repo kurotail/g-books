@@ -12,11 +12,30 @@ import (
 )
 
 type ItemSvc struct {
-	repo repo.ItemRepo
+	repo  repo.ItemRepo
+	users repo.UserRepo
 }
 
-func NewItemSvc(r repo.ItemRepo) *ItemSvc {
-	return &ItemSvc{repo: r}
+func NewItemSvc(r repo.ItemRepo, users repo.UserRepo) *ItemSvc {
+	return &ItemSvc{repo: r, users: users}
+}
+
+// blockStudentDuringQuiz returns a non-nil error (with an HTTP status) when the
+// caller is a student and the server is in QUIZ state, in which inventory moves
+// are disabled for students.
+func (s *ItemSvc) blockStudentDuringQuiz(accessToken string) (int, error) {
+	claims, err := validateAccessToken(accessToken)
+	if err != nil {
+		return http.StatusUnauthorized, err
+	}
+	caller, err := s.users.GetUser(claims.Username)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if studentBlockedDuringQuiz(caller.Role) {
+		return http.StatusForbidden, fmt.Errorf("QUIZ 狀態下學生無法移動物品")
+	}
+	return http.StatusOK, nil
 }
 
 func (s *ItemSvc) QueryInv(accessToken string, groupID uint) ([]byte, int, error) {
@@ -50,14 +69,27 @@ func (s *ItemSvc) QuerySlot(accessToken string, groupID uint) ([]byte, int, erro
 }
 
 func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint) (int, error) {
-	if _, err := validateAccessToken(accessToken); err != nil {
-		return http.StatusUnauthorized, err
+	if status, err := s.blockStudentDuringQuiz(accessToken); err != nil {
+		return status, err
+	}
+	slot, err := s.repo.QuerySlot(groupID)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	held := slot[slotID]
+	if held < 0 {
+		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀，無法放置物品", slotID, -held)
 	}
 	if err := s.repo.ChangeInv(groupID, itemID, -1); err != nil {
 		if errors.Is(err, apperr.ErrInsufficientStock) {
 			return http.StatusBadRequest, fmt.Errorf("item %d %w", itemID, err)
 		}
 		return http.StatusInternalServerError, err
+	}
+	if held > 0 {
+		if err := s.repo.ChangeInv(groupID, uint(held), 1); err != nil {
+			return http.StatusInternalServerError, err
+		}
 	}
 	if err := s.repo.SetSlot(groupID, slotID, itemID); err != nil {
 		return http.StatusInternalServerError, err
@@ -66,19 +98,19 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint)
 }
 
 func (s *ItemSvc) TranSlot2Inv(accessToken string, groupID, slotID uint) (int, error) {
-	if _, err := validateAccessToken(accessToken); err != nil {
-		return http.StatusUnauthorized, err
+	if status, err := s.blockStudentDuringQuiz(accessToken); err != nil {
+		return status, err
 	}
 	slot, err := s.repo.QuerySlot(groupID)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	itemID, ok := slot[slotID]
-	if !ok {
-		return http.StatusBadRequest, fmt.Errorf("slot %d 不存在", slotID)
+	if !ok || itemID == 0 {
+		return http.StatusBadRequest, fmt.Errorf("slot %d 沒有物品", slotID)
 	}
-	if itemID<0 {
-		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀", slotID, itemID)
+	if itemID < 0 {
+		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀", slotID, -itemID)
 	}
 	if err := s.repo.ChangeInv(groupID, uint(itemID), 1); err != nil {
 		return http.StatusInternalServerError, err

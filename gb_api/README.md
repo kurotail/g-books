@@ -63,8 +63,8 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/group/members` | Bearer | List the members of a group |
 | `POST /api/item/inv` | Bearer | Read a group's inventory |
 | `POST /api/item/slot` | Bearer | Read a group's slots |
-| `POST /api/item/inv2slot` | Bearer | Move one item from inventory into a slot |
-| `POST /api/item/slot2inv` | Bearer | Return a slotted item to the inventory |
+| `POST /api/item/inv2slot` | Bearer (not Student in QUIZ) | Move one item from inventory into a slot (swaps out any normal item already there) |
+| `POST /api/item/slot2inv` | Bearer (not Student in QUIZ) | Return a slotted item to the inventory |
 | `POST /api/question/generate` | Bearer | Issue a random question + single-use session (students only in `QUIZ` state) |
 | `POST /api/question/answer` | Bearer | Answer a question session (students only in `QUIZ` state); returns whether it was correct |
 | `POST /api/question/upload` | Bearer (> Student) | Bulk-add questions to the pool; returns a `207` per-question result list |
@@ -349,6 +349,12 @@ where each `slot_id` holds at most one item. Items move between the two:
 
 Inventory quantities are always non-negative; only slot values can be negative.
 
+**QUIZ-state restriction** — the two *move* endpoints (`inv2slot` and `slot2inv`)
+are disabled for **students** while the server is in `QUIZ` state (they get
+`403`); Teachers and Admins are unaffected. The read endpoints (`inv`, `slot`)
+are always available. (This is the inverse of the question endpoints, which are
+the ones students may use *only* during `QUIZ`.)
+
 All inventory endpoints require a valid access token:
 
 ```
@@ -405,6 +411,10 @@ Move one unit of `item_id` from the inventory into `slot_id`. The inventory coun
 decremented by one (and the item removed when it reaches zero); the slot is set to the
 item as a **normal** (positive) value. `item_id` must be greater than 0.
 
+The destination slot may already hold a **normal** item: in that case the
+displaced item is **swapped** back into the inventory (`+1`) before the new item
+is placed. A slot holding a **broken** item cannot be replaced.
+
 **Request**
 
 ```json
@@ -418,6 +428,8 @@ item as a **normal** (positive) value. `item_id` must be greater than 0.
 | Status | Condition |
 |--------|-----------|
 | `400`  | Insufficient stock — the item's inventory count would drop below zero |
+| `400`  | The destination slot holds a **broken** item (已損毀) and cannot be replaced |
+| `403`  | A **student** caller while the server is in `QUIZ` state |
 
 ---
 
@@ -440,6 +452,7 @@ one and the slot is cleared (set to `0`). Only **normal** items can be returned 
 | Status | Condition |
 |--------|-----------|
 | `400`  | The slot does not exist, is empty (`0`), or holds a **broken** item (已損毀) |
+| `403`  | A **student** caller while the server is in `QUIZ` state |
 
 ---
 

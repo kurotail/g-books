@@ -47,7 +47,7 @@ func newFixture() *fixture {
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
-		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo)),
+		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, authRepo)),
 		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo, authRepo)),
 		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo)),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),

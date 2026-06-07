@@ -38,6 +38,10 @@ func studentBlockedByState(role uint) bool {
 	return role <= model.RoleStudent && getState() != model.StateQuiz
 }
 
+func studentBlockedDuringQuiz(role uint) bool {
+	return role <= model.RoleStudent && getState() == model.StateQuiz
+}
+
 // --- broadcast hub ---
 
 var stateHub = &hub{subs: make(map[chan model.ServerState]struct{})}
