@@ -24,16 +24,26 @@ type Group struct {
 	Slots      map[uint]int  // slot_id -> item_id
 }
 
+// Building is a row in the buildings table. Primary key: ID.
+type Building struct {
+	ID              uint
+	Name            string          // empty = use the default "Building <id>"
+	Layout          string          // frontend-specific JSON blob, stored verbatim
+	ItemAllowedSlot map[uint][]uint // item_id -> allowed slot_ids
+}
+
 // Database is an in-memory, relationally-structured store: a set of tables keyed
 // by primary key, guarded by one RWMutex (a single serialized "connection").
 type Database struct {
 	mu             sync.RWMutex
 	users          map[string]*User                 // PK: username
 	groups         map[uint]*Group                  // PK: id
+	buildings      map[uint]*Building               // PK: id
 	sessions       map[string]model.QuestionSession // PK: session_id
 	refreshTokens  map[string]struct{}              // PK: jti (refresh token id)
 	questions      map[uint]model.Question          // PK: question id; the pool sessions are drawn from
 	nextQuestionID uint                             // next id to assign on insert
+	nextBuildingID uint                             // next id to assign on insert
 }
 
 // db is the process-wide store. It replaces the former denormalized mem_db.
@@ -54,6 +64,14 @@ func newDatabase() *Database {
 				ID:        1,
 				Inventory: map[uint]uint{1: 1, 2: 1, 3: 2},
 				Slots:     map[uint]int{0: 1, 2: 3},
+			},
+		},
+		buildings: map[uint]*Building{
+			1: {
+				ID:     1,
+				Name:   "Library",
+				Layout: "{}",
+				ItemAllowedSlot: map[uint][]uint{},
 			},
 		},
 		sessions: map[string]model.QuestionSession{
@@ -78,5 +96,6 @@ func newDatabase() *Database {
 			},
 		},
 		nextQuestionID: 3,
+		nextBuildingID: 2,
 	}
 }

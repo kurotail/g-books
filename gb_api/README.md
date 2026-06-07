@@ -61,6 +61,9 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/group/building` | Bearer (member or > Student) | Set a group's building (`building_id` `0` clears it) |
 | `GET /api/group` | Bearer | Read the caller's own group |
 | `POST /api/group/members` | Bearer | List the members of a group |
+| `POST /api/building` | Bearer (> Student) | Create a building |
+| `GET /api/building` | Bearer | List all buildings |
+| `GET /api/building/{id}` | Bearer | Read a building by ID |
 | `POST /api/item/inv` | Bearer | Read a group's inventory |
 | `POST /api/item/slot` | Bearer | Read a group's slots |
 | `POST /api/item/inv2slot` | Bearer (not Student in QUIZ) | Move one item from inventory into a slot (swaps out any normal item already there) |
@@ -328,6 +331,107 @@ List the members of a group. Any authenticated user may call it.
 |--------|-----------|
 | `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+## Buildings
+
+A **building** is a named layout that groups can be assigned to (see
+[`POST /api/group/building`](#post-apigroupbuilding)). Each building has:
+
+- `name` — a display name; a building with no name set reads back as `"Building <id>"`.
+- `layout` — an opaque, frontend-specific JSON string, stored and returned **verbatim**
+  (the server never parses it).
+- `item_allowed_slot` — a map of `item_id → [slot_id, …]` describing which slots each
+  item is allowed to occupy.
+
+Buildings are created by Teachers/Admins; any authenticated user may read them.
+All endpoints require a valid access token:
+
+```
+Authorization: Bearer <access_token>
+```
+
+### `POST /api/building`
+
+Create a building. **Teachers and Admins only.** `name` is required; `layout` and
+`item_allowed_slot` are optional (omitted `item_allowed_slot` reads back as an empty map).
+The new building's `building_id` is assigned by the server and returned in the response.
+
+**Request**
+
+```json
+{
+  "name": "Library",
+  "layout": "{\"w\":3,\"h\":2}",
+  "item_allowed_slot": { "1": [0, 2], "2": [1] }
+}
+```
+
+**Response `200 OK`**
+
+```json
+{
+  "building_id": 2,
+  "name": "Library",
+  "layout": "{\"w\":3,\"h\":2}",
+  "item_allowed_slot": { "1": [0, 2], "2": [1] }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `name` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+
+---
+
+### `GET /api/building`
+
+List every building. Any authenticated user may call it.
+
+**Response `200 OK`** — a JSON array of buildings
+
+```json
+[
+  { "building_id": 1, "name": "Library", "layout": "{}", "item_allowed_slot": {} },
+  { "building_id": 2, "name": "Gym", "layout": "{\"w\":3}", "item_allowed_slot": { "1": [0, 2] } }
+]
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+### `GET /api/building/{id}`
+
+Read a single building by ID. Any authenticated user may call it.
+
+**Response `200 OK`**
+
+```json
+{
+  "building_id": 1,
+  "name": "Library",
+  "layout": "{}",
+  "item_allowed_slot": {}
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `404`  | No building with that `id` |
 
 ---
 

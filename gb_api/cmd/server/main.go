@@ -22,6 +22,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo()))
 	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
 	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo(), repo.InitUserRepo()))
+	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
 
 	mux := http.NewServeMux()
 
@@ -40,6 +41,10 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/group/building", groupHandler.SetBuilding)
 	mux.HandleFunc("GET /api/group", groupHandler.QueryGroup)
 	mux.HandleFunc("POST /api/group/members", groupHandler.QueryMember)
+
+	mux.HandleFunc("POST /api/building", buildingHandler.Create)
+	mux.HandleFunc("GET /api/building", buildingHandler.List)
+	mux.HandleFunc("GET /api/building/{id}", buildingHandler.Get)
 
 	mux.HandleFunc("POST /api/question/generate", questionHandler.Generate)
 	mux.HandleFunc("POST /api/question/answer", questionHandler.Answer)

@@ -16,3 +16,6 @@ var ErrNoQuestions = errors.New("題庫為空")
 
 // ErrUserNotFound is returned when a lookup targets a user that does not exist.
 var ErrUserNotFound = errors.New("使用者不存在")
+
+// ErrBuildingNotFound is returned when a lookup targets a building that does not exist.
+var ErrBuildingNotFound = errors.New("建築不存在")
