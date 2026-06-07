@@ -29,8 +29,8 @@ type Building struct {
 	ID              uint
 	Name            string          // empty = use the default "Building <id>"
 	Layout          string          // frontend-specific JSON blob, stored verbatim
-	TypeAllowedSlot map[uint][]uint // item_id -> allowed slot_ids
-	TypeDifficulty  map[uint]uint   // item_id -> difficulty
+	TypeAllowedSlot map[uint][]uint // type -> allowed slot_ids
+	DifficultyType  map[uint][]uint // difficulty -> types
 }
 
 // Database is an in-memory, relationally-structured store: a set of tables keyed
@@ -75,7 +75,7 @@ func newDatabase() *Database {
 				Name:            "Library",
 				Layout:          "{}",
 				TypeAllowedSlot: map[uint][]uint{10: {0, 1}, 20: {2}},
-				TypeDifficulty:  map[uint]uint{},
+				DifficultyType:  map[uint][]uint{1: {10}, 2: {20}},
 			},
 		},
 		items: map[uint]model.Item{

@@ -3,8 +3,8 @@ package model
 type CreateBuildingRequest struct {
 	Name            string          `json:"name"`
 	Layout          string          `json:"layout"`            // frontend-specific JSON blob
-	TypeAllowedSlot map[uint][]uint `json:"item_allowed_slot"` // item_id -> allowed slot_ids
-	TypeDifficulty  map[uint]uint   `json:"item_difficulty"`   // item_id -> difficulty
+	TypeAllowedSlot map[uint][]uint `json:"item_allowed_slot"` // type -> allowed slot_ids
+	DifficultyType  map[uint][]uint `json:"difficulty_type"`   // difficulty -> types
 }
 
 type Building struct {
@@ -12,7 +12,7 @@ type Building struct {
 	Name            string
 	Layout          string
 	TypeAllowedSlot map[uint][]uint
-	TypeDifficulty  map[uint]uint
+	DifficultyType  map[uint][]uint
 }
 
 type BuildingResponse struct {
@@ -20,5 +20,5 @@ type BuildingResponse struct {
 	Name            string          `json:"name"`
 	Layout          string          `json:"layout"`
 	TypeAllowedSlot map[uint][]uint `json:"item_allowed_slot"`
-	TypeDifficulty  map[uint]uint   `json:"item_difficulty"`
+	DifficultyType  map[uint][]uint `json:"difficulty_type"`
 }

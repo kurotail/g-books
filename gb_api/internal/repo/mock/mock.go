@@ -193,7 +193,7 @@ type BuildingRepo struct {
 	NextID    uint
 }
 
-func (m *BuildingRepo) CreateBuilding(name, layout string, itemAllowedSlot map[uint][]uint, itemDifficulty map[uint]uint) (uint, error) {
+func (m *BuildingRepo) CreateBuilding(name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) (uint, error) {
 	if m.Buildings == nil {
 		m.Buildings = map[uint]model.Building{}
 	}
@@ -202,7 +202,7 @@ func (m *BuildingRepo) CreateBuilding(name, layout string, itemAllowedSlot map[u
 	}
 	id := m.NextID
 	m.NextID++
-	m.Buildings[id] = model.Building{ID: id, Name: name, Layout: layout, TypeAllowedSlot: itemAllowedSlot, TypeDifficulty: itemDifficulty}
+	m.Buildings[id] = model.Building{ID: id, Name: name, Layout: layout, TypeAllowedSlot: typeAllowedSlot, DifficultyType: difficultyType}
 	return id, nil
 }
 

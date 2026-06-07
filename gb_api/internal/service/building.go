@@ -21,7 +21,7 @@ func NewBuildingSvc(r repo.BuildingRepo, users repo.UserRepo) *BuildingSvc {
 }
 
 // Create defines a new building. Only teachers/admins may create buildings.
-func (s *BuildingSvc) Create(accessToken, name, layout string, itemAllowedSlot map[uint][]uint, itemDifficulty map[uint]uint) ([]byte, int, error) {
+func (s *BuildingSvc) Create(accessToken, name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
@@ -33,7 +33,7 @@ func (s *BuildingSvc) Create(accessToken, name, layout string, itemAllowedSlot m
 	if caller.Role < model.RoleTeacher {
 		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
 	}
-	id, err := s.repo.CreateBuilding(name, layout, itemAllowedSlot, itemDifficulty)
+	id, err := s.repo.CreateBuilding(name, layout, typeAllowedSlot, difficultyType)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -91,6 +91,6 @@ func toBuildingResponse(b model.Building) model.BuildingResponse {
 		Name:            b.Name,
 		Layout:          b.Layout,
 		TypeAllowedSlot: b.TypeAllowedSlot,
-		TypeDifficulty:  b.TypeDifficulty,
+		DifficultyType:  b.DifficultyType,
 	}
 }

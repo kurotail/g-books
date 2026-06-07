@@ -343,8 +343,8 @@ A **building** is a named layout that groups can be assigned to (see
   (the server never parses it).
 - `item_allowed_slot` — a map of `item_id → [slot_id, …]` describing which slots each
   item is allowed to occupy.
-- `item_difficulty` — a map of `item_id → difficulty` (`uint`) assigning a difficulty to
-  each item in the building.
+- `difficulty_type` — a map of `difficulty → [type, …]` listing the item types at each
+  difficulty level in the building.
 
 Buildings are created by Teachers/Admins; any authenticated user may read them.
 All endpoints require a valid access token:
@@ -356,7 +356,7 @@ Authorization: Bearer <access_token>
 ### `POST /api/building`
 
 Create a building. **Teachers and Admins only.** `name` is required; `layout`,
-`item_allowed_slot`, and `item_difficulty` are optional (omitted maps read back as empty).
+`item_allowed_slot`, and `difficulty_type` are optional (omitted maps read back as empty).
 The new building's `building_id` is assigned by the server and returned in the response.
 
 **Request**
@@ -365,8 +365,8 @@ The new building's `building_id` is assigned by the server and returned in the r
 {
   "name": "Library",
   "layout": "{\"w\":3,\"h\":2}",
-  "item_allowed_slot": { "1": [0, 2], "2": [1] },
-  "item_difficulty": { "1": 3, "2": 5 }
+  "item_allowed_slot": { "10": [0, 2], "20": [1] },
+  "difficulty_type": { "1": [10, 30], "2": [20] }
 }
 ```
 
@@ -377,8 +377,8 @@ The new building's `building_id` is assigned by the server and returned in the r
   "building_id": 2,
   "name": "Library",
   "layout": "{\"w\":3,\"h\":2}",
-  "item_allowed_slot": { "1": [0, 2], "2": [1] },
-  "item_difficulty": { "1": 3, "2": 5 }
+  "item_allowed_slot": { "10": [0, 2], "20": [1] },
+  "difficulty_type": { "1": [10, 30], "2": [20] }
 }
 ```
 
@@ -400,8 +400,8 @@ List every building. Any authenticated user may call it.
 
 ```json
 [
-  { "building_id": 1, "name": "Library", "layout": "{}", "item_allowed_slot": {}, "item_difficulty": {} },
-  { "building_id": 2, "name": "Gym", "layout": "{\"w\":3}", "item_allowed_slot": { "1": [0, 2] }, "item_difficulty": { "1": 3 } }
+  { "building_id": 1, "name": "Library", "layout": "{}", "item_allowed_slot": {}, "difficulty_type": {} },
+  { "building_id": 2, "name": "Gym", "layout": "{\"w\":3}", "item_allowed_slot": { "10": [0, 2] }, "difficulty_type": { "1": [10] } }
 ]
 ```
 
@@ -425,7 +425,7 @@ Read a single building by ID. Any authenticated user may call it.
   "name": "Library",
   "layout": "{}",
   "item_allowed_slot": {},
-  "item_difficulty": {}
+  "difficulty_type": {}
 }
 ```
 
@@ -443,7 +443,7 @@ Read a single building by ID. Any authenticated user may call it.
 
 Items are **unique instances** stored in an internal `items` table — each is
 `{ item_id, type, question_id }`, where `type` ties it to a building's
-[`item_allowed_slot` / `item_difficulty`](#buildings) and `question_id` links it to a
+[`item_allowed_slot` / `difficulty_type`](#buildings) and `question_id` links it to a
 pooled question (`0` = none). The items table is managed **internally** (no public
 create/list API). *(An item with nothing referencing it should eventually be garbage
 collected; that cleanup is a TODO, not yet implemented.)*

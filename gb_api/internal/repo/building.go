@@ -8,67 +8,50 @@ import (
 )
 
 type BuildingRepo interface {
-	CreateBuilding(name, layout string, itemAllowedSlot map[uint][]uint, itemDifficulty map[uint]uint) (uint, error)
+	CreateBuilding(name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) (uint, error)
 	GetBuilding(id uint) (model.Building, error)
 	GetAllBuildings() ([]model.Building, error)
 }
 
 type buildingRepo struct{}
 
-// defaultBuildingName is used when a building has no name set.
-func defaultBuildingName(id uint) string {
-	return fmt.Sprintf("Building %d", id)
-}
-
-// toModelBuilding maps a stored building row to its public model, deep-copying
-// ItemAllowedSlot (and its slices) and ItemDifficulty so callers can't mutate the store.
 func toModelBuilding(b *Building) model.Building {
-	allowed := make(map[uint][]uint, len(b.TypeAllowedSlot))
-	for itemID, slots := range b.TypeAllowedSlot {
-		cp := make([]uint, len(slots))
-		copy(cp, slots)
-		allowed[itemID] = cp
-	}
 	name := b.Name
 	if name == "" {
-		name = defaultBuildingName(b.ID)
+		name = fmt.Sprintf("Building %d", b.ID)
 	}
 	return model.Building{
 		ID:              b.ID,
 		Name:            name,
 		Layout:          b.Layout,
-		TypeAllowedSlot: allowed,
-		TypeDifficulty:  copyItemDifficulty(b.TypeDifficulty),
+		TypeAllowedSlot: copyUintSliceMap(b.TypeAllowedSlot),
+		DifficultyType:  copyUintSliceMap(b.DifficultyType),
 	}
 }
 
-// copyItemDifficulty returns a shallow copy of an item_id -> difficulty map so the
-// stored building can't be mutated through a returned model.
-func copyItemDifficulty(src map[uint]uint) map[uint]uint {
-	dst := make(map[uint]uint, len(src))
-	for itemID, difficulty := range src {
-		dst[itemID] = difficulty
+// copyUintSliceMap deep-copies a map[uint][]uint (and its slices) so the stored
+// building can't be mutated through a returned model.
+func copyUintSliceMap(src map[uint][]uint) map[uint][]uint {
+	dst := make(map[uint][]uint, len(src))
+	for k, vals := range src {
+		cp := make([]uint, len(vals))
+		copy(cp, vals)
+		dst[k] = cp
 	}
 	return dst
 }
 
-func (_ *buildingRepo) CreateBuilding(name, layout string, itemAllowedSlot map[uint][]uint, itemDifficulty map[uint]uint) (uint, error) {
+func (_ *buildingRepo) CreateBuilding(name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) (uint, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	id := db.nextBuildingID
 	db.nextBuildingID++
-	allowed := make(map[uint][]uint, len(itemAllowedSlot))
-	for itemID, slots := range itemAllowedSlot {
-		cp := make([]uint, len(slots))
-		copy(cp, slots)
-		allowed[itemID] = cp
-	}
 	db.buildings[id] = &Building{
 		ID:              id,
 		Name:            name,
 		Layout:          layout,
-		TypeAllowedSlot: allowed,
-		TypeDifficulty:  copyItemDifficulty(itemDifficulty),
+		TypeAllowedSlot: copyUintSliceMap(typeAllowedSlot),
+		DifficultyType:  copyUintSliceMap(difficultyType),
 	}
 	return id, nil
 }
