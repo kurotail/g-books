@@ -54,7 +54,7 @@ func (_ *groupRepo) SetGroupName(groupID uint, name string) error {
 	defer db.mu.Unlock()
 	g := db.groups[groupID]
 	if g == nil {
-		g = &Group{ID: groupID, Inventory: map[uint]uint{}, Slots: map[uint]int{}}
+		g = &Group{ID: groupID, Inventory: map[uint]struct{}{}, Slots: map[uint]int{}}
 		db.groups[groupID] = g
 	}
 	g.Name = name
@@ -66,7 +66,7 @@ func (_ *groupRepo) SetBuildingID(groupID uint, buildingID uint) error {
 	defer db.mu.Unlock()
 	g := db.groups[groupID]
 	if g == nil {
-		g = &Group{ID: groupID, Inventory: map[uint]uint{}, Slots: map[uint]int{}}
+		g = &Group{ID: groupID, Inventory: map[uint]struct{}{}, Slots: map[uint]int{}}
 		db.groups[groupID] = g
 	}
 	g.BuildingID = buildingID

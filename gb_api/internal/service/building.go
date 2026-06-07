@@ -21,7 +21,7 @@ func NewBuildingSvc(r repo.BuildingRepo, users repo.UserRepo) *BuildingSvc {
 }
 
 // Create defines a new building. Only teachers/admins may create buildings.
-func (s *BuildingSvc) Create(accessToken, name, layout string, itemAllowedSlot map[uint][]uint) ([]byte, int, error) {
+func (s *BuildingSvc) Create(accessToken, name, layout string, itemAllowedSlot map[uint][]uint, itemDifficulty map[uint]uint) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
@@ -33,7 +33,7 @@ func (s *BuildingSvc) Create(accessToken, name, layout string, itemAllowedSlot m
 	if caller.Role < model.RoleTeacher {
 		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
 	}
-	id, err := s.repo.CreateBuilding(name, layout, itemAllowedSlot)
+	id, err := s.repo.CreateBuilding(name, layout, itemAllowedSlot, itemDifficulty)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -48,7 +48,6 @@ func (s *BuildingSvc) Create(accessToken, name, layout string, itemAllowedSlot m
 	return data, http.StatusOK, nil
 }
 
-// Get returns a single building by id. Any authenticated user may call it.
 func (s *BuildingSvc) Get(accessToken string, id uint) ([]byte, int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return nil, http.StatusUnauthorized, err
@@ -67,7 +66,6 @@ func (s *BuildingSvc) Get(accessToken string, id uint) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
-// List returns every building. Any authenticated user may call it.
 func (s *BuildingSvc) List(accessToken string) ([]byte, int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return nil, http.StatusUnauthorized, err
@@ -92,6 +90,7 @@ func toBuildingResponse(b model.Building) model.BuildingResponse {
 		BuildingID:      b.ID,
 		Name:            b.Name,
 		Layout:          b.Layout,
-		ItemAllowedSlot: b.ItemAllowedSlot,
+		TypeAllowedSlot: b.TypeAllowedSlot,
+		TypeDifficulty:  b.TypeDifficulty,
 	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 type BuildingRepo interface {
-	CreateBuilding(name, layout string, itemAllowedSlot map[uint][]uint) (uint, error)
+	CreateBuilding(name, layout string, itemAllowedSlot map[uint][]uint, itemDifficulty map[uint]uint) (uint, error)
 	GetBuilding(id uint) (model.Building, error)
 	GetAllBuildings() ([]model.Building, error)
 }
@@ -21,10 +21,10 @@ func defaultBuildingName(id uint) string {
 }
 
 // toModelBuilding maps a stored building row to its public model, deep-copying
-// ItemAllowedSlot (and its slices) so callers can't mutate the store.
+// ItemAllowedSlot (and its slices) and ItemDifficulty so callers can't mutate the store.
 func toModelBuilding(b *Building) model.Building {
-	allowed := make(map[uint][]uint, len(b.ItemAllowedSlot))
-	for itemID, slots := range b.ItemAllowedSlot {
+	allowed := make(map[uint][]uint, len(b.TypeAllowedSlot))
+	for itemID, slots := range b.TypeAllowedSlot {
 		cp := make([]uint, len(slots))
 		copy(cp, slots)
 		allowed[itemID] = cp
@@ -37,11 +37,22 @@ func toModelBuilding(b *Building) model.Building {
 		ID:              b.ID,
 		Name:            name,
 		Layout:          b.Layout,
-		ItemAllowedSlot: allowed,
+		TypeAllowedSlot: allowed,
+		TypeDifficulty:  copyItemDifficulty(b.TypeDifficulty),
 	}
 }
 
-func (_ *buildingRepo) CreateBuilding(name, layout string, itemAllowedSlot map[uint][]uint) (uint, error) {
+// copyItemDifficulty returns a shallow copy of an item_id -> difficulty map so the
+// stored building can't be mutated through a returned model.
+func copyItemDifficulty(src map[uint]uint) map[uint]uint {
+	dst := make(map[uint]uint, len(src))
+	for itemID, difficulty := range src {
+		dst[itemID] = difficulty
+	}
+	return dst
+}
+
+func (_ *buildingRepo) CreateBuilding(name, layout string, itemAllowedSlot map[uint][]uint, itemDifficulty map[uint]uint) (uint, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	id := db.nextBuildingID
@@ -56,7 +67,8 @@ func (_ *buildingRepo) CreateBuilding(name, layout string, itemAllowedSlot map[u
 		ID:              id,
 		Name:            name,
 		Layout:          layout,
-		ItemAllowedSlot: allowed,
+		TypeAllowedSlot: allowed,
+		TypeDifficulty:  copyItemDifficulty(itemDifficulty),
 	}
 	return id, nil
 }

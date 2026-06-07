@@ -33,7 +33,7 @@ func (h *BuildingHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 name", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Create(token, req.Name, req.Layout, req.ItemAllowedSlot)
+	data, status, err := h.svc.Create(token, req.Name, req.Layout, req.TypeAllowedSlot, req.TypeDifficulty)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

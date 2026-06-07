@@ -18,7 +18,7 @@ type QuestionRepo interface {
 	CreateSession(groupID uint) (string, model.Question, error)
 	ConsumeSession(session string) (model.QuestionSession, bool, error)
 	AddQuestions(qs []model.Question) ([]model.QuestionRecord, error)
-	SearchQuestions(query string) ([]model.QuestionRecord, error)
+	SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error)
 	UpdateQuestion(id uint, q model.Question) (bool, error)
 	DeleteQuestion(id uint) (bool, error)
 }
@@ -76,23 +76,44 @@ func (_ *questionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord
 		id := db.nextQuestionID
 		db.nextQuestionID++
 		db.questions[id] = q
-		records = append(records, model.QuestionRecord{ID: id, Description: q.Description, Answer: q.Answer})
+		records = append(records, toRecord(id, q))
 	}
 	return records, nil
 }
 
-func (_ *questionRepo) SearchQuestions(query string) ([]model.QuestionRecord, error) {
+// SearchQuestions returns pool questions matching the description substring (empty
+// matches all). The difficulty and area filters are applied only when non-nil, each
+// as an exact match, AND-combined with the substring.
+func (_ *questionRepo) SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error) {
 	needle := strings.ToLower(query)
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	records := make([]model.QuestionRecord, 0, len(db.questions))
 	for id, q := range db.questions {
-		if needle == "" || strings.Contains(strings.ToLower(q.Description), needle) {
-			records = append(records, model.QuestionRecord{ID: id, Description: q.Description, Answer: q.Answer})
+		if needle != "" && !strings.Contains(strings.ToLower(q.Description), needle) {
+			continue
 		}
+		if difficulty != nil && q.Difficulty != *difficulty {
+			continue
+		}
+		if area != nil && q.Area != *area {
+			continue
+		}
+		records = append(records, toRecord(id, q))
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
 	return records, nil
+}
+
+// toRecord maps a stored question to its teacher-facing record.
+func toRecord(id uint, q model.Question) model.QuestionRecord {
+	return model.QuestionRecord{
+		ID:          id,
+		Description: q.Description,
+		Answer:      q.Answer,
+		Difficulty:  q.Difficulty,
+		Area:        q.Area,
+	}
 }
 
 func (_ *questionRepo) UpdateQuestion(id uint, q model.Question) (bool, error) {

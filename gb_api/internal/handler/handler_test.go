@@ -202,13 +202,13 @@ func TestItemHandler_MissingFields(t *testing.T) {
 
 // ---- item handler: state transition chain ----
 //
-// Initial:  inv={1:3, 2:1}  slot={0:1}
+// Initial:  inv={1, 2}  slot={0:3}   (items 1,2,3; Allowed nil = any slot)
 //
-//  step 1  TranInv2Slot(item=1, slot=5)  -> inv={1:2, 2:1}  slot={0:1, 5:1}
+//  step 1  TranInv2Slot(item=1, slot=5)  -> inv={2}     slot={0:3, 5:1}
 //  step 2  QueryItems                    -> verify
-//  step 3  TranSlot2Inv(slot=0)          -> inv={1:3, 2:1}  slot={5:1}
+//  step 3  TranSlot2Inv(slot=0)          -> inv={2, 3}  slot={5:1}
 //  step 4  QueryItems                    -> verify
-//  step 5  TranSlot2Inv(slot=5)          -> inv={1:4, 2:1}  slot={}
+//  step 5  TranSlot2Inv(slot=5)          -> inv={1, 2, 3}  slot={}
 //  step 6  Final QueryItems              -> verify
 
 func TestItemHandler_StateTransitions(t *testing.T) {
@@ -221,45 +221,44 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 		t.Fatalf("step1 TranInv2Slot: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// step 2: verify post-transfer state
+	// step 2: item 1 left inventory and now sits in slot 5; item 3 still in slot 0
 	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step2 QueryItems: expected 200, got %d", rec.Code)
 	}
 	inv := decodeInv(t, rec)
-	if inv["1"] != 2 {
-		t.Errorf("step2: expected inv[1]==2, got %d", inv["1"])
+	if _, ok := inv[1]; ok {
+		t.Error("step2: expected item 1 to leave inventory")
 	}
-	if inv["2"] != 1 {
-		t.Errorf("step2: expected inv[2]==1, got %d", inv["2"])
+	if _, ok := inv[2]; !ok {
+		t.Error("step2: expected item 2 still in inventory")
 	}
 	slot := decodeSlots(t, rec)
-	if slot["0"] != 1 {
-		t.Errorf("step2: expected slot[0]==1, got %d", slot["0"])
+	if slot[0].ItemID != 3 {
+		t.Errorf("step2: expected slot[0] item 3, got %+v", slot[0])
 	}
-	if slot["5"] != 1 {
-		t.Errorf("step2: expected slot[5]==1, got %d", slot["5"])
+	if slot[5].ItemID != 1 {
+		t.Errorf("step2: expected slot[5] item 1, got %+v", slot[5])
 	}
 
-	// step 3: return item from slot 0 to inventory (slot 0 held item 1)
+	// step 3: return item from slot 0 to inventory (slot 0 held item 3)
 	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 1, "slot_id": 0})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step3 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// step 4: verify slot 0 gone, inv[1] restored
+	// step 4: slot 0 gone, item 3 back in inventory, slot 5 unchanged
 	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
 	inv = decodeInv(t, rec)
-	if inv["1"] != 3 {
-		t.Errorf("step4: expected inv[1]==3, got %d", inv["1"])
+	if _, ok := inv[3]; !ok {
+		t.Error("step4: expected item 3 back in inventory")
 	}
-
 	slot = decodeSlots(t, rec)
-	if _, ok := slot["0"]; ok {
+	if _, ok := slot[0]; ok {
 		t.Error("step4: expected slot 0 to be removed")
 	}
-	if slot["5"] != 1 {
-		t.Errorf("step4: expected slot[5]==1 (unchanged), got %d", slot["5"])
+	if slot[5].ItemID != 1 {
+		t.Errorf("step4: expected slot[5] item 1 (unchanged), got %+v", slot[5])
 	}
 
 	// step 5: return item 1 from slot 5 to inventory, clearing the slot
@@ -268,31 +267,29 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 		t.Fatalf("step5 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// step 6: final state — slot empty, inv={1:4, 2:1}
+	// step 6: final state — slots empty, inventory holds items 1, 2, 3
 	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
 	slot = decodeSlots(t, rec)
 	if len(slot) != 0 {
 		t.Errorf("step6: expected empty slot map, got %v", slot)
 	}
-
 	inv = decodeInv(t, rec)
-	if inv["1"] != 4 {
-		t.Errorf("step6: expected inv[1]==4, got %d", inv["1"])
-	}
-	if inv["2"] != 1 {
-		t.Errorf("step6: expected inv[2]==1, got %d", inv["2"])
+	for _, id := range []uint{1, 2, 3} {
+		if _, ok := inv[id]; !ok {
+			t.Errorf("step6: expected item %d in inventory, got %+v", id, inv)
+		}
 	}
 }
 
 // ---- item handler: business rule violations ----
 
-func TestItemHandler_TranInv2Slot_OutOfStock(t *testing.T) {
+func TestItemHandler_TranInv2Slot_ItemNotInInventory(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
 	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"group_id": 1, "item_id": 99, "slot_id": 5})
 	if rec.Code != http.StatusBadRequest {
-		t.Errorf("out-of-stock: expected 400, got %d", rec.Code)
+		t.Errorf("item not owned: expected 400, got %d", rec.Code)
 	}
 }
 

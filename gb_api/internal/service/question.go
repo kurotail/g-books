@@ -44,8 +44,6 @@ func (s *QuestionSvc) Generate(accessToken string, groupID uint) ([]byte, int, e
 	return data, http.StatusOK, nil
 }
 
-// requireTeacher validates the access token and confirms the caller is at least
-// a teacher. On success it returns http.StatusOK and a nil error.
 func (s *QuestionSvc) requireTeacher(accessToken string) (int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
@@ -61,10 +59,6 @@ func (s *QuestionSvc) requireTeacher(accessToken string) (int, error) {
 	return http.StatusOK, nil
 }
 
-// Upload appends a batch of teacher-supplied questions to the pool. Invalid
-// questions are skipped rather than failing the whole batch; the response is a
-// 207 Multi-Status carrying a per-question result (201 created with its new id,
-// or 400 with the reason) in request order.
 func (s *QuestionSvc) Upload(accessToken string, inputs []model.QuestionInput) ([]byte, int, error) {
 	if status, err := s.requireTeacher(accessToken); err != nil {
 		return nil, status, err
@@ -85,7 +79,7 @@ func (s *QuestionSvc) Upload(accessToken string, inputs []model.QuestionInput) (
 			}
 			continue
 		}
-		valid = append(valid, model.Question{Description: in.Description, Answer: in.Answer})
+		valid = append(valid, model.Question{Description: in.Description, Answer: in.Answer, Difficulty: in.Difficulty, Area: in.Area})
 		validIdx = append(validIdx, i)
 	}
 
@@ -110,12 +104,11 @@ func (s *QuestionSvc) Upload(accessToken string, inputs []model.QuestionInput) (
 	return data, http.StatusMultiStatus, nil
 }
 
-// Search returns pool questions matching query (empty query returns all).
-func (s *QuestionSvc) Search(accessToken, query string) ([]byte, int, error) {
+func (s *QuestionSvc) Search(accessToken, query string, difficulty, area *uint) ([]byte, int, error) {
 	if status, err := s.requireTeacher(accessToken); err != nil {
 		return nil, status, err
 	}
-	records, err := s.repo.SearchQuestions(query)
+	records, err := s.repo.SearchQuestions(query, difficulty, area)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -126,7 +119,6 @@ func (s *QuestionSvc) Search(accessToken, query string) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
-// Update overwrites an existing pool question.
 func (s *QuestionSvc) Update(accessToken string, id uint, in model.QuestionInput) (int, error) {
 	if status, err := s.requireTeacher(accessToken); err != nil {
 		return status, err
@@ -134,7 +126,7 @@ func (s *QuestionSvc) Update(accessToken string, id uint, in model.QuestionInput
 	if in.Description == "" {
 		return http.StatusBadRequest, fmt.Errorf("description 不可為空")
 	}
-	ok, err := s.repo.UpdateQuestion(id, model.Question{Description: in.Description, Answer: in.Answer})
+	ok, err := s.repo.UpdateQuestion(id, model.Question{Description: in.Description, Answer: in.Answer, Difficulty: in.Difficulty, Area: in.Area})
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -144,7 +136,6 @@ func (s *QuestionSvc) Update(accessToken string, id uint, in model.QuestionInput
 	return http.StatusOK, nil
 }
 
-// Delete removes a question from the pool.
 func (s *QuestionSvc) Delete(accessToken string, id uint) (int, error) {
 	if status, err := s.requireTeacher(accessToken); err != nil {
 		return status, err

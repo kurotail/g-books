@@ -21,6 +21,7 @@ var (
 	_ repo.RefreshTokenRepo = (*AuthRepo)(nil)
 	_ repo.ItemRepo         = (*ItemRepo)(nil)
 	_ repo.GroupRepo        = (*GroupRepo)(nil)
+	_ repo.BuildingRepo     = (*BuildingRepo)(nil)
 	_ repo.QuestionRepo     = (*QuestionRepo)(nil)
 )
 
@@ -96,14 +97,18 @@ func (m *RoleRepo) GetUser(username string) (model.User, error) {
 func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error { return nil }
 
 type ItemRepo struct {
-	Inv  map[uint]uint
-	Slot map[uint]int
+	Inv   map[uint]struct{}   // owned (unslotted) item ids
+	Slot  map[uint]int        // slot_id -> signed item_id
+	Items map[uint]model.Item // item table
 }
 
-func (m *ItemRepo) QueryInv(_ uint) (map[uint]uint, error) {
-	result := make(map[uint]uint, len(m.Inv))
-	maps.Copy(result, m.Inv)
-	return result, nil
+func (m *ItemRepo) QueryInv(_ uint) ([]uint, error) {
+	ids := make([]uint, 0, len(m.Inv))
+	for id := range m.Inv {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
 }
 
 func (m *ItemRepo) QuerySlot(_ uint) (map[uint]int, error) {
@@ -112,24 +117,32 @@ func (m *ItemRepo) QuerySlot(_ uint) (map[uint]int, error) {
 	return result, nil
 }
 
-func (m *ItemRepo) ChangeInv(_, itemID uint, delta int) error {
-	next := int(m.Inv[itemID]) + delta
-	if next < 0 {
-		return apperr.ErrInsufficientStock
+func (m *ItemRepo) GetItem(itemID uint) (model.Item, bool, error) {
+	it, ok := m.Items[itemID]
+	return it, ok, nil
+}
+
+func (m *ItemRepo) AddInvItem(_, itemID uint) error {
+	if m.Inv == nil {
+		m.Inv = map[uint]struct{}{}
 	}
-	if next == 0 {
-		delete(m.Inv, itemID)
-	} else {
-		m.Inv[itemID] = uint(next)
-	}
+	m.Inv[itemID] = struct{}{}
 	return nil
 }
 
-func (m *ItemRepo) SetSlot(_, slotID, itemID uint) error {
+func (m *ItemRepo) RemoveInvItem(_, itemID uint) error {
+	delete(m.Inv, itemID)
+	return nil
+}
+
+func (m *ItemRepo) SetSlot(_, slotID uint, itemID int) error {
 	if itemID == 0 {
 		delete(m.Slot, slotID)
 	} else {
-		m.Slot[slotID] = int(itemID)
+		if m.Slot == nil {
+			m.Slot = map[uint]int{}
+		}
+		m.Slot[slotID] = itemID
 	}
 	return nil
 }
@@ -175,6 +188,40 @@ func (m *GroupRepo) SetBuildingID(groupID uint, buildingID uint) error {
 	return nil
 }
 
+type BuildingRepo struct {
+	Buildings map[uint]model.Building
+	NextID    uint
+}
+
+func (m *BuildingRepo) CreateBuilding(name, layout string, itemAllowedSlot map[uint][]uint, itemDifficulty map[uint]uint) (uint, error) {
+	if m.Buildings == nil {
+		m.Buildings = map[uint]model.Building{}
+	}
+	if m.NextID == 0 {
+		m.NextID = 1
+	}
+	id := m.NextID
+	m.NextID++
+	m.Buildings[id] = model.Building{ID: id, Name: name, Layout: layout, TypeAllowedSlot: itemAllowedSlot, TypeDifficulty: itemDifficulty}
+	return id, nil
+}
+
+func (m *BuildingRepo) GetBuilding(id uint) (model.Building, error) {
+	b, ok := m.Buildings[id]
+	if !ok {
+		return model.Building{}, apperr.ErrBuildingNotFound
+	}
+	return b, nil
+}
+
+func (m *BuildingRepo) GetAllBuildings() ([]model.Building, error) {
+	out := make([]model.Building, 0, len(m.Buildings))
+	for _, b := range m.Buildings {
+		out = append(out, b)
+	}
+	return out, nil
+}
+
 type QuestionRepo struct {
 	Sessions  map[string]model.QuestionSession
 	Created   string
@@ -217,21 +264,38 @@ func (m *QuestionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord
 		id := m.NextID
 		m.NextID++
 		m.Questions[id] = q
-		records = append(records, model.QuestionRecord{ID: id, Description: q.Description, Answer: q.Answer})
+		records = append(records, mockRecord(id, q))
 	}
 	return records, nil
 }
 
-func (m *QuestionRepo) SearchQuestions(query string) ([]model.QuestionRecord, error) {
+func (m *QuestionRepo) SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error) {
 	needle := strings.ToLower(query)
 	records := make([]model.QuestionRecord, 0, len(m.Questions))
 	for id, q := range m.Questions {
-		if needle == "" || strings.Contains(strings.ToLower(q.Description), needle) {
-			records = append(records, model.QuestionRecord{ID: id, Description: q.Description, Answer: q.Answer})
+		if needle != "" && !strings.Contains(strings.ToLower(q.Description), needle) {
+			continue
 		}
+		if difficulty != nil && q.Difficulty != *difficulty {
+			continue
+		}
+		if area != nil && q.Area != *area {
+			continue
+		}
+		records = append(records, mockRecord(id, q))
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
 	return records, nil
+}
+
+func mockRecord(id uint, q model.Question) model.QuestionRecord {
+	return model.QuestionRecord{
+		ID:          id,
+		Description: q.Description,
+		Answer:      q.Answer,
+		Difficulty:  q.Difficulty,
+		Area:        q.Area,
+	}
 }
 
 func (m *QuestionRepo) UpdateQuestion(id uint, q model.Question) (bool, error) {

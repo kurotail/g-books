@@ -5,6 +5,8 @@ import "time"
 type Question struct {
 	Description string
 	Answer      uint
+	Difficulty  uint
+	Area        uint
 }
 
 type QuestionSession struct {
@@ -23,6 +25,8 @@ type GenerateQuestionRequest struct {
 type QuestionInput struct {
 	Description string `json:"description"`
 	Answer      uint   `json:"answer"`
+	Difficulty  uint   `json:"difficulty"`
+	Area        uint   `json:"area"`
 }
 
 // UploadQuestionsRequest is the body of POST /api/question/upload.
@@ -36,6 +40,8 @@ type QuestionRecord struct {
 	ID          uint   `json:"id"`
 	Description string `json:"description"`
 	Answer      uint   `json:"answer"`
+	Difficulty  uint   `json:"difficulty"`
+	Area        uint   `json:"area"`
 }
 
 // QuestionListResponse is returned by the search endpoint.

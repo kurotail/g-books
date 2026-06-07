@@ -230,7 +230,7 @@ func TestQuestionSvc_Search_FindsMatch(t *testing.T) {
 		{Description: "Capital of France?", Answer: 0},
 	})
 
-	data, status, err := s.Search(accessTokenFor(t, "teacher"), "france")
+	data, status, err := s.Search(accessTokenFor(t, "teacher"), "france", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,6 +243,57 @@ func TestQuestionSvc_Search_FindsMatch(t *testing.T) {
 	}
 	if len(resp.Questions) != 1 || resp.Questions[0].Description != "Capital of France?" {
 		t.Errorf("expected the France question, got %+v", resp.Questions)
+	}
+}
+
+func TestQuestionSvc_Search_FiltersByDifficultyAndArea(t *testing.T) {
+	s, r := newQuestionSvc(model.RoleTeacher)
+	r.AddQuestions([]model.Question{
+		{Description: "easy algebra", Answer: 0, Difficulty: 1, Area: 7},
+		{Description: "hard algebra", Answer: 0, Difficulty: 3, Area: 7},
+		{Description: "hard geometry", Answer: 0, Difficulty: 3, Area: 9},
+	})
+
+	u := func(v uint) *uint { return &v }
+
+	search := func(query string, difficulty, area *uint) []model.QuestionRecord {
+		t.Helper()
+		data, status, err := s.Search(accessTokenFor(t, "teacher"), query, difficulty, area)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if status != http.StatusOK {
+			t.Fatalf("expected 200, got %d", status)
+		}
+		var resp model.QuestionListResponse
+		if err := json.Unmarshal(data, &resp); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		return resp.Questions
+	}
+
+	// difficulty only: the two hard questions.
+	if got := search("", u(3), nil); len(got) != 2 {
+		t.Errorf("difficulty=3: expected 2, got %d (%+v)", len(got), got)
+	}
+	// area only: the two area-7 questions.
+	if got := search("", nil, u(7)); len(got) != 2 {
+		t.Errorf("area=7: expected 2, got %d (%+v)", len(got), got)
+	}
+	// both: exact match on one question.
+	got := search("", u(3), u(7))
+	if len(got) != 1 || got[0].Description != "hard algebra" {
+		t.Errorf("difficulty=3&area=7: expected only 'hard algebra', got %+v", got)
+	}
+	if got[0].Difficulty != 3 || got[0].Area != 7 {
+		t.Errorf("record must carry difficulty/area, got %+v", got[0])
+	}
+	// q AND-combines with the filters: substring excludes the geometry question.
+	if got := search("geometry", u(3), nil); len(got) != 1 || got[0].Description != "hard geometry" {
+		t.Errorf("q=geometry&difficulty=3: expected only 'hard geometry', got %+v", got)
+	}
+	if got := search("geometry", nil, u(7)); len(got) != 0 {
+		t.Errorf("q=geometry&area=7: expected no match, got %+v", got)
 	}
 }
 

@@ -312,23 +312,31 @@ func main() {
 
 	section("ITEMS")
 
+	// Assign building 1 to group 1 so the Type-allowed-slot rule applies
+	// (building 1 allows type 10 in slots 0,1 and type 20 in slot 2).
+	st, _ = req("POST", "/api/group/building", access, map[string]any{"group_id": 1, "building_id": 1})
+	show("assign building 1 to group 1", st, 200, "")
+
 	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
 	show("query items of group 1 (inventory + slots)", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 0, "slot_id": 9})
+	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 0, "slot_id": 1})
 	show("inv2slot with item_id 0 (rejected)", st, 400, body)
 
-	st, _ = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 1, "slot_id": 9})
-	show("move item 1 from inv to slot 9", st, 200, "")
+	st, _ = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 1, "slot_id": 1})
+	show("move item 1 (type 10) into allowed slot 1", st, 200, "")
 
 	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
 	show("items after inv2slot", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 99, "slot_id": 8})
-	show("move nonexistent item (insufficient)", st, 400, body)
+	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 2, "slot_id": 1})
+	show("move item 2 (type 20) into slot 1 (type not allowed)", st, 400, body)
 
-	st, body = req("POST", "/api/item/slot2inv", access, map[string]any{"group_id": 1, "slot_id": 9})
-	show("move slot 9 back to inventory", st, 200, body)
+	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 99, "slot_id": 1})
+	show("move item not in inventory (rejected)", st, 400, body)
+
+	st, body = req("POST", "/api/item/slot2inv", access, map[string]any{"group_id": 1, "slot_id": 1})
+	show("move slot 1 back to inventory", st, 200, body)
 
 	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
 	show("items after slot2inv (item 1 restored)", st, 200, body)

@@ -18,10 +18,10 @@ type User struct {
 // Group is a row in the groups table. Primary key: ID.
 type Group struct {
 	ID         uint
-	Name       string        // empty = use the default "Group <id>"
-	BuildingID uint          // FK -> buildings; 0 = no building assigned
-	Inventory  map[uint]uint // item_id -> count
-	Slots      map[uint]int  // slot_id -> item_id
+	Name       string            // empty = use the default "Group <id>"
+	BuildingID uint              // FK -> buildings; 0 = no building assigned
+	Inventory  map[uint]struct{} // set of owned (unslotted) item_ids
+	Slots      map[uint]int      // slot_id -> signed item_id (negative = broken)
 }
 
 // Building is a row in the buildings table. Primary key: ID.
@@ -29,7 +29,8 @@ type Building struct {
 	ID              uint
 	Name            string          // empty = use the default "Building <id>"
 	Layout          string          // frontend-specific JSON blob, stored verbatim
-	ItemAllowedSlot map[uint][]uint // item_id -> allowed slot_ids
+	TypeAllowedSlot map[uint][]uint // item_id -> allowed slot_ids
+	TypeDifficulty  map[uint]uint   // item_id -> difficulty
 }
 
 // Database is an in-memory, relationally-structured store: a set of tables keyed
@@ -39,11 +40,13 @@ type Database struct {
 	users          map[string]*User                 // PK: username
 	groups         map[uint]*Group                  // PK: id
 	buildings      map[uint]*Building               // PK: id
+	items          map[uint]model.Item              // PK: item id
 	sessions       map[string]model.QuestionSession // PK: session_id
 	refreshTokens  map[string]struct{}              // PK: jti (refresh token id)
 	questions      map[uint]model.Question          // PK: question id; the pool sessions are drawn from
 	nextQuestionID uint                             // next id to assign on insert
 	nextBuildingID uint                             // next id to assign on insert
+	nextItemID     uint                             // next id to assign on insert
 }
 
 // db is the process-wide store. It replaces the former denormalized mem_db.
@@ -62,17 +65,24 @@ func newDatabase() *Database {
 		groups: map[uint]*Group{
 			1: {
 				ID:        1,
-				Inventory: map[uint]uint{1: 1, 2: 1, 3: 2},
-				Slots:     map[uint]int{0: 1, 2: 3},
+				Inventory: map[uint]struct{}{1: {}, 2: {}, 4: {}},
+				Slots:     map[uint]int{0: 3},
 			},
 		},
 		buildings: map[uint]*Building{
 			1: {
-				ID:     1,
-				Name:   "Library",
-				Layout: "{}",
-				ItemAllowedSlot: map[uint][]uint{},
+				ID:              1,
+				Name:            "Library",
+				Layout:          "{}",
+				TypeAllowedSlot: map[uint][]uint{10: {0, 1}, 20: {2}},
+				TypeDifficulty:  map[uint]uint{},
 			},
+		},
+		items: map[uint]model.Item{
+			1: {ItemID: 1, Type: 10, QuestionID: 1},
+			2: {ItemID: 2, Type: 20, QuestionID: 2},
+			3: {ItemID: 3, Type: 10},
+			4: {ItemID: 4, Type: 30},
 		},
 		sessions: map[string]model.QuestionSession{
 			"0123456789abcdef0123456789abcdef": {
@@ -89,13 +99,18 @@ func newDatabase() *Database {
 			1: {
 				Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
 				Answer:      1,
+				Difficulty:  1,
+				Area:        1,
 			},
 			2: {
 				Description: "Who is F\n(a)HRM\n(b)M's child\n(c)White cat\n(d)O's Big sis",
 				Answer:      0,
+				Difficulty:  2,
+				Area:        2,
 			},
 		},
 		nextQuestionID: 3,
 		nextBuildingID: 2,
+		nextItemID:     5,
 	}
 }

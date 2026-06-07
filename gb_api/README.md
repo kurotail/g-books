@@ -343,6 +343,8 @@ A **building** is a named layout that groups can be assigned to (see
   (the server never parses it).
 - `item_allowed_slot` — a map of `item_id → [slot_id, …]` describing which slots each
   item is allowed to occupy.
+- `item_difficulty` — a map of `item_id → difficulty` (`uint`) assigning a difficulty to
+  each item in the building.
 
 Buildings are created by Teachers/Admins; any authenticated user may read them.
 All endpoints require a valid access token:
@@ -353,8 +355,8 @@ Authorization: Bearer <access_token>
 
 ### `POST /api/building`
 
-Create a building. **Teachers and Admins only.** `name` is required; `layout` and
-`item_allowed_slot` are optional (omitted `item_allowed_slot` reads back as an empty map).
+Create a building. **Teachers and Admins only.** `name` is required; `layout`,
+`item_allowed_slot`, and `item_difficulty` are optional (omitted maps read back as empty).
 The new building's `building_id` is assigned by the server and returned in the response.
 
 **Request**
@@ -363,7 +365,8 @@ The new building's `building_id` is assigned by the server and returned in the r
 {
   "name": "Library",
   "layout": "{\"w\":3,\"h\":2}",
-  "item_allowed_slot": { "1": [0, 2], "2": [1] }
+  "item_allowed_slot": { "1": [0, 2], "2": [1] },
+  "item_difficulty": { "1": 3, "2": 5 }
 }
 ```
 
@@ -374,7 +377,8 @@ The new building's `building_id` is assigned by the server and returned in the r
   "building_id": 2,
   "name": "Library",
   "layout": "{\"w\":3,\"h\":2}",
-  "item_allowed_slot": { "1": [0, 2], "2": [1] }
+  "item_allowed_slot": { "1": [0, 2], "2": [1] },
+  "item_difficulty": { "1": 3, "2": 5 }
 }
 ```
 
@@ -396,8 +400,8 @@ List every building. Any authenticated user may call it.
 
 ```json
 [
-  { "building_id": 1, "name": "Library", "layout": "{}", "item_allowed_slot": {} },
-  { "building_id": 2, "name": "Gym", "layout": "{\"w\":3}", "item_allowed_slot": { "1": [0, 2] } }
+  { "building_id": 1, "name": "Library", "layout": "{}", "item_allowed_slot": {}, "item_difficulty": {} },
+  { "building_id": 2, "name": "Gym", "layout": "{\"w\":3}", "item_allowed_slot": { "1": [0, 2] }, "item_difficulty": { "1": 3 } }
 ]
 ```
 
@@ -420,7 +424,8 @@ Read a single building by ID. Any authenticated user may call it.
   "building_id": 1,
   "name": "Library",
   "layout": "{}",
-  "item_allowed_slot": {}
+  "item_allowed_slot": {},
+  "item_difficulty": {}
 }
 ```
 
@@ -436,21 +441,26 @@ Read a single building by ID. Any authenticated user may call it.
 
 ## Inventory
 
-A group owns an **inventory** — a map of `item_id → quantity` — and a set of **slots**,
-where each `slot_id` holds at most one item. Items move between the two:
+Items are **unique instances** stored in an internal `items` table — each is
+`{ item_id, type, question_id }`, where `type` ties it to a building's
+[`item_allowed_slot` / `item_difficulty`](#buildings) and `question_id` links it to a
+pooled question (`0` = none). The items table is managed **internally** (no public
+create/list API). *(An item with nothing referencing it should eventually be garbage
+collected; that cleanup is a TODO, not yet implemented.)*
 
-- `inv2slot` takes one unit of an item out of the inventory and places it in a slot.
+A group owns a set of these items, split between:
+
+- **inventory** — the item IDs the group holds loose (not placed), and
+- **slots** — `slot_id → item`, where each slot holds at most one item.
+
+Inventory and slots are **disjoint**: an item is either loose in the inventory or sitting
+in a slot, never both. Items move between them:
+
+- `inv2slot` takes an owned item out of the inventory and places it in a slot.
 - `slot2inv` returns a slotted item to the inventory and clears the slot.
 
-**Slot value encoding** — a slot's value is a *signed* `item_id`:
-
-| Value | Meaning |
-|-------|---------|
-| `> 0` | A **normal** item; the value is its `item_id` |
-| `< 0` | A **broken** item; its `item_id` is the absolute value (e.g. `-3` = broken item `3`) |
-| `0`   | **Empty** slot — no item |
-
-Inventory quantities are always non-negative; only slot values can be negative.
+**Broken items** — a slot can hold a *broken* item, surfaced as `"broken": true` in the
+slot view. A broken item cannot be returned to the inventory or replaced.
 
 **QUIZ-state restriction** — the two *move* endpoints (`inv2slot` and `slot2inv`)
 are disabled for **students** while the server is in `QUIZ` state (they get
@@ -470,10 +480,13 @@ endpoint below.
 
 ### `POST /api/item`
 
-Return **all** of the group's items in one response: its `inventory` (a map of
-`item_id → quantity`) and its `slots` (a map of `slot_id → item_id`). Slot values are
-signed (see [Slot value encoding](#inventory): `> 0` normal, `< 0` broken, `0` empty);
-inventory quantities are always non-negative.
+Return **all** of a group's items: its `inventory` (an array of items) and its `slots`
+(`slot_id → item`).
+
+**Visibility** — a **student** sees the full `item_id` / `type` / `question_id` only when
+querying **their own** group; for any other group they see **only `type`** (the
+`item_id` and `question_id` fields are omitted). **Teachers and Admins** always see the
+full fields.
 
 **Request**
 
@@ -481,31 +494,53 @@ inventory quantities are always non-negative.
 { "group_id": 1 }
 ```
 
-**Response `200 OK`**
+**Response `200 OK`** (full view — own group, or teacher/admin)
 
 ```json
-{ "group_id": 1, "inventory": { "1": 3, "2": 1 }, "slots": { "0": 1, "2": -3 } }
+{
+  "group_id": 1,
+  "inventory": [
+    { "item_id": 1, "type": 10, "question_id": 1 },
+    { "item_id": 2, "type": 20, "question_id": 2 }
+  ],
+  "slots": {
+    "0": { "item_id": 3, "type": 10, "broken": false }
+  }
+}
 ```
 
-Here the group holds 3× item `1` and 1× item `2` in inventory; slot `0` holds normal
-item `1`, and slot `2` holds a **broken** item `3`.
+**Response `200 OK`** (restricted view — a student querying another group): only `type`
+is exposed per item.
+
+```json
+{
+  "group_id": 1,
+  "inventory": [ { "type": 10 }, { "type": 20 } ],
+  "slots": { "0": { "type": 10, "broken": false } }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 
 ---
 
 ### `POST /api/item/inv2slot`
 
-Move one unit of `item_id` from the inventory into `slot_id`. The inventory count is
-decremented by one (and the item removed when it reaches zero); the slot is set to the
-item as a **normal** (positive) value. `item_id` must be greater than 0.
-
-The destination slot may already hold a **normal** item: in that case the
-displaced item is **swapped** back into the inventory (`+1`) before the new item
-is placed. A slot holding a **broken** item cannot be replaced.
+Move the owned item `item_id` from the group's inventory into `slot_id`. The item's
+**Type must be allowed in that slot** by the group's building (the building's
+`item_allowed_slot`); otherwise the move is rejected. The destination slot may already
+hold a **normal** item — it is **swapped** back into the inventory before the new item is
+placed. A slot holding a **broken** item cannot be replaced.
 
 **Request**
 
 ```json
-{ "group_id": 1, "item_id": 1, "slot_id": 5 }
+{ "group_id": 1, "item_id": 1, "slot_id": 1 }
 ```
 
 **Response** — `200 OK` with an empty body on success.
@@ -514,7 +549,8 @@ is placed. A slot holding a **broken** item cannot be replaced.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Insufficient stock — the item's inventory count would drop below zero |
+| `400`  | `item_id` is not in the group's inventory |
+| `400`  | The item's `type` is not allowed in `slot_id` by the group's building |
 | `400`  | The destination slot holds a **broken** item (已損毀) and cannot be replaced |
 | `403`  | A **student** caller while the server is in `QUIZ` state |
 
@@ -522,14 +558,13 @@ is placed. A slot holding a **broken** item cannot be replaced.
 
 ### `POST /api/item/slot2inv`
 
-Return the item held in `slot_id` to the inventory. The inventory count is incremented by
-one and the slot is cleared (set to `0`). Only **normal** items can be returned — a
-**broken** item (negative value) cannot be moved back to the inventory.
+Return the item held in `slot_id` to the group's inventory and clear the slot. Only a
+**normal** item can be returned — a **broken** item cannot be moved back.
 
 **Request**
 
 ```json
-{ "group_id": 1, "slot_id": 5 }
+{ "group_id": 1, "slot_id": 1 }
 ```
 
 **Response** — `200 OK` with an empty body on success.
@@ -538,7 +573,7 @@ one and the slot is cleared (set to `0`). Only **normal** items can be returned 
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | The slot does not exist, is empty (`0`), or holds a **broken** item (已損毀) |
+| `400`  | The slot does not exist, is empty, or holds a **broken** item (已損毀) |
 | `403`  | A **student** caller while the server is in `QUIZ` state |
 
 ---
@@ -645,8 +680,10 @@ Teachers and Admins manage this pool: bulk-upload new questions, search existing
 ones, and update or delete them by ID. All four endpoints require a valid access
 token and a role above Student — Students receive `403`.
 
-Each question is `{ description, answer }`, where `answer` is the zero-based index
-of the correct option and the options are embedded as text inside `description`.
+Each question is `{ description, answer, difficulty, area }`, where `answer` is the
+zero-based index of the correct option and the options are embedded as text inside
+`description`. `difficulty` and `area` are optional `uint` classifiers (default `0`)
+used to filter [search](#get-apiquestionsearch); they do not affect `generate` / `answer`.
 
 ```
 Authorization: Bearer <access_token>
@@ -661,10 +698,12 @@ order.
 
 **Request**
 
+`difficulty` and `area` are optional per question (default `0`).
+
 ```json
 {
   "questions": [
-    { "description": "2+2?\n(a)3\n(b)4", "answer": 1 },
+    { "description": "2+2?\n(a)3\n(b)4", "answer": 1, "difficulty": 1, "area": 2 },
     { "description": "", "answer": 0 },
     { "description": "Capital of France?\n(a)Paris\n(b)Rome", "answer": 0 }
   ]
@@ -699,11 +738,21 @@ question (with its new `id`) or `400` for a rejected one (with an `error`)
 Search the pool by case-insensitive substring of the question description. Omit
 `q` (or pass it empty) to list every question.
 
-**Request** — query parameter
+The optional `difficulty` and `area` query parameters filter by **exact match**
+(`uint`); each is applied only when present, and combined with `q` and with each
+other as a logical **AND**.
+
+**Request** — query parameters
 
 ```
-GET /api/question/search?q=france
+GET /api/question/search?q=france&difficulty=1&area=2
 ```
+
+| Parameter | Description |
+|-----------|-------------|
+| `q`          | Case-insensitive substring of `description`; omitted/empty matches all |
+| `difficulty` | Exact `difficulty` to match; omitted = not filtered |
+| `area`       | Exact `area` to match; omitted = not filtered |
 
 **Response `200 OK`** — matches in ascending `id` order; the answer is included
 (teacher-facing)
@@ -711,7 +760,7 @@ GET /api/question/search?q=france
 ```json
 {
   "questions": [
-    { "id": 4, "description": "Capital of France?\n(a)Paris\n(b)Rome", "answer": 0 }
+    { "id": 4, "description": "Capital of France?\n(a)Paris\n(b)Rome", "answer": 0, "difficulty": 1, "area": 2 }
   ]
 }
 ```
@@ -720,6 +769,7 @@ GET /api/question/search?q=france
 
 | Status | Condition |
 |--------|-----------|
+| `400`  | `difficulty` or `area` is present but not a valid non-negative integer |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
 
@@ -727,12 +777,13 @@ GET /api/question/search?q=france
 
 ### `PUT /api/question/{id}`
 
-Overwrite the pooled question with the given `id`.
+Overwrite the pooled question with the given `id`. `difficulty` and `area` are
+optional (default `0`).
 
 **Request**
 
 ```json
-{ "description": "2+2?\n(a)3\n(b)4", "answer": 1 }
+{ "description": "2+2?\n(a)3\n(b)4", "answer": 1, "difficulty": 1, "area": 2 }
 ```
 
 **Response** — `200 OK` with an empty body on success.

@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"gb-api/internal/model"
@@ -68,14 +70,46 @@ func (h *QuestionHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, status, data)
 }
 
-// Search returns pool questions matching the ?q= query parameter.
+func optionalUint(q url.Values, key string) (*uint, error) {
+	raw := q.Get(key)
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("不合法的 %s", key)
+	}
+	u := uint(v)
+	return &u, nil
+}
+
+// parseSearchFilters extracts the optional difficulty and area exact-match filters
+// from the search query parameters.
+func parseSearchFilters(q url.Values) (difficulty, area *uint, err error) {
+	if difficulty, err = optionalUint(q, "difficulty"); err != nil {
+		return nil, nil, err
+	}
+	if area, err = optionalUint(q, "area"); err != nil {
+		return nil, nil, err
+	}
+	return difficulty, area, nil
+}
+
+// Search returns pool questions matching the ?q= substring, optionally filtered by
+// the exact-match ?difficulty= and ?area= parameters.
 func (h *QuestionHandler) Search(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	data, status, err := h.svc.Search(token, r.URL.Query().Get("q"))
+	q := r.URL.Query()
+	difficulty, area, err := parseSearchFilters(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.Search(token, q.Get("q"), difficulty, area)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -83,7 +117,6 @@ func (h *QuestionHandler) Search(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
-// Update overwrites the question identified by the {id} path segment.
 func (h *QuestionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
@@ -112,7 +145,6 @@ func (h *QuestionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
-// Delete removes the question identified by the {id} path segment.
 func (h *QuestionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {

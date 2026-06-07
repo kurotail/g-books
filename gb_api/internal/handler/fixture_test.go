@@ -36,18 +36,31 @@ func newFixture() *fixture {
 		Groups: groups,
 	}
 	itemRepo := &mock.ItemRepo{
-		Inv:  map[uint]uint{1: 3, 2: 1},
-		Slot: map[uint]int{0: 1},
+		Inv:  map[uint]struct{}{1: {}, 2: {}},
+		Slot: map[uint]int{0: 3},
+		Items: map[uint]model.Item{
+			1: {ItemID: 1, Type: 10, QuestionID: 1},
+			2: {ItemID: 2, Type: 20, QuestionID: 2},
+			3: {ItemID: 3, Type: 10},
+		},
+		// Allowed is nil: every slot accepts every type, so the move-flow test
+		// isn't coupled to a building.
 	}
 	groupRepo := &mock.GroupRepo{
-		UserGroups: groups,
+		UserGroups:  groups,
+		BuildingIDs: map[uint]uint{1: 1}, // group 1 -> building 1
+	}
+	buildingRepo := &mock.BuildingRepo{
+		Buildings: map[uint]model.Building{
+			1: {ID: 1, TypeAllowedSlot: map[uint][]uint{10: {0, 1, 5}, 20: {0, 1, 2, 5}}},
+		},
 	}
 	questionRepo := &mock.QuestionRepo{
 		Sessions: map[string]model.QuestionSession{},
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
-		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, authRepo)),
+		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, authRepo, groupRepo, buildingRepo)),
 		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo, authRepo)),
 		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo)),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
@@ -114,22 +127,27 @@ func doReq(t *testing.T, fn http.HandlerFunc, method, target, token string, body
 	return rec
 }
 
-// decodeMap parses a JSON object response into map[string]uint.
-func decodeInv(t *testing.T, rec *httptest.ResponseRecorder) map[string]uint {
+// decodeInv parses the item-query response inventory into a set keyed by item id.
+func decodeInv(t *testing.T, rec *httptest.ResponseRecorder) map[uint]model.ItemView {
 	t.Helper()
 	var r struct {
-		Inventory map[string]uint `json:"inventory"`
+		Inventory []model.ItemView `json:"inventory"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
 		t.Fatalf("decodeInv: %v — body: %s", err, rec.Body.String())
 	}
-	return r.Inventory
+	out := make(map[uint]model.ItemView, len(r.Inventory))
+	for _, v := range r.Inventory {
+		out[v.ItemID] = v
+	}
+	return out
 }
 
-func decodeSlots(t *testing.T, rec *httptest.ResponseRecorder) map[string]uint {
+// decodeSlots parses the item-query response slots, keyed by slot id.
+func decodeSlots(t *testing.T, rec *httptest.ResponseRecorder) map[uint]model.SlotView {
 	t.Helper()
 	var r struct {
-		Slots map[string]uint `json:"slots"`
+		Slots map[uint]model.SlotView `json:"slots"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
 		t.Fatalf("decodeSlots: %v — body: %s", err, rec.Body.String())
