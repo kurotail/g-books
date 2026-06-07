@@ -4,6 +4,7 @@ import 'state/app_state.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/upload_avatar_screen.dart';
 import 'features/auth/group_naming_screen.dart';
+import 'features/auth/group_overview_screen.dart';
 import 'features/heritage/heritage_selection_screen.dart';
 import 'features/heritage/my_heritage_screen.dart';
 import 'features/heritage/slot_editor_screen.dart';
@@ -33,19 +34,24 @@ class _GBooksAppState extends State<GBooksApp> {
           pageBuilder: (_, state) => _fadePage(state, const LoginScreen()),
         ),
         GoRoute(
-          path: '/setup/personal-avatar',
-          pageBuilder: (_, state) =>
-              _fadePage(state, const UploadAvatarScreen(isGroup: false)),
-        ),
-        GoRoute(
           path: '/setup/group-avatar',
-          pageBuilder: (_, state) =>
-              _fadePage(state, const UploadAvatarScreen(isGroup: true)),
+          pageBuilder: (_, state) => _fadePage(
+            state,
+            const UploadAvatarScreen(target: AvatarTarget.group),
+          ),
         ),
         GoRoute(
           path: '/setup/group-name',
           pageBuilder: (_, state) =>
               _fadePage(state, const GroupNamingScreen()),
+        ),
+        // 小組總攬「不」放在 /setup 下：除了初次設定，檢視古蹟時也能從面板進來
+        // 補設組員頭像，不該被「已完成設定就擋掉 /setup」的導向攔截。
+        // （組員頭像上傳改由總攬以根 Navigator 推出，不再是 go_router 路由。）
+        GoRoute(
+          path: '/group-overview',
+          pageBuilder: (_, state) =>
+              _fadePage(state, const GroupOverviewScreen()),
         ),
         GoRoute(
           path: '/heritage-selection',
@@ -91,8 +97,9 @@ class _GBooksAppState extends State<GBooksApp> {
       return path == '/login' ? null : '/login';
     }
     // 已登入卻還停在登入頁（含登出後重新登入）：依是否完成設定導向對應起點。
+    // 初次登入由小組頭像開始（個人頭像改於小組總攬設定）。
     if (path == '/login') {
-      return setupDone ? '/heritage-selection' : '/setup/personal-avatar';
+      return setupDone ? '/heritage-selection' : '/setup/group-avatar';
     }
     // 已完成設定卻想回到設定流程：擋下，導到古蹟選擇。
     if (setupDone && path.startsWith('/setup')) {

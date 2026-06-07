@@ -29,11 +29,39 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 目前小組的全部組員，組長排第一、其餘依座號遞增。供小組總攬列出卡片用。
+  List<UserModel> get groupMembers {
+    final gid = _currentUser?.groupId;
+    if (gid == null) return const [];
+    final list = mockUsers.where((u) => u.groupId == gid).toList();
+    list.sort((a, b) {
+      if (a.isLeader != b.isLeader) return a.isLeader ? -1 : 1;
+      return (int.tryParse(a.seatNumber) ?? 0)
+          .compareTo(int.tryParse(b.seatNumber) ?? 0);
+    });
+    return list;
+  }
+
+  /// 依座號取得目前小組的某位組員（小組總攬點卡片改頭像時用）。
+  UserModel? memberBySeat(String seatNumber) {
+    final gid = _currentUser?.groupId;
+    if (gid == null) return null;
+    try {
+      return mockUsers.firstWhere(
+        (u) => u.groupId == gid && u.seatNumber == seatNumber,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 以組長帳號登入整組。非組長帳號會被擋下。
   String? loginWithMock(String name, String seatNumber) {
     try {
       final user = mockUsers.firstWhere(
         (u) => u.name == name && u.seatNumber == seatNumber,
       );
+      if (!user.isLeader) return '請使用組長帳號登入';
       _currentUser = user;
       notifyListeners();
       return null;
@@ -43,14 +71,16 @@ class AppState extends ChangeNotifier {
   }
 
   // TODO(backend): 以真實登入 API 取代 loginWithMock。
-  // 後端回傳應包含使用者基本資料與 isLeader / hasCompletedSetup（或等價的
+  // 後端回傳應包含組長基本資料、小組成員清單與 hasCompletedSetup（或等價的
   // 初次登入旗標），建立 UserModel 後 set _currentUser 即可，導向流程不變：
-  //   非初次登入            → /heritage-selection
-  //   初次登入 + 組長        → 個人頭貼 → 小組頭貼 → 小組命名 → 完成
-  //   初次登入 + 組員        → 個人頭貼 → 完成
+  //   非初次登入   → /heritage-selection
+  //   初次登入     → 小組頭像 → 小組命名 → 小組總攬（各組員設頭像）→ 進入遊戲
 
-  void setPersonalAvatarUrl(String? url) {
-    _currentUser?.personalAvatarUrl = url;
+  /// 設定某位組員（含組長本人）的個人頭像，於小組總攬編輯後呼叫。
+  void setMemberAvatarUrl(String seatNumber, String? url) {
+    final member = memberBySeat(seatNumber);
+    if (member == null) return;
+    member.personalAvatarUrl = url;
     notifyListeners();
   }
 

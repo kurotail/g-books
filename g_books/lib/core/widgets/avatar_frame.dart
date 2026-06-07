@@ -30,8 +30,8 @@ class AvatarFrame extends StatelessWidget {
     if (imageUrl != null) {
       final isRemote = imageUrl!.startsWith('http://') || imageUrl!.startsWith('https://');
       return isRemote
-          ? Image.network(imageUrl!, fit: BoxFit.cover)
-          : Image.file(File(imageUrl!), fit: BoxFit.cover);
+          ? Image.network(imageUrl!, fit: BoxFit.cover, gaplessPlayback: true)
+          : Image.file(File(imageUrl!), fit: BoxFit.cover, gaplessPlayback: true);
     }
     return Container(
       color: const Color(0xFFDDD0BA),

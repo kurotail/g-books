@@ -12,11 +12,22 @@ import '../../core/widgets/step_indicator.dart';
 import '../../core/widgets/avatar_frame.dart';
 import '../../state/app_state.dart';
 
+/// 此畫面要設定哪一種頭像。
+/// - [group] ：小組頭像，屬於初次登入的線性設定流程（→ 小組命名）。
+/// - [member]：某位組員（含組長本人）的個人頭像，由小組總攬點卡片進入，完成後返回。
+enum AvatarTarget { group, member }
+
 enum _Stage { picking, cropping, previewing, uploading }
 
 class UploadAvatarScreen extends StatefulWidget {
-  final bool isGroup;
-  const UploadAvatarScreen({super.key, required this.isGroup});
+  final AvatarTarget target;
+
+  /// 當 [target] 為 [AvatarTarget.member] 時，要編輯的組員座號。
+  final String? memberSeat;
+
+  const UploadAvatarScreen({super.key, required this.target, this.memberSeat});
+
+  bool get isGroup => target == AvatarTarget.group;
 
   @override
   State<UploadAvatarScreen> createState() => _UploadAvatarScreenState();
@@ -102,19 +113,14 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
       state.setGroupAvatarUrl(url);
       context.go('/setup/group-name');
     } else {
-      state.setPersonalAvatarUrl(url);
-      _goNext(state);
+      // 組員頭像由總覽用根 Navigator 推出，這裡用 Navigator.pop 回傳 url，
+      // 不經 go_router、不在此改狀態，避免 refresh 把上傳頁又還原。
+      Navigator.of(context).pop(url);
     }
   }
 
-  void _onSkip() {
-    final state = context.read<AppState>();
-    if (widget.isGroup) {
-      context.go('/setup/group-name');
-    } else {
-      _goNext(state);
-    }
-  }
+  // 略過僅用於小組頭像（組員頭像不可略過，要離開改用返回鍵）。
+  void _onSkip() => context.go('/setup/group-name');
 
   void _onBack() {
     switch (_stage) {
@@ -128,22 +134,21 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
         setState(() => _stage = _Stage.cropping);
       case _Stage.picking:
         if (widget.isGroup) {
-          context.go('/setup/personal-avatar');
-        } else {
+          // 小組頭像是設定流程第一步，返回即回登入頁。
           context.read<AppState>().logout();
+        } else {
+          // 組員頭像走 Navigator，返回不帶結果（不更新頭像）。
+          Navigator.of(context).pop();
         }
       case _Stage.uploading:
         break;
     }
   }
 
-  void _goNext(AppState state) {
-    if (state.currentUser!.isLeader) {
-      context.go('/setup/group-avatar');
-    } else {
-      state.completeSetup();
-      context.go('/heritage-selection');
-    }
+  /// 進入畫面時預覽框要顯示的既有頭像（裁切後改顯示裁切結果）。
+  String? _initialAvatar(AppState state) {
+    if (widget.isGroup) return state.currentGroup?.avatarUrl;
+    return state.memberBySeat(widget.memberSeat ?? '')?.personalAvatarUrl;
   }
 
   // ── build ────────────────────────────────────────────────────────────────
@@ -242,46 +247,46 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
   Widget _buildNormalStage() {
     final state = context.watch<AppState>();
     final isUploading = _stage == _Stage.uploading;
-    final title = widget.isGroup ? '利用上傳或拍照功能建立小組頭像吧！' : '利用上傳或拍照功能建立個人頭像吧！';
+    final title = _title(state);
+    final preview = _croppedPath ?? _initialAvatar(state);
 
     return ParchmentScaffold(
       child: Stack(
         children: [
-          // back
+          // back（往畫面內側收一點，避免太靠近螢幕邊緣）
           Positioned(
             top: 36,
-            right: 48,
+            right: 64,
             child: GestureDetector(
               onTap: isUploading ? null : _onBack,
-              child: Text(
-                '↩',
-                style: TextStyle(
-                  fontSize: 30,
-                  color: isUploading
-                      ? const Color(0xFFAAAAAA)
-                      : const Color(0xFF6A6A6A),
+              child: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: 24,
+                color: isUploading
+                    ? const Color(0xFFAAAAAA)
+                    : const Color(0xFF6A6A6A),
+              ),
+            ),
+          ),
+          // step indicator — 小組頭像屬設定流程才顯示；改組員頭像為子流程不顯示。
+          if (widget.isGroup)
+            const Positioned(
+              right: 40,
+              top: 0,
+              bottom: 0,
+              width: 160,
+              child: Center(
+                child: StepIndicator(
+                  steps: _setupSteps,
+                  currentStep: 1,
                 ),
               ),
             ),
-          ),
-          // step indicator
-          Positioned(
-            right: 40,
-            top: 0,
-            bottom: 0,
-            width: 160,
-            child: Center(
-              child: StepIndicator(
-                steps: _steps(state),
-                currentStep: _currentStep,
-              ),
-            ),
-          ),
-          // main content
+          // main content：標題稍微下移、頭像與按鈕整組往畫面中央靠。
           Positioned.fill(
             child: Column(
               children: [
-                const SizedBox(height: 60),
+                const Spacer(flex: 3),
                 Text(
                   title,
                   style: const TextStyle(
@@ -290,27 +295,27 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
                     color: AppColors.labelText,
                   ),
                 ),
-                const Spacer(),
-                AvatarFrame(size: 260, imageUrl: _croppedPath),
+                const SizedBox(height: 32),
+                AvatarFrame(size: 260, imageUrl: preview),
                 const SizedBox(height: 16),
                 if (_uploadError != null)
                   Text(
                     _uploadError!,
                     style: const TextStyle(color: Colors.red, fontSize: 13),
                   ),
-                const Spacer(),
+                const SizedBox(height: 32),
                 if (isUploading)
                   const CircularProgressIndicator(color: AppColors.buttonDark)
                 else if (_stage == _Stage.picking)
                   _buildPickButtons()
                 else
                   _buildPreviewButtons(),
-                const SizedBox(height: 48),
+                const Spacer(flex: 4),
               ],
             ),
           ),
-          // skip
-          if (!isUploading)
+          // skip — 僅小組頭像可略過
+          if (!isUploading && widget.isGroup)
             Positioned(
               bottom: 20,
               right: 48,
@@ -341,14 +346,14 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
     );
   }
 
-  List<String> _steps(AppState state) {
-    if (state.currentUser?.isLeader ?? false) {
-      return ['登陸帳號', '上傳個人頭貼', '上傳小組頭貼', '小組命名', '完成'];
-    }
-    return ['登陸帳號', '上傳個人頭貼', '完成'];
-  }
+  /// 設定流程的步驟列（已移除獨立的「個人頭像」步驟，組員頭像改於小組總攬設定）。
+  static const _setupSteps = ['登陸帳號', '小組頭像', '小組命名', '小組建立成功'];
 
-  int get _currentStep => widget.isGroup ? 2 : 1;
+  String _title(AppState state) {
+    if (widget.isGroup) return '利用上傳或拍照功能建立小組頭像吧！';
+    final name = state.memberBySeat(widget.memberSeat ?? '')?.name ?? '組員';
+    return '為 $name 上傳頭像吧！';
+  }
 
   Widget _buildPickButtons() => Column(
     children: [
