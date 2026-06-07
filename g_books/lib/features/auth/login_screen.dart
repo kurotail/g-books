@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/parchment_scaffold.dart';
-import '../../core/widgets/step_indicator.dart';
 import '../../state/app_state.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -16,6 +17,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _nameCtrl = TextEditingController();
   final _seatCtrl = TextEditingController();
   String? _error;
+  DateTime? _lastBackPress;
 
   @override
   void dispose() {
@@ -38,8 +40,25 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ParchmentScaffold(
-      child: Stack(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final now = DateTime.now();
+        if (_lastBackPress != null &&
+            now.difference(_lastBackPress!) < const Duration(seconds: 2)) {
+          SystemNavigator.pop();
+        } else {
+          _lastBackPress = now;
+          Fluttertoast.showToast(
+            msg: '再按一次返回鍵以退出',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+          );
+        }
+      },
+      child: ParchmentScaffold(
+        child: Stack(
         children: [
           // Watermark logo
           Center(
@@ -48,41 +67,8 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Image.asset('assets/logo.png', width: 300),
             ),
           ),
-          // 蹟不可師 subtitle watermark
-          Positioned(
-            bottom: MediaQuery.of(context).size.height * 0.24,
-            left: 0,
-            right: 240,
-            child: Column(
-              children: [
-                Text(
-                  '蹟不可師',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 38,
-                    color: AppColors.labelText.withValues(alpha: 0.28),
-                    letterSpacing: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  '— G-BOOKS ~',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppColors.labelText.withValues(alpha: 0.28),
-                    letterSpacing: 4,
-                  ),
-                ),
-              ],
-            ),
-          ),
           // Login form
-          Positioned(
-            left: 0,
-            right: 240,
-            top: 0,
-            bottom: 0,
+          Positioned.fill(
             child: Center(
               child: SizedBox(
                 width: 300,
@@ -111,32 +97,20 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
-          // Step indicator
-          Positioned(
-            right: 40,
-            top: 0,
-            bottom: 0,
-            width: 160,
-            child: const Center(
-              child: StepIndicator(
-                steps: ['登陸帳號', '上傳個人頭貼', '完成'],
-                currentStep: 0,
-              ),
-            ),
-          ),
         ],
       ),
+    ),
     );
   }
 
   Widget _label(String text) => Text(
-        text,
-        style: const TextStyle(
-          fontSize: 22,
-          fontWeight: FontWeight.w700,
-          color: AppColors.labelText,
-        ),
-      );
+    text,
+    style: const TextStyle(
+      fontSize: 22,
+      fontWeight: FontWeight.w700,
+      color: AppColors.labelText,
+    ),
+  );
 
   Widget _textField(
     TextEditingController ctrl,
@@ -153,7 +127,10 @@ class _LoginScreenState extends State<LoginScreen> {
         hintStyle: const TextStyle(color: AppColors.inputHint, fontSize: 14),
         filled: true,
         fillColor: AppColors.inputFieldBg,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 24,
+          vertical: 16,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(30),
           borderSide: BorderSide.none,
@@ -171,20 +148,24 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _loginButton() => SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: _login,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.buttonDark,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-            elevation: 0,
-          ),
-          child: const Text(
-            '登 入',
-            style: TextStyle(fontSize: 20, letterSpacing: 6, fontWeight: FontWeight.w700),
-          ),
+    width: double.infinity,
+    child: ElevatedButton(
+      onPressed: _login,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.buttonDark,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+        elevation: 0,
+      ),
+      child: const Text(
+        '登 入',
+        style: TextStyle(
+          fontSize: 20,
+          letterSpacing: 6,
+          fontWeight: FontWeight.w700,
         ),
-      );
+      ),
+    ),
+  );
 }

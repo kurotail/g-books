@@ -5,6 +5,8 @@ import 'features/auth/login_screen.dart';
 import 'features/auth/upload_avatar_screen.dart';
 import 'features/auth/group_naming_screen.dart';
 import 'features/heritage/heritage_selection_screen.dart';
+import 'features/heritage/my_heritage_screen.dart';
+import 'features/heritage/slot_editor_screen.dart';
 
 class GBooksApp extends StatefulWidget {
   final AppState appState;
@@ -26,24 +28,57 @@ class _GBooksAppState extends State<GBooksApp> {
       initialLocation: '/login',
       redirect: _redirect,
       routes: [
-        GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+        GoRoute(
+          path: '/login',
+          pageBuilder: (_, state) => _fadePage(state, const LoginScreen()),
+        ),
         GoRoute(
           path: '/setup/personal-avatar',
-          builder: (_, _) => const UploadAvatarScreen(isGroup: false),
+          pageBuilder: (_, state) =>
+              _fadePage(state, const UploadAvatarScreen(isGroup: false)),
         ),
         GoRoute(
           path: '/setup/group-avatar',
-          builder: (_, _) => const UploadAvatarScreen(isGroup: true),
+          pageBuilder: (_, state) =>
+              _fadePage(state, const UploadAvatarScreen(isGroup: true)),
         ),
         GoRoute(
           path: '/setup/group-name',
-          builder: (_, _) => const GroupNamingScreen(),
+          pageBuilder: (_, state) =>
+              _fadePage(state, const GroupNamingScreen()),
         ),
         GoRoute(
           path: '/heritage-selection',
-          builder: (_, _) => const HeritageSelectionScreen(),
+          pageBuilder: (_, state) =>
+              _fadePage(state, const HeritageSelectionScreen()),
+        ),
+        GoRoute(
+          path: '/my-heritage',
+          pageBuilder: (_, state) =>
+              _fadePage(state, const MyHeritageScreen()),
+        ),
+        GoRoute(
+          path: '/slot-editor/:hid',
+          pageBuilder: (_, state) => _fadePage(
+            state,
+            SlotEditorScreen(heritageId: state.pathParameters['hid']!),
+          ),
         ),
       ],
+    );
+  }
+
+  static CustomTransitionPage<void> _fadePage(
+    GoRouterState state,
+    Widget child,
+  ) {
+    return CustomTransitionPage<void>(
+      key: state.pageKey,
+      child: child,
+      transitionDuration: const Duration(milliseconds: 350),
+      reverseTransitionDuration: const Duration(milliseconds: 250),
+      transitionsBuilder: (_, animation, _, child) =>
+          FadeTransition(opacity: animation, child: child),
     );
   }
 
@@ -55,11 +90,13 @@ class _GBooksAppState extends State<GBooksApp> {
     if (!loggedIn) {
       return path == '/login' ? null : '/login';
     }
+    // 已登入卻還停在登入頁（含登出後重新登入）：依是否完成設定導向對應起點。
+    if (path == '/login') {
+      return setupDone ? '/heritage-selection' : '/setup/personal-avatar';
+    }
+    // 已完成設定卻想回到設定流程：擋下，導到古蹟選擇。
     if (setupDone && path.startsWith('/setup')) {
       return '/heritage-selection';
-    }
-    if (!setupDone && path == '/login') {
-      return '/setup/personal-avatar';
     }
     return null;
   }

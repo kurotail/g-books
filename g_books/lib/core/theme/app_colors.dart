@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
+  static const parchmentBg = Color(0xFFC8A87A);
   static const inputFieldBg = Color(0xFF1E1A14);
   static const inputHint = Color(0xFF7A6A58);
   static const labelText = Color(0xFF2A1A0A);
