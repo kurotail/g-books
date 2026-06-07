@@ -304,19 +304,16 @@ func main() {
 	st, _ = req("POST", "/api/group/set", access, map[string]any{"username": "stud1", "group_id": 0})
 	show("teacher removes stud1 from group (group_id 0)", st, 200, "")
 
-	st, body = req("POST", "/api/item/inv", access, map[string]any{"group_id": 0})
-	show("query inventory of group 0 (rejected, must be > 0)", st, 400, body)
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 0})
+	show("query items of group 0 (rejected, must be > 0)", st, 400, body)
 
 	st, body = req("POST", "/api/group/set", sAccess, map[string]any{"username": "stud1", "group_id": 1})
 	show("student tries to set group (forbidden)", st, 403, body)
 
 	section("ITEMS")
 
-	st, body = req("POST", "/api/item/inv", access, map[string]any{"group_id": 1})
-	show("query inventory of group 1", st, 200, body)
-
-	st, body = req("POST", "/api/item/slot", access, map[string]any{"group_id": 1})
-	show("query slots of group 1", st, 200, body)
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
+	show("query items of group 1 (inventory + slots)", st, 200, body)
 
 	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 0, "slot_id": 9})
 	show("inv2slot with item_id 0 (rejected)", st, 400, body)
@@ -324,8 +321,8 @@ func main() {
 	st, _ = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 1, "slot_id": 9})
 	show("move item 1 from inv to slot 9", st, 200, "")
 
-	st, body = req("POST", "/api/item/inv", access, map[string]any{"group_id": 1})
-	show("inventory after inv2slot", st, 200, body)
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
+	show("items after inv2slot", st, 200, body)
 
 	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 99, "slot_id": 8})
 	show("move nonexistent item (insufficient)", st, 400, body)
@@ -333,8 +330,8 @@ func main() {
 	st, body = req("POST", "/api/item/slot2inv", access, map[string]any{"group_id": 1, "slot_id": 9})
 	show("move slot 9 back to inventory", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv", access, map[string]any{"group_id": 1})
-	show("inventory after slot2inv (item 1 restored)", st, 200, body)
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
+	show("items after slot2inv (item 1 restored)", st, 200, body)
 
 	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1})
 	show("inv2slot missing item_id/slot_id", st, 400, body)

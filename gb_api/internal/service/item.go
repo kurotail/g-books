@@ -38,7 +38,9 @@ func (s *ItemSvc) blockStudentDuringQuiz(accessToken string) (int, error) {
 	return http.StatusOK, nil
 }
 
-func (s *ItemSvc) QueryInv(accessToken string, groupID uint) ([]byte, int, error) {
+// QueryItems returns all of a group's items — its inventory and its slots — in a
+// single response. Any authenticated user may call it.
+func (s *ItemSvc) QueryItems(accessToken string, groupID uint) ([]byte, int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
@@ -46,22 +48,11 @@ func (s *ItemSvc) QueryInv(accessToken string, groupID uint) ([]byte, int, error
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	data, err := json.Marshal(model.InventoryResponse{GroupID: groupID, Inventory: inv})
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	return data, http.StatusOK, nil
-}
-
-func (s *ItemSvc) QuerySlot(accessToken string, groupID uint) ([]byte, int, error) {
-	if _, err := validateAccessToken(accessToken); err != nil {
-		return nil, http.StatusUnauthorized, err
-	}
 	slot, err := s.repo.QuerySlot(groupID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	data, err := json.Marshal(model.SlotsResponse{GroupID: groupID, Slots: slot})
+	data, err := json.Marshal(model.ItemsResponse{GroupID: groupID, Inventory: inv, Slots: slot})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}

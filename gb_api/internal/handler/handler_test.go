@@ -169,8 +169,7 @@ func TestAuthHandler_Register_MissingFields(t *testing.T) {
 func TestItemHandler_MissingToken(t *testing.T) {
 	f := newFixture()
 	cases := map[string]http.HandlerFunc{
-		"QueryInv":  f.item.QueryInv,
-		"QuerySlot": f.item.QuerySlot,
+		"QueryItems": f.item.QueryItems,
 	}
 	for name, fn := range cases {
 		rec := do(t, fn, "", map[string]any{"group_id": 1})
@@ -206,11 +205,11 @@ func TestItemHandler_MissingFields(t *testing.T) {
 // Initial:  inv={1:3, 2:1}  slot={0:1}
 //
 //  step 1  TranInv2Slot(item=1, slot=5)  -> inv={1:2, 2:1}  slot={0:1, 5:1}
-//  step 2  QueryInv + QuerySlot          -> verify
+//  step 2  QueryItems                    -> verify
 //  step 3  TranSlot2Inv(slot=0)          -> inv={1:3, 2:1}  slot={5:1}
-//  step 4  QueryInv + QuerySlot          -> verify
+//  step 4  QueryItems                    -> verify
 //  step 5  TranSlot2Inv(slot=5)          -> inv={1:4, 2:1}  slot={}
-//  step 6  Final QueryInv + QuerySlot    -> verify
+//  step 6  Final QueryItems              -> verify
 
 func TestItemHandler_StateTransitions(t *testing.T) {
 	f := newFixture()
@@ -223,9 +222,9 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 2: verify post-transfer state
-	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 1})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("step2 QueryInv: expected 200, got %d", rec.Code)
+		t.Fatalf("step2 QueryItems: expected 200, got %d", rec.Code)
 	}
 	inv := decodeInv(t, rec)
 	if inv["1"] != 2 {
@@ -233,11 +232,6 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 	if inv["2"] != 1 {
 		t.Errorf("step2: expected inv[2]==1, got %d", inv["2"])
-	}
-
-	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 1})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("step2 QuerySlot: expected 200, got %d", rec.Code)
 	}
 	slot := decodeSlots(t, rec)
 	if slot["0"] != 1 {
@@ -254,13 +248,12 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 4: verify slot 0 gone, inv[1] restored
-	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 1})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
 	inv = decodeInv(t, rec)
 	if inv["1"] != 3 {
 		t.Errorf("step4: expected inv[1]==3, got %d", inv["1"])
 	}
 
-	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 1})
 	slot = decodeSlots(t, rec)
 	if _, ok := slot["0"]; ok {
 		t.Error("step4: expected slot 0 to be removed")
@@ -276,13 +269,12 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 6: final state — slot empty, inv={1:4, 2:1}
-	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 1})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
 	slot = decodeSlots(t, rec)
 	if len(slot) != 0 {
 		t.Errorf("step6: expected empty slot map, got %v", slot)
 	}
 
-	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 1})
 	inv = decodeInv(t, rec)
 	if inv["1"] != 4 {
 		t.Errorf("step6: expected inv[1]==4, got %d", inv["1"])
@@ -314,11 +306,11 @@ func TestItemHandler_TranSlot2Inv_NonExistentSlot(t *testing.T) {
 	}
 }
 
-func TestItemHandler_QueryInv_GroupZeroRejected(t *testing.T) {
+func TestItemHandler_QueryItems_GroupZeroRejected(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.QueryInv, tok, map[string]any{"group_id": 0})
+	rec := do(t, f.item.QueryItems, tok, map[string]any{"group_id": 0})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("group_id 0: expected 400, got %d", rec.Code)
 	}

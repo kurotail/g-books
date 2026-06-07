@@ -17,12 +17,8 @@ type TranSlot2InvRequest struct {
 	SlotID  *uint `json:"slot_id"`
 }
 
-type InventoryResponse struct {
+type ItemsResponse struct {
 	GroupID   uint          `json:"group_id"`
 	Inventory map[uint]uint `json:"inventory"`
-}
-
-type SlotsResponse struct {
-	GroupID uint          `json:"group_id"`
-	Slots   map[uint]int `json:"slots"`
+	Slots     map[uint]int  `json:"slots"`
 }

@@ -26,7 +26,8 @@ func bearerToken(r *http.Request) (string, error) {
 	return parts[1], nil
 }
 
-func (h *ItemHandler) QueryInv(w http.ResponseWriter, r *http.Request) {
+// QueryItems returns all of a group's items — its inventory and its slots.
+func (h *ItemHandler) QueryItems(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
@@ -45,34 +46,7 @@ func (h *ItemHandler) QueryInv(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.QueryInv(token, *req.GroupID)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	writeJSON(w, data)
-}
-
-func (h *ItemHandler) QuerySlot(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	var req model.QueryItemRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	if req.GroupID == nil {
-		http.Error(w, "缺少 group_id", http.StatusBadRequest)
-		return
-	}
-	if *req.GroupID == 0 {
-		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
-		return
-	}
-	data, status, err := h.svc.QuerySlot(token, *req.GroupID)
+	data, status, err := h.svc.QueryItems(token, *req.GroupID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

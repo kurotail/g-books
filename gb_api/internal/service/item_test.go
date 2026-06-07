@@ -34,19 +34,19 @@ func newItemSvc(t *testing.T) (*ItemSvc, *mock.ItemRepo) {
 	return NewItemSvc(r, users), r
 }
 
-// --- QueryInv ---
+// --- QueryItems ---
 
-func TestItemSvc_QueryInv_ValidToken(t *testing.T) {
+func TestItemSvc_QueryItems_ValidToken(t *testing.T) {
 	s, _ := newItemSvc(t)
 
-	data, status, err := s.QueryInv(validAccessToken(t), 0)
+	data, status, err := s.QueryItems(validAccessToken(t), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	var resp model.InventoryResponse
+	var resp model.ItemsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
@@ -59,38 +59,6 @@ func TestItemSvc_QueryInv_ValidToken(t *testing.T) {
 	if resp.Inventory[2] != 1 {
 		t.Errorf("expected inv[2]==1, got %d", resp.Inventory[2])
 	}
-}
-
-func TestItemSvc_QueryInv_InvalidToken(t *testing.T) {
-	s, _ := newItemSvc(t)
-	_, status, err := s.QueryInv("invalid.token", 0)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if status != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", status)
-	}
-}
-
-// --- QuerySlot ---
-
-func TestItemSvc_QuerySlot_ValidToken(t *testing.T) {
-	s, _ := newItemSvc(t)
-
-	data, status, err := s.QuerySlot(validAccessToken(t), 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-	var resp model.SlotsResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if resp.GroupID != 0 {
-		t.Errorf("expected group_id 0, got %d", resp.GroupID)
-	}
 	if resp.Slots[0] != 1 {
 		t.Errorf("expected slot[0]==1, got %d", resp.Slots[0])
 	}
@@ -99,9 +67,9 @@ func TestItemSvc_QuerySlot_ValidToken(t *testing.T) {
 	}
 }
 
-func TestItemSvc_QuerySlot_InvalidToken(t *testing.T) {
+func TestItemSvc_QueryItems_InvalidToken(t *testing.T) {
 	s, _ := newItemSvc(t)
-	_, status, err := s.QuerySlot("invalid.token", 0)
+	_, status, err := s.QueryItems("invalid.token", 0)
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -64,8 +64,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/building` | Bearer (> Student) | Create a building |
 | `GET /api/building` | Bearer | List all buildings |
 | `GET /api/building/{id}` | Bearer | Read a building by ID |
-| `POST /api/item/inv` | Bearer | Read a group's inventory |
-| `POST /api/item/slot` | Bearer | Read a group's slots |
+| `POST /api/item` | Bearer | Read all of a group's items (inventory + slots) |
 | `POST /api/item/inv2slot` | Bearer (not Student in QUIZ) | Move one item from inventory into a slot (swaps out any normal item already there) |
 | `POST /api/item/slot2inv` | Bearer (not Student in QUIZ) | Return a slotted item to the inventory |
 | `POST /api/question/generate` | Bearer | Issue a random question + single-use session (students only in `QUIZ` state) |
@@ -455,8 +454,8 @@ Inventory quantities are always non-negative; only slot values can be negative.
 
 **QUIZ-state restriction** — the two *move* endpoints (`inv2slot` and `slot2inv`)
 are disabled for **students** while the server is in `QUIZ` state (they get
-`403`); Teachers and Admins are unaffected. The read endpoints (`inv`, `slot`)
-are always available. (This is the inverse of the question endpoints, which are
+`403`); Teachers and Admins are unaffected. The read endpoint (`POST /api/item`)
+is always available. (This is the inverse of the question endpoints, which are
 the ones students may use *only* during `QUIZ`.)
 
 All inventory endpoints require a valid access token:
@@ -469,27 +468,12 @@ Every request body carries a `group_id`, which must be **greater than 0** (group
 `0` means "no group"); the relevant `item_id` / `slot_id` fields are listed per
 endpoint below.
 
-### `POST /api/item/inv`
+### `POST /api/item`
 
-Return the group's inventory.
-
-**Request**
-
-```json
-{ "group_id": 1 }
-```
-
-**Response `200 OK`** — `inventory` is a map of `item_id → quantity`
-
-```json
-{ "group_id": 1, "inventory": { "1": 3, "2": 1 } }
-```
-
----
-
-### `POST /api/item/slot`
-
-Return the group's slots.
+Return **all** of the group's items in one response: its `inventory` (a map of
+`item_id → quantity`) and its `slots` (a map of `slot_id → item_id`). Slot values are
+signed (see [Slot value encoding](#inventory): `> 0` normal, `< 0` broken, `0` empty);
+inventory quantities are always non-negative.
 
 **Request**
 
@@ -497,15 +481,14 @@ Return the group's slots.
 { "group_id": 1 }
 ```
 
-**Response `200 OK`** — `slots` is a map of `slot_id → item_id`, where the value
-is signed (see [Slot value encoding](#inventory): `> 0` normal, `< 0` broken,
-`0` empty)
+**Response `200 OK`**
 
 ```json
-{ "group_id": 1, "slots": { "0": 1, "2": -3 } }
+{ "group_id": 1, "inventory": { "1": 3, "2": 1 }, "slots": { "0": 1, "2": -3 } }
 ```
 
-Here slot `0` holds normal item `1`, and slot `2` holds a **broken** item `3`.
+Here the group holds 3× item `1` and 1× item `2` in inventory; slot `0` holds normal
+item `1`, and slot `2` holds a **broken** item `3`.
 
 ---
 
