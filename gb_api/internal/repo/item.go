@@ -6,7 +6,7 @@ import (
 
 type ItemRepo interface {
 	QueryInv(groupID uint) (map[uint]uint, error)
-	QuerySlot(groupID uint) (map[uint]uint, error)
+	QuerySlot(groupID uint) (map[uint]int, error)
 	ChangeInv(groupID, itemID uint, delta int) error
 	SetSlot(groupID, slotID, itemID uint) error
 }
@@ -21,7 +21,7 @@ func group(groupID uint) *Group {
 		g = &Group{
 			ID:        groupID,
 			Inventory: make(map[uint]uint),
-			Slots:     make(map[uint]uint),
+			Slots:     make(map[uint]int),
 		}
 		db.groups[groupID] = g
 	}
@@ -40,10 +40,10 @@ func (_ *itemRepo) QueryInv(groupID uint) (map[uint]uint, error) {
 	return result, nil
 }
 
-func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]uint, error) {
+func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]int, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	result := make(map[uint]uint)
+	result := make(map[uint]int)
 	if g := db.groups[groupID]; g != nil {
 		for k, v := range g.Slots {
 			result[k] = v
@@ -72,17 +72,11 @@ func (_ *itemRepo) ChangeInv(groupID, itemID uint, delta int) error {
 	return nil
 }
 
-// SetSlot places itemID in a group's slot. Item IDs are always > 0; itemID 0 is
-// the sentinel for "empty" and clears the slot instead of storing item 0.
 func (_ *itemRepo) SetSlot(groupID, slotID, itemID uint) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	g := group(groupID)
-	if itemID == 0 {
-		delete(g.Slots, slotID)
-		return nil
-	}
-	g.Slots[slotID] = itemID
+	g.Slots[slotID] = int(itemID)
 	return nil
 }
 

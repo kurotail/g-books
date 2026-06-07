@@ -12,7 +12,7 @@ import (
 func newMockItemRepo() *mock.ItemRepo {
 	return &mock.ItemRepo{
 		Inv:  map[uint]uint{1: 3, 2: 1},
-		Slot: map[uint]uint{0: 1, 2: 2},
+		Slot: map[uint]int{0: 1, 2: 2},
 	}
 }
 

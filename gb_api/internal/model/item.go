@@ -24,5 +24,5 @@ type InventoryResponse struct {
 
 type SlotsResponse struct {
 	GroupID uint          `json:"group_id"`
-	Slots   map[uint]uint `json:"slots"`
+	Slots   map[uint]int `json:"slots"`
 }

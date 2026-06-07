@@ -36,6 +36,8 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/item/slot2inv", itemHandler.TranSlot2Inv)
 
 	mux.HandleFunc("POST /api/group/set", groupHandler.SetGroup)
+	mux.HandleFunc("POST /api/group/name", groupHandler.SetName)
+	mux.HandleFunc("POST /api/group/building", groupHandler.SetBuilding)
 	mux.HandleFunc("GET /api/group", groupHandler.QueryGroup)
 	mux.HandleFunc("POST /api/group/members", groupHandler.QueryMember)
 

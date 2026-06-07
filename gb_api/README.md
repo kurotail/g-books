@@ -57,6 +57,8 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/refresh` | — | Rotate a refresh token into a new token pair |
 | `GET /api/users` | Bearer | List all users (username, role, group) |
 | `POST /api/group/set` | Bearer (> Student) | Assign a user to a group (`group_id` `0` removes them) |
+| `POST /api/group/name` | Bearer (member or > Student) | Rename a group |
+| `POST /api/group/building` | Bearer (member or > Student) | Set a group's building (`building_id` `0` clears it) |
 | `GET /api/group` | Bearer | Read the caller's own group |
 | `POST /api/group/members` | Bearer | List the members of a group |
 | `POST /api/item/inv` | Bearer | Read a group's inventory |
@@ -236,14 +238,63 @@ removes the user from their group; any value `> 0` places them in that group.
 
 ---
 
+### `POST /api/group/name`
+
+Rename a group. The caller must be a **member of the group**, or a **Teacher /
+Admin** (who may rename any group). A group with no name set reads back as
+`"Group <id>"` by default.
+
+**Request** — `group_id` must be greater than 0; `name` must be non-empty
+
+```json
+{ "group_id": 1, "name": "Red Team" }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, a missing `name`, or `group_id` is missing / not greater than 0 |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller is neither a member of the group nor a Teacher/Admin |
+
+---
+
+### `POST /api/group/building`
+
+Set a group's building. The caller must be a **member of the group**, or a
+**Teacher / Admin** (who may set any group's building). A `building_id` of `0`
+clears the assignment.
+
+**Request** — `group_id` must be greater than 0; `building_id` is required (`0` = none)
+
+```json
+{ "group_id": 1, "building_id": 3 }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, a missing `building_id`, or `group_id` is missing / not greater than 0 |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller is neither a member of the group nor a Teacher/Admin |
+
+---
+
 ### `GET /api/group`
 
-Return the calling user's own group.
+Return the calling user's own group. `name` defaults to `"Group <id>"` when
+unset; `building_id` is `0` when no building is assigned.
 
 **Response `200 OK`**
 
 ```json
-{ "group_id": 1 }
+{ "group_id": 1, "name": "Group 1", "building_id": 0 }
 ```
 
 **Error responses**
@@ -268,7 +319,7 @@ List the members of a group. Any authenticated user may call it.
 **Response `200 OK`**
 
 ```json
-{ "group_id": 1, "members": ["user", "alice"] }
+{ "group_id": 1, "name": "Group 1", "members": ["user", "alice"] }
 ```
 
 **Error responses**
@@ -283,10 +334,20 @@ List the members of a group. Any authenticated user may call it.
 ## Inventory
 
 A group owns an **inventory** — a map of `item_id → quantity` — and a set of **slots**,
-where each `slot_id` holds at most one `item_id`. Items move between the two:
+where each `slot_id` holds at most one item. Items move between the two:
 
 - `inv2slot` takes one unit of an item out of the inventory and places it in a slot.
 - `slot2inv` returns a slotted item to the inventory and clears the slot.
+
+**Slot value encoding** — a slot's value is a *signed* `item_id`:
+
+| Value | Meaning |
+|-------|---------|
+| `> 0` | A **normal** item; the value is its `item_id` |
+| `< 0` | A **broken** item; its `item_id` is the absolute value (e.g. `-3` = broken item `3`) |
+| `0`   | **Empty** slot — no item |
+
+Inventory quantities are always non-negative; only slot values can be negative.
 
 All inventory endpoints require a valid access token:
 
@@ -326,18 +387,23 @@ Return the group's slots.
 { "group_id": 1 }
 ```
 
-**Response `200 OK`** — `slots` is a map of `slot_id → item_id`
+**Response `200 OK`** — `slots` is a map of `slot_id → item_id`, where the value
+is signed (see [Slot value encoding](#inventory): `> 0` normal, `< 0` broken,
+`0` empty)
 
 ```json
-{ "group_id": 1, "slots": { "0": 1 } }
+{ "group_id": 1, "slots": { "0": 1, "2": -3 } }
 ```
+
+Here slot `0` holds normal item `1`, and slot `2` holds a **broken** item `3`.
 
 ---
 
 ### `POST /api/item/inv2slot`
 
 Move one unit of `item_id` from the inventory into `slot_id`. The inventory count is
-decremented by one (and the item removed when it reaches zero); the slot is set to the item.
+decremented by one (and the item removed when it reaches zero); the slot is set to the
+item as a **normal** (positive) value. `item_id` must be greater than 0.
 
 **Request**
 
@@ -358,7 +424,8 @@ decremented by one (and the item removed when it reaches zero); the slot is set 
 ### `POST /api/item/slot2inv`
 
 Return the item held in `slot_id` to the inventory. The inventory count is incremented by
-one and the slot is cleared.
+one and the slot is cleared (set to `0`). Only **normal** items can be returned — a
+**broken** item (negative value) cannot be moved back to the inventory.
 
 **Request**
 
@@ -372,7 +439,7 @@ one and the slot is cleared.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | The slot does not exist |
+| `400`  | The slot does not exist, is empty (`0`), or holds a **broken** item (已損毀) |
 
 ---
 

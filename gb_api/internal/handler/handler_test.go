@@ -330,6 +330,8 @@ func TestGroupHandler_MissingToken(t *testing.T) {
 	f := newFixture()
 	cases := map[string]http.HandlerFunc{
 		"SetGroup":    f.group.SetGroup,
+		"SetName":     f.group.SetName,
+		"SetBuilding": f.group.SetBuilding,
 		"QueryGroup":  f.group.QueryGroup,
 		"QueryMember": f.group.QueryMember,
 	}
@@ -359,6 +361,72 @@ func TestGroupHandler_SetGroup_StudentForbidden(t *testing.T) {
 	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 3, "username": "user"})
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("student caller: expected 403, got %d", rec.Code)
+	}
+}
+
+func TestGroupHandler_SetName_MissingName(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.group.SetName, tok, map[string]any{"group_id": 1})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing name: expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGroupHandler_SetNameThenQueryRoundtrip(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	// "user" is a member of group 1 and renames it.
+	rec := do(t, f.group.SetName, tok, map[string]any{"group_id": 1, "name": "Red Team"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetName: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(t, f.group.QueryGroup, tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
+	}
+	var gr model.GroupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
+		t.Fatalf("QueryGroup: invalid JSON: %v", err)
+	}
+	if gr.Name != "Red Team" {
+		t.Errorf("expected name %q, got %q", "Red Team", gr.Name)
+	}
+}
+
+func TestGroupHandler_SetBuilding_MissingBuildingID(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.group.SetBuilding, tok, map[string]any{"group_id": 1})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing building_id: expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGroupHandler_SetBuildingThenQueryRoundtrip(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	// "user" is a member of group 1 and sets its building.
+	rec := do(t, f.group.SetBuilding, tok, map[string]any{"group_id": 1, "building_id": 5})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetBuilding: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(t, f.group.QueryGroup, tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
+	}
+	var gr model.GroupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
+		t.Fatalf("QueryGroup: invalid JSON: %v", err)
+	}
+	if gr.BuildingID != 5 {
+		t.Errorf("expected building_id 5, got %d", gr.BuildingID)
 	}
 }
 

@@ -3,6 +3,7 @@
 package mock
 
 import (
+	"fmt"
 	"maps"
 	"sort"
 	"strings"
@@ -96,7 +97,7 @@ func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error { return nil }
 
 type ItemRepo struct {
 	Inv  map[uint]uint
-	Slot map[uint]uint
+	Slot map[uint]int
 }
 
 func (m *ItemRepo) QueryInv(_ uint) (map[uint]uint, error) {
@@ -105,8 +106,8 @@ func (m *ItemRepo) QueryInv(_ uint) (map[uint]uint, error) {
 	return result, nil
 }
 
-func (m *ItemRepo) QuerySlot(_ uint) (map[uint]uint, error) {
-	result := make(map[uint]uint, len(m.Slot))
+func (m *ItemRepo) QuerySlot(_ uint) (map[uint]int, error) {
+	result := make(map[uint]int, len(m.Slot))
 	maps.Copy(result, m.Slot)
 	return result, nil
 }
@@ -128,13 +129,15 @@ func (m *ItemRepo) SetSlot(_, slotID, itemID uint) error {
 	if itemID == 0 {
 		delete(m.Slot, slotID)
 	} else {
-		m.Slot[slotID] = itemID
+		m.Slot[slotID] = int(itemID)
 	}
 	return nil
 }
 
 type GroupRepo struct {
-	UserGroups map[string]uint
+	UserGroups  map[string]uint
+	Names       map[uint]string
+	BuildingIDs map[uint]uint
 }
 
 func (m *GroupRepo) SetUserGroup(username string, groupID uint) error {
@@ -142,14 +145,34 @@ func (m *GroupRepo) SetUserGroup(username string, groupID uint) error {
 	return nil
 }
 
-func (m *GroupRepo) GetGroupMembers(groupID uint) ([]string, error) {
+func (m *GroupRepo) GetGroup(groupID uint) (model.Group, error) {
 	members := make([]string, 0)
 	for username, gid := range m.UserGroups {
 		if gid == groupID {
 			members = append(members, username)
 		}
 	}
-	return members, nil
+	name := fmt.Sprintf("Group %d", groupID)
+	if n, ok := m.Names[groupID]; ok && n != "" {
+		name = n
+	}
+	return model.Group{ID: groupID, Name: name, BuildingID: m.BuildingIDs[groupID], Members: members}, nil
+}
+
+func (m *GroupRepo) SetGroupName(groupID uint, name string) error {
+	if m.Names == nil {
+		m.Names = map[uint]string{}
+	}
+	m.Names[groupID] = name
+	return nil
+}
+
+func (m *GroupRepo) SetBuildingID(groupID uint, buildingID uint) error {
+	if m.BuildingIDs == nil {
+		m.BuildingIDs = map[uint]uint{}
+	}
+	m.BuildingIDs[groupID] = buildingID
+	return nil
 }
 
 type QuestionRepo struct {

@@ -17,9 +17,11 @@ type User struct {
 
 // Group is a row in the groups table. Primary key: ID.
 type Group struct {
-	ID        uint
-	Inventory map[uint]uint // item_id -> count
-	Slots     map[uint]uint // slot_id -> item_id
+	ID         uint
+	Name       string        // empty = use the default "Group <id>"
+	BuildingID uint          // FK -> buildings; 0 = no building assigned
+	Inventory  map[uint]uint // item_id -> count
+	Slots      map[uint]int  // slot_id -> item_id
 }
 
 // Database is an in-memory, relationally-structured store: a set of tables keyed
@@ -51,7 +53,7 @@ func newDatabase() *Database {
 			1: {
 				ID:        1,
 				Inventory: map[uint]uint{1: 1, 2: 1, 3: 2},
-				Slots:     map[uint]uint{0: 1, 2: 3},
+				Slots:     map[uint]int{0: 1, 2: 3},
 			},
 		},
 		sessions: map[string]model.QuestionSession{

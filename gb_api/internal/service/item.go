@@ -77,7 +77,10 @@ func (s *ItemSvc) TranSlot2Inv(accessToken string, groupID, slotID uint) (int, e
 	if !ok {
 		return http.StatusBadRequest, fmt.Errorf("slot %d 不存在", slotID)
 	}
-	if err := s.repo.ChangeInv(groupID, itemID, 1); err != nil {
+	if itemID<0 {
+		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀", slotID, itemID)
+	}
+	if err := s.repo.ChangeInv(groupID, uint(itemID), 1); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	if err := s.repo.SetSlot(groupID, slotID, 0); err != nil {
