@@ -2,7 +2,7 @@
 
 REST API server for g-books, built with Go's standard `net/http` library and JWT-based authentication.
 
-- **Runtime:** Go 1.24+
+- **Runtime:** Go 1.26+
 - **Port:** `8080`
 - **Auth scheme:** JWT (HS256) — short-lived access tokens + single-use rotating refresh tokens
 - **Real-time:** server-state changes are pushed to subscribers over a WebSocket (`GET /api/state/ws`)
@@ -55,6 +55,10 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/login` | — | Exchange credentials for a token pair |
 | `POST /api/register` | Bearer (> Student) | Register a new user (Student or Teacher; Admins cannot be created) |
 | `POST /api/refresh` | — | Rotate a refresh token into a new token pair |
+| `GET /api/users` | Bearer | List all users (username, role, group) |
+| `POST /api/group/set` | Bearer (> Student) | Assign a user to a group (`group_id` `0` removes them) |
+| `GET /api/group` | Bearer | Read the caller's own group |
+| `POST /api/group/members` | Bearer | List the members of a group |
 | `POST /api/item/inv` | Bearer | Read a group's inventory |
 | `POST /api/item/slot` | Bearer | Read a group's slots |
 | `POST /api/item/inv2slot` | Bearer | Move one item from inventory into a slot |
@@ -99,7 +103,7 @@ Authenticate with username and password.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body |
+| `400`  | Malformed JSON body, or a missing `username` / `password` |
 | `401`  | Wrong username or password |
 
 ---
@@ -135,9 +139,9 @@ Authorization: Bearer <access_token>
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, or a missing `username` / `password` / `role` |
+| `400`  | Malformed JSON body, a missing `username` / `password` / `role`, or a `role` greater than `2` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is a Student, or `role` is `2` (Admin) or higher |
+| `403`  | Caller is a Student, or `role` is `2` (Admin) |
 | `409`  | A user with that username already exists |
 
 ---
@@ -172,6 +176,110 @@ Exchange a valid refresh token for a new token pair. The submitted token is inva
 
 ---
 
+## Users & Groups
+
+Each user has a `group_id`: `0` means **no group**, any value `> 0` is a real
+group (groups are created on demand the first time they are referenced).
+`GET /api/users` lists every account; the group endpoints read and change
+membership.
+
+All endpoints require a valid access token:
+
+```
+Authorization: Bearer <access_token>
+```
+
+### `GET /api/users`
+
+List all users. Any authenticated user may call it.
+
+**Response `200 OK`** — `group_id` is `0` for users not in any group
+
+```json
+{
+  "users": [
+    { "username": "user",  "role": 1, "group_id": 1 },
+    { "username": "alice", "role": 0, "group_id": 0 }
+  ]
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+### `POST /api/group/set`
+
+Assign `username` to a group. **Teachers and Admins only.** A `group_id` of `0`
+removes the user from their group; any value `> 0` places them in that group.
+
+**Request**
+
+```json
+{ "username": "alice", "group_id": 2 }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `username` / `group_id` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | The target `username` does not exist |
+
+---
+
+### `GET /api/group`
+
+Return the calling user's own group.
+
+**Response `200 OK`**
+
+```json
+{ "group_id": 1 }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `404`  | The caller is not in any group |
+
+---
+
+### `POST /api/group/members`
+
+List the members of a group. Any authenticated user may call it.
+
+**Request** — `group_id` must be greater than 0
+
+```json
+{ "group_id": 1 }
+```
+
+**Response `200 OK`**
+
+```json
+{ "group_id": 1, "members": ["user", "alice"] }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
 ## Inventory
 
 A group owns an **inventory** — a map of `item_id → quantity` — and a set of **slots**,
@@ -200,10 +308,10 @@ Return the group's inventory.
 { "group_id": 1 }
 ```
 
-**Response `200 OK`** — map of `item_id → quantity`
+**Response `200 OK`** — `inventory` is a map of `item_id → quantity`
 
 ```json
-{ "1": 3, "2": 1 }
+{ "group_id": 1, "inventory": { "1": 3, "2": 1 } }
 ```
 
 ---
@@ -218,10 +326,10 @@ Return the group's slots.
 { "group_id": 1 }
 ```
 
-**Response `200 OK`** — map of `slot_id → item_id`
+**Response `200 OK`** — `slots` is a map of `slot_id → item_id`
 
 ```json
-{ "0": 1 }
+{ "group_id": 1, "slots": { "0": 1 } }
 ```
 
 ---
@@ -272,7 +380,7 @@ one and the slot is cleared.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, a required field (`item_id` / `slot_id`) is missing, or `group_id` is missing / not greater than 0 |
+| `400`  | Malformed JSON body; a required field (`item_id` / `slot_id`) is missing; `group_id` is missing or not greater than 0; or (for `inv2slot`) `item_id` is not greater than 0 |
 | `401`  | Missing or malformed `Authorization` header, or an invalid/expired access token |
 
 ---
@@ -331,7 +439,7 @@ Issue a new question session.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body |
+| `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller is a Student and the server is in `NORMAL` state |
 
@@ -357,7 +465,7 @@ Answer a question session. The answer is the zero-based index of the chosen opti
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, missing `session`, or the session is unknown/already used/expired |
+| `400`  | Malformed JSON body, missing `session` or `answer`, or the session is unknown/already used/expired |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller is a Student and the server is in `NORMAL` state |
 
