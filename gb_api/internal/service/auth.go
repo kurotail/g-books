@@ -158,7 +158,7 @@ func (s *AuthSvc) QueryUser(accessToken string) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
-func (s *AuthSvc) RegisterUser(accessToken, username, password string, role uint) (int, error) {
+func (s *AuthSvc) RegisterUser(accessToken, username, password string, role, groupID uint) (int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return http.StatusUnauthorized, err
@@ -173,7 +173,7 @@ func (s *AuthSvc) RegisterUser(accessToken, username, password string, role uint
 	if role > model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("無法建立此權限的使用者")
 	}
-	if err := s.users.CreateUser(username, password, role); err != nil {
+	if err := s.users.CreateUser(username, password, role, groupID); err != nil {
 		if errors.Is(err, apperr.ErrUserExists) {
 			return http.StatusConflict, err
 		}

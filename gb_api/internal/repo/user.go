@@ -11,7 +11,7 @@ type UserRepo interface {
 	ValidateCredentials(username, password string) (bool, error)
 	GetAllUsers() ([]model.User, error)
 	GetUser(username string) (model.User, error)
-	CreateUser(username, password string, role uint) error
+	CreateUser(username, password string, role, groupID uint) error
 }
 
 type userRepo struct{}
@@ -43,18 +43,12 @@ func (_ *userRepo) GetUser(username string) (model.User, error) {
 	return toModelUser(u), nil
 }
 
-// toModelUser maps a users-table row to the model exposed to the service layer,
-// copying GroupID so callers can't mutate the stored row.
+// toModelUser maps a users-table row to the model exposed to the service layer.
 func toModelUser(u *User) model.User {
-	gid := u.GroupID
-	if gid != nil {
-		v := *gid
-		gid = &v
-	}
-	return model.User{Username: u.Username, Role: u.Role, GroupID: gid}
+	return model.User{Username: u.Username, Role: u.Role, GroupID: u.GroupID}
 }
 
-func (_ *userRepo) CreateUser(username, password string, role uint) error {
+func (_ *userRepo) CreateUser(username, password string, role, groupID uint) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	if db.users[username] != nil {
@@ -64,7 +58,7 @@ func (_ *userRepo) CreateUser(username, password string, role uint) error {
 		Username: username,
 		Password: password,
 		Role:     role,
-		GroupID:  nil,
+		GroupID:  groupID,
 	}
 	return nil
 }

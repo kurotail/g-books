@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"gb-api/internal/model"
 	"gb-api/internal/repo/mock"
 )
 
@@ -42,15 +43,18 @@ func TestItemSvc_QueryInv_ValidToken(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	var inv map[string]uint
-	if err := json.Unmarshal(data, &inv); err != nil {
+	var resp model.InventoryResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if inv["1"] != 3 {
-		t.Errorf("expected inv[1]==3, got %d", inv["1"])
+	if resp.GroupID != 0 {
+		t.Errorf("expected group_id 0, got %d", resp.GroupID)
 	}
-	if inv["2"] != 1 {
-		t.Errorf("expected inv[2]==1, got %d", inv["2"])
+	if resp.Inventory[1] != 3 {
+		t.Errorf("expected inv[1]==3, got %d", resp.Inventory[1])
+	}
+	if resp.Inventory[2] != 1 {
+		t.Errorf("expected inv[2]==1, got %d", resp.Inventory[2])
 	}
 }
 
@@ -77,15 +81,18 @@ func TestItemSvc_QuerySlot_ValidToken(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	var slot map[string]uint
-	if err := json.Unmarshal(data, &slot); err != nil {
+	var resp model.SlotsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if slot["0"] != 1 {
-		t.Errorf("expected slot[0]==1, got %d", slot["0"])
+	if resp.GroupID != 0 {
+		t.Errorf("expected group_id 0, got %d", resp.GroupID)
 	}
-	if slot["2"] != 2 {
-		t.Errorf("expected slot[2]==2, got %d", slot["2"])
+	if resp.Slots[0] != 1 {
+		t.Errorf("expected slot[0]==1, got %d", resp.Slots[0])
+	}
+	if resp.Slots[2] != 2 {
+		t.Errorf("expected slot[2]==2, got %d", resp.Slots[2])
 	}
 }
 

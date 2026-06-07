@@ -12,7 +12,7 @@ type User struct {
 	Username string
 	Password string
 	Role     uint
-	GroupID  *uint // nullable FK -> groups; nil = not a member of any group
+	GroupID  uint // FK -> groups; 0 = not a member of any group
 }
 
 // Group is a row in the groups table. Primary key: ID.
@@ -38,19 +38,18 @@ type Database struct {
 var db = newDatabase()
 
 func newDatabase() *Database {
-	group0 := uint(0)
 	return &Database{
 		users: map[string]*User{
 			"user": {
 				Username: "user",
 				Password: "password123",
 				Role:     model.RoleTeacher,
-				GroupID:  &group0,
+				GroupID:  1,
 			},
 		},
 		groups: map[uint]*Group{
-			0: {
-				ID:        0,
+			1: {
+				ID:        1,
 				Inventory: map[uint]uint{1: 1, 2: 1, 3: 2},
 				Slots:     map[uint]uint{0: 1, 2: 3},
 			},
@@ -58,7 +57,7 @@ func newDatabase() *Database {
 		sessions: map[string]model.QuestionSession{
 			"0123456789abcdef0123456789abcdef": {
 				ExpiresAt: time.Now().Add(15 * time.Minute),
-				GroupID:   0,
+				GroupID:   1,
 				Question: model.Question{
 					Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
 					Answer:      1,

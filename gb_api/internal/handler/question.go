@@ -28,7 +28,15 @@ func (h *QuestionHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Generate(token, req.GroupID)
+	if req.GroupID == nil {
+		http.Error(w, "缺少 group_id", http.StatusBadRequest)
+		return
+	}
+	if *req.GroupID == 0 {
+		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.Generate(token, *req.GroupID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -46,6 +54,10 @@ func (h *QuestionHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	var req model.UploadQuestionsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if len(req.Questions) == 0 {
+		http.Error(w, "缺少 questions", http.StatusBadRequest)
 		return
 	}
 	data, status, err := h.svc.Upload(token, req.Questions)
@@ -86,6 +98,10 @@ func (h *QuestionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req model.QuestionInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if req.Description == "" {
+		http.Error(w, "description 不可為空", http.StatusBadRequest)
 		return
 	}
 	status, err := h.svc.Update(token, uint(id), req)
@@ -131,7 +147,11 @@ func (h *QuestionHandler) Answer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 session", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Answer(token, req.Session, req.Answer)
+	if req.Answer == nil {
+		http.Error(w, "缺少 answer", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.Answer(token, req.Session, *req.Answer)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

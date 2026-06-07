@@ -38,6 +38,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
+	if creds.Username == "" || creds.Password == "" {
+		http.Error(w, "缺少 username 或 password", http.StatusBadRequest)
+		return
+	}
 
 	data, status, err := h.svc.LoginByName(creds)
 	if err != nil {
@@ -80,7 +84,11 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 role", http.StatusBadRequest)
 		return
 	}
-	status, err := h.svc.RegisterUser(token, req.Username, req.Password, *req.Role)
+	if *req.Role > model.RoleAdmin {
+		http.Error(w, "不合法的 role", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.RegisterUser(token, req.Username, req.Password, *req.Role, req.GroupID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

@@ -20,13 +20,14 @@ type RefreshRequest struct {
 type RegisterRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Role     *uint  `json:"role"` // 0=student, 1=teacher; required
+	Role     *uint  `json:"role"`     // 0=student, 1=teacher; required
+	GroupID  uint   `json:"group_id"` // optional; 0 = no group
 }
 
 type User struct {
 	Username string `json:"username"`
 	Role     uint   `json:"role"`
-	GroupID  *uint  `json:"group_id"` // nil = not in any group
+	GroupID  uint   `json:"group_id"` // 0 = not in any group
 }
 
 type UsersResponse struct {

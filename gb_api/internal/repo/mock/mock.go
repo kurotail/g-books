@@ -61,14 +61,10 @@ func (m *AuthRepo) GetUser(username string) (model.User, error) {
 }
 
 func (m *AuthRepo) buildUser(username string) model.User {
-	u := model.User{Username: username, Role: m.Roles[username]}
-	if gid, ok := m.Groups[username]; ok {
-		u.GroupID = &gid
-	}
-	return u
+	return model.User{Username: username, Role: m.Roles[username], GroupID: m.Groups[username]}
 }
 
-func (m *AuthRepo) CreateUser(username, password string, role uint) error {
+func (m *AuthRepo) CreateUser(username, password string, role, groupID uint) error {
 	if _, ok := m.Users[username]; ok {
 		return apperr.ErrUserExists
 	}
@@ -78,8 +74,12 @@ func (m *AuthRepo) CreateUser(username, password string, role uint) error {
 	if m.Roles == nil {
 		m.Roles = map[string]uint{}
 	}
+	if m.Groups == nil {
+		m.Groups = map[string]uint{}
+	}
 	m.Users[username] = password
 	m.Roles[username] = role
+	m.Groups[username] = groupID
 	return nil
 }
 
@@ -92,7 +92,7 @@ func (m *RoleRepo) GetAllUsers() ([]model.User, error)            { return nil, 
 func (m *RoleRepo) GetUser(username string) (model.User, error) {
 	return model.User{Username: username, Role: m.Role}, nil
 }
-func (m *RoleRepo) CreateUser(_, _ string, _ uint) error { return nil }
+func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error { return nil }
 
 type ItemRepo struct {
 	Inv  map[uint]uint

@@ -14,7 +14,7 @@ type QuestionSession struct {
 }
 
 type GenerateQuestionRequest struct {
-	GroupID uint `json:"group_id"`
+	GroupID *uint `json:"group_id"`
 }
 
 // QuestionInput is a single question supplied by a teacher when uploading to or
@@ -66,7 +66,7 @@ type QuestionResponse struct {
 
 type AnswerRequest struct {
 	Session string `json:"session"`
-	Answer  uint   `json:"answer"`
+	Answer  *uint  `json:"answer"`
 }
 
 type AnswerResponse struct {

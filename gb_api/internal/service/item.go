@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	apperr "gb-api/internal/error"
+	"gb-api/internal/model"
 	"gb-api/internal/repo"
 )
 
@@ -26,7 +27,7 @@ func (s *ItemSvc) QueryInv(accessToken string, groupID uint) ([]byte, int, error
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	data, err := json.Marshal(inv)
+	data, err := json.Marshal(model.InventoryResponse{GroupID: groupID, Inventory: inv})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -41,7 +42,7 @@ func (s *ItemSvc) QuerySlot(accessToken string, groupID uint) ([]byte, int, erro
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	data, err := json.Marshal(slot)
+	data, err := json.Marshal(model.SlotsResponse{GroupID: groupID, Slots: slot})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}

@@ -108,8 +108,9 @@ Authenticate with username and password.
 
 Create a new user. The caller must present a valid access token and be a Teacher or
 Admin. Teachers and Admins may create Students (`0`) or Teachers (`1`);
-**Admins cannot be created via this endpoint**. The new user is not assigned to any
-group — use `POST /api/group/set` for that.
+**Admins cannot be created via this endpoint**. An optional `group_id` places the
+new user in a group immediately; if omitted (or `0`) the user starts in no group —
+use `POST /api/group/set` to change it later.
 
 Requires a valid access token:
 
@@ -117,13 +118,14 @@ Requires a valid access token:
 Authorization: Bearer <access_token>
 ```
 
-**Request** — `role` is `0` (Student) or `1` (Teacher)
+**Request** — `role` is `0` (Student) or `1` (Teacher); `group_id` is optional (`0` = no group)
 
 ```json
 {
   "username": "alice",
   "password": "password123",
-  "role": 0
+  "role": 0,
+  "group_id": 2
 }
 ```
 
@@ -184,8 +186,9 @@ All inventory endpoints require a valid access token:
 Authorization: Bearer <access_token>
 ```
 
-Every request body carries a `group_id`; the relevant `item_id` / `slot_id` fields
-are listed per endpoint below.
+Every request body carries a `group_id`, which must be **greater than 0** (group
+`0` means "no group"); the relevant `item_id` / `slot_id` fields are listed per
+endpoint below.
 
 ### `POST /api/item/inv`
 
@@ -194,7 +197,7 @@ Return the group's inventory.
 **Request**
 
 ```json
-{ "group_id": 0 }
+{ "group_id": 1 }
 ```
 
 **Response `200 OK`** — map of `item_id → quantity`
@@ -212,7 +215,7 @@ Return the group's slots.
 **Request**
 
 ```json
-{ "group_id": 0 }
+{ "group_id": 1 }
 ```
 
 **Response `200 OK`** — map of `slot_id → item_id`
@@ -231,7 +234,7 @@ decremented by one (and the item removed when it reaches zero); the slot is set 
 **Request**
 
 ```json
-{ "group_id": 0, "item_id": 1, "slot_id": 5 }
+{ "group_id": 1, "item_id": 1, "slot_id": 5 }
 ```
 
 **Response** — `200 OK` with an empty body on success.
@@ -252,7 +255,7 @@ one and the slot is cleared.
 **Request**
 
 ```json
-{ "group_id": 0, "slot_id": 5 }
+{ "group_id": 1, "slot_id": 5 }
 ```
 
 **Response** — `200 OK` with an empty body on success.
@@ -269,7 +272,7 @@ one and the slot is cleared.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, or a required field (`item_id` / `slot_id`) is missing |
+| `400`  | Malformed JSON body, a required field (`item_id` / `slot_id`) is missing, or `group_id` is missing / not greater than 0 |
 | `401`  | Missing or malformed `Authorization` header, or an invalid/expired access token |
 
 ---
@@ -312,7 +315,7 @@ Issue a new question session.
 **Request**
 
 ```json
-{ "group_id": 0 }
+{ "group_id": 1 }
 ```
 
 **Response `200 OK`** — the question text and its session ID (the answer is never returned)

@@ -54,10 +54,10 @@ func (s *GroupSvc) QueryGroup(accessToken string) ([]byte, int, error) {
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	if u.GroupID == nil {
+	if u.GroupID == 0 {
 		return nil, http.StatusNotFound, fmt.Errorf("尚未加入任何群組")
 	}
-	data, err := json.Marshal(model.GroupResponse{GroupID: *u.GroupID})
+	data, err := json.Marshal(model.GroupResponse{GroupID: u.GroupID})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}

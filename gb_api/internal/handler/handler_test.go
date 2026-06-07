@@ -173,7 +173,7 @@ func TestItemHandler_MissingToken(t *testing.T) {
 		"QuerySlot": f.item.QuerySlot,
 	}
 	for name, fn := range cases {
-		rec := do(t, fn, "", map[string]any{"group_id": 0})
+		rec := do(t, fn, "", map[string]any{"group_id": 1})
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
 		}
@@ -189,9 +189,9 @@ func TestItemHandler_MissingFields(t *testing.T) {
 		fn   http.HandlerFunc
 		body map[string]any
 	}{
-		{"TranInv2Slot no slot_id", f.item.TranInv2Slot, map[string]any{"group_id": 0, "item_id": 1}},
-		{"TranInv2Slot no item_id", f.item.TranInv2Slot, map[string]any{"group_id": 0, "slot_id": 5}},
-		{"TranSlot2Inv no slot_id", f.item.TranSlot2Inv, map[string]any{"group_id": 0}},
+		{"TranInv2Slot no slot_id", f.item.TranInv2Slot, map[string]any{"group_id": 1, "item_id": 1}},
+		{"TranInv2Slot no item_id", f.item.TranInv2Slot, map[string]any{"group_id": 1, "slot_id": 5}},
+		{"TranSlot2Inv no slot_id", f.item.TranSlot2Inv, map[string]any{"group_id": 1}},
 	}
 	for _, c := range cases {
 		rec := do(t, c.fn, tok, c.body)
@@ -217,17 +217,17 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	tok := f.login(t)
 
 	// step 1: move item 1 from inventory to slot 5
-	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"group_id": 0, "item_id": 1, "slot_id": 5})
+	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"group_id": 1, "item_id": 1, "slot_id": 5})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step1 TranInv2Slot: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 2: verify post-transfer state
-	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 0})
+	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 1})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step2 QueryInv: expected 200, got %d", rec.Code)
 	}
-	inv := decodeMap(t, rec)
+	inv := decodeInv(t, rec)
 	if inv["1"] != 2 {
 		t.Errorf("step2: expected inv[1]==2, got %d", inv["1"])
 	}
@@ -235,11 +235,11 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 		t.Errorf("step2: expected inv[2]==1, got %d", inv["2"])
 	}
 
-	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 0})
+	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 1})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step2 QuerySlot: expected 200, got %d", rec.Code)
 	}
-	slot := decodeMap(t, rec)
+	slot := decodeSlots(t, rec)
 	if slot["0"] != 1 {
 		t.Errorf("step2: expected slot[0]==1, got %d", slot["0"])
 	}
@@ -248,20 +248,20 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 3: return item from slot 0 to inventory (slot 0 held item 1)
-	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 0, "slot_id": 0})
+	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 1, "slot_id": 0})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step3 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 4: verify slot 0 gone, inv[1] restored
-	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 0})
-	inv = decodeMap(t, rec)
+	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 1})
+	inv = decodeInv(t, rec)
 	if inv["1"] != 3 {
 		t.Errorf("step4: expected inv[1]==3, got %d", inv["1"])
 	}
 
-	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 0})
-	slot = decodeMap(t, rec)
+	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 1})
+	slot = decodeSlots(t, rec)
 	if _, ok := slot["0"]; ok {
 		t.Error("step4: expected slot 0 to be removed")
 	}
@@ -270,20 +270,20 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 5: return item 1 from slot 5 to inventory, clearing the slot
-	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 0, "slot_id": 5})
+	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 1, "slot_id": 5})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step5 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 6: final state — slot empty, inv={1:4, 2:1}
-	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 0})
-	slot = decodeMap(t, rec)
+	rec = do(t, f.item.QuerySlot, tok, map[string]any{"group_id": 1})
+	slot = decodeSlots(t, rec)
 	if len(slot) != 0 {
 		t.Errorf("step6: expected empty slot map, got %v", slot)
 	}
 
-	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 0})
-	inv = decodeMap(t, rec)
+	rec = do(t, f.item.QueryInv, tok, map[string]any{"group_id": 1})
+	inv = decodeInv(t, rec)
 	if inv["1"] != 4 {
 		t.Errorf("step6: expected inv[1]==4, got %d", inv["1"])
 	}
@@ -298,7 +298,7 @@ func TestItemHandler_TranInv2Slot_OutOfStock(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"group_id": 0, "item_id": 99, "slot_id": 5})
+	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"group_id": 1, "item_id": 99, "slot_id": 5})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("out-of-stock: expected 400, got %d", rec.Code)
 	}
@@ -308,9 +308,19 @@ func TestItemHandler_TranSlot2Inv_NonExistentSlot(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 0, "slot_id": 99})
+	rec := do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 1, "slot_id": 99})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("non-existent slot: expected 400, got %d", rec.Code)
+	}
+}
+
+func TestItemHandler_QueryInv_GroupZeroRejected(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.item.QueryInv, tok, map[string]any{"group_id": 0})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("group_id 0: expected 400, got %d", rec.Code)
 	}
 }
 
@@ -324,7 +334,7 @@ func TestGroupHandler_MissingToken(t *testing.T) {
 		"QueryMember": f.group.QueryMember,
 	}
 	for name, fn := range cases {
-		rec := do(t, fn, "", map[string]any{"group_id": 0, "username": "user"})
+		rec := do(t, fn, "", map[string]any{"group_id": 1, "username": "user"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
 		}
@@ -389,6 +399,22 @@ func TestGroupHandler_SetThenQueryRoundtrip(t *testing.T) {
 	}
 }
 
+// SetGroup with group_id 0 removes the user from their group; QueryGroup then 404s.
+func TestGroupHandler_SetGroup_ZeroRemovesUser(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 0, "username": "user"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetGroup remove: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(t, f.group.QueryGroup, tok, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("QueryGroup after remove: expected 404, got %d", rec.Code)
+	}
+}
+
 // ---- auth handler: QueryUser ----
 
 func TestAuthHandler_QueryUser(t *testing.T) {
@@ -447,7 +473,7 @@ func TestQuestionHandler_MissingToken(t *testing.T) {
 		"SetState": f.state.SetState,
 	}
 	for name, fn := range cases {
-		rec := do(t, fn, "", map[string]any{"group_id": 0, "state": "QUIZ"})
+		rec := do(t, fn, "", map[string]any{"group_id": 1, "state": "QUIZ"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
 		}
@@ -487,7 +513,7 @@ func TestQuestionHandler_StudentBlockedInNormalState(t *testing.T) {
 	f.forceState(t, tok, model.StateNormal)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
+	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 1})
 	if gen.Code != http.StatusForbidden {
 		t.Errorf("Generate as student in NORMAL: expected 403, got %d", gen.Code)
 	}
@@ -503,7 +529,7 @@ func TestQuestionHandler_StudentAllowedInQuizState(t *testing.T) {
 	f.forceState(t, tok, model.StateQuiz)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
+	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 1})
 	if gen.Code != http.StatusOK {
 		t.Fatalf("Generate as student in QUIZ: expected 200, got %d: %s", gen.Code, gen.Body.String())
 	}
@@ -534,7 +560,7 @@ func TestQuestionHandler_TeacherAllowedInNormalState(t *testing.T) {
 	f.forceState(t, tok, model.StateNormal)
 	// role stays RoleTeacher (fixture default)
 
-	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 0})
+	gen := do(t, f.question.Generate, tok, map[string]any{"group_id": 1})
 	if gen.Code != http.StatusOK {
 		t.Errorf("Generate as teacher in NORMAL: expected 200, got %d: %s", gen.Code, gen.Body.String())
 	}

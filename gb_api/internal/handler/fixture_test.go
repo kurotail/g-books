@@ -29,7 +29,7 @@ type fixture struct {
 func newFixture() *fixture {
 	// In production UserRepo and GroupRepo read/write the same users table; the
 	// shared map mirrors that so SetGroup is visible to QueryGroup.
-	groups := map[string]uint{"user": 0}
+	groups := map[string]uint{"user": 1}
 	authRepo := &mock.AuthRepo{
 		Users:  map[string]string{"user": "pass"},
 		Roles:  map[string]uint{"user": model.RoleTeacher},
@@ -115,11 +115,24 @@ func doReq(t *testing.T, fn http.HandlerFunc, method, target, token string, body
 }
 
 // decodeMap parses a JSON object response into map[string]uint.
-func decodeMap(t *testing.T, rec *httptest.ResponseRecorder) map[string]uint {
+func decodeInv(t *testing.T, rec *httptest.ResponseRecorder) map[string]uint {
 	t.Helper()
-	var m map[string]uint
-	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
-		t.Fatalf("decodeMap: %v — body: %s", err, rec.Body.String())
+	var r struct {
+		Inventory map[string]uint `json:"inventory"`
 	}
-	return m
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+		t.Fatalf("decodeInv: %v — body: %s", err, rec.Body.String())
+	}
+	return r.Inventory
+}
+
+func decodeSlots(t *testing.T, rec *httptest.ResponseRecorder) map[string]uint {
+	t.Helper()
+	var r struct {
+		Slots map[string]uint `json:"slots"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+		t.Fatalf("decodeSlots: %v — body: %s", err, rec.Body.String())
+	}
+	return r.Slots
 }
