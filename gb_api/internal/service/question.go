@@ -24,13 +24,13 @@ func (s *QuestionSvc) Generate(accessToken string, groupID uint) ([]byte, int, e
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	role, err := s.users.GetRole(claims.Username)
+	caller, err := s.users.GetUser(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 	// Teachers and admins may always generate; students only while the server
 	// is in QUIZ state.
-	if studentBlockedByState(role) {
+	if studentBlockedByState(caller.Role) {
 		return nil, http.StatusForbidden, fmt.Errorf("NORMAL 狀態下學生無法產生題目")
 	}
 	id, q, err := s.repo.CreateSession(groupID)
@@ -51,11 +51,11 @@ func (s *QuestionSvc) requireTeacher(accessToken string) (int, error) {
 	if err != nil {
 		return http.StatusUnauthorized, err
 	}
-	role, err := s.users.GetRole(claims.Username)
+	caller, err := s.users.GetUser(claims.Username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if role < model.RoleTeacher {
+	if caller.Role < model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("權限不足")
 	}
 	return http.StatusOK, nil
@@ -164,11 +164,11 @@ func (s *QuestionSvc) Answer(accessToken, session string, ans uint) ([]byte, int
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	role, err := s.users.GetRole(claims.Username)
+	caller, err := s.users.GetUser(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	if studentBlockedByState(role) {
+	if studentBlockedByState(caller.Role) {
 		return nil, http.StatusForbidden, fmt.Errorf("NORMAL 狀態下學生無法作答")
 	}
 	qs, ok, err := s.repo.ConsumeSession(session)

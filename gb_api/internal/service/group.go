@@ -25,14 +25,14 @@ func (s *GroupSvc) SetGroup(accessToken, username string, groupID uint) (int, er
 	if err != nil {
 		return http.StatusUnauthorized, err
 	}
-	role, err := s.users.GetRole(claims.Username)
+	caller, err := s.users.GetUser(claims.Username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if role <= model.RoleStudent {
+	if caller.Role < model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("權限不足")
 	}
-	if _, err := s.users.GetRole(username); err != nil {
+	if _, err := s.users.GetUser(username); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
 			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
 		}
@@ -50,14 +50,14 @@ func (s *GroupSvc) QueryGroup(accessToken string) ([]byte, int, error) {
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	groupID, ok, err := s.repo.GetUserGroup(claims.Username)
+	u, err := s.users.GetUser(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	if !ok {
+	if u.GroupID == nil {
 		return nil, http.StatusNotFound, fmt.Errorf("尚未加入任何群組")
 	}
-	data, err := json.Marshal(model.GroupResponse{GroupID: groupID})
+	data, err := json.Marshal(model.GroupResponse{GroupID: *u.GroupID})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}

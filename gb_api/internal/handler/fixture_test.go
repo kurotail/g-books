@@ -27,16 +27,20 @@ type fixture struct {
 }
 
 func newFixture() *fixture {
+	// In production UserRepo and GroupRepo read/write the same users table; the
+	// shared map mirrors that so SetGroup is visible to QueryGroup.
+	groups := map[string]uint{"user": 0}
 	authRepo := &mock.AuthRepo{
-		Users: map[string]string{"user": "pass"},
-		Roles: map[string]uint{"user": model.RoleTeacher},
+		Users:  map[string]string{"user": "pass"},
+		Roles:  map[string]uint{"user": model.RoleTeacher},
+		Groups: groups,
 	}
 	itemRepo := &mock.ItemRepo{
 		Inv:  map[uint]uint{1: 3, 2: 1},
 		Slot: map[uint]uint{0: 1},
 	}
 	groupRepo := &mock.GroupRepo{
-		UserGroups: map[string]uint{"user": 0},
+		UserGroups: groups,
 	}
 	questionRepo := &mock.QuestionRepo{
 		Sessions: map[string]model.QuestionSession{},

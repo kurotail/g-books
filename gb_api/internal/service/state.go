@@ -101,11 +101,11 @@ func (s *StateSvc) SetState(accessToken string, state model.ServerState) ([]byte
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	role, err := s.users.GetRole(claims.Username)
+	caller, err := s.users.GetUser(claims.Username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	if role <= model.RoleStudent {
+	if caller.Role < model.RoleTeacher {
 		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
 	}
 	if state != model.StateNormal && state != model.StateQuiz {

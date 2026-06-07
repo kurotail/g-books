@@ -35,6 +35,7 @@ func newGroupSvc() (*GroupSvc, *mock.GroupRepo) {
 			"bob":     model.RoleStudent,
 			"carol":   model.RoleStudent,
 		},
+		Groups: map[string]uint{"alice": 1, "bob": 1, "carol": 2},
 	}
 	return NewGroupSvc(r, users), r
 }

@@ -83,7 +83,7 @@ func TestAuthHandler_Register_TeacherCreatesStudent(t *testing.T) {
 	}
 	found := false
 	for _, u := range ur.Users {
-		if u == "alice" {
+		if u.Username == "alice" {
 			found = true
 		}
 	}
@@ -403,7 +403,7 @@ func TestAuthHandler_QueryUser(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &ur); err != nil {
 		t.Fatalf("QueryUser: invalid JSON: %v", err)
 	}
-	if len(ur.Users) != 1 || ur.Users[0] != "user" {
+	if len(ur.Users) != 1 || ur.Users[0].Username != "user" {
 		t.Errorf("expected users [user], got %v", ur.Users)
 	}
 }

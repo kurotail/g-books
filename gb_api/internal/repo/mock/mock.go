@@ -26,6 +26,7 @@ var (
 type AuthRepo struct {
 	Users         map[string]string
 	Roles         map[string]uint
+	Groups        map[string]uint // username -> group; absent = no group
 	RefreshTokens sync.Map
 }
 
@@ -44,20 +45,27 @@ func (m *AuthRepo) ConsumeRefreshToken(jti string) (bool, error) {
 	return ok, nil
 }
 
-func (m *AuthRepo) GetAllUsers() ([]string, error) {
-	users := make([]string, 0, len(m.Users))
+func (m *AuthRepo) GetAllUsers() ([]model.User, error) {
+	users := make([]model.User, 0, len(m.Users))
 	for username := range m.Users {
-		users = append(users, username)
+		users = append(users, m.buildUser(username))
 	}
 	return users, nil
 }
 
-func (m *AuthRepo) GetRole(username string) (uint, error) {
-	role, ok := m.Roles[username]
-	if !ok {
-		return 0, apperr.ErrUserNotFound
+func (m *AuthRepo) GetUser(username string) (model.User, error) {
+	if _, ok := m.Roles[username]; !ok {
+		return model.User{}, apperr.ErrUserNotFound
 	}
-	return role, nil
+	return m.buildUser(username), nil
+}
+
+func (m *AuthRepo) buildUser(username string) model.User {
+	u := model.User{Username: username, Role: m.Roles[username]}
+	if gid, ok := m.Groups[username]; ok {
+		u.GroupID = &gid
+	}
+	return u
 }
 
 func (m *AuthRepo) CreateUser(username, password string, role uint) error {
@@ -80,9 +88,11 @@ type RoleRepo struct {
 }
 
 func (m *RoleRepo) ValidateCredentials(_, _ string) (bool, error) { return false, nil }
-func (m *RoleRepo) GetAllUsers() ([]string, error)                { return nil, nil }
-func (m *RoleRepo) GetRole(_ string) (uint, error)                { return m.Role, nil }
-func (m *RoleRepo) CreateUser(_, _ string, _ uint) error          { return nil }
+func (m *RoleRepo) GetAllUsers() ([]model.User, error)            { return nil, nil }
+func (m *RoleRepo) GetUser(username string) (model.User, error) {
+	return model.User{Username: username, Role: m.Role}, nil
+}
+func (m *RoleRepo) CreateUser(_, _ string, _ uint) error { return nil }
 
 type ItemRepo struct {
 	Inv  map[uint]uint
@@ -130,11 +140,6 @@ type GroupRepo struct {
 func (m *GroupRepo) SetUserGroup(username string, groupID uint) error {
 	m.UserGroups[username] = groupID
 	return nil
-}
-
-func (m *GroupRepo) GetUserGroup(username string) (uint, bool, error) {
-	groupID, ok := m.UserGroups[username]
-	return groupID, ok, nil
 }
 
 func (m *GroupRepo) GetGroupMembers(groupID uint) ([]string, error) {

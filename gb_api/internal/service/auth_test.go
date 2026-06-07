@@ -48,7 +48,7 @@ func TestAuthSvc_QueryUser_ValidToken(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if len(resp.Users) != 1 || resp.Users[0] != "user" {
+	if len(resp.Users) != 1 || resp.Users[0].Username != "user" {
 		t.Errorf("expected users [user], got %v", resp.Users)
 	}
 }

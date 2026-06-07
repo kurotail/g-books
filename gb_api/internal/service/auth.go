@@ -163,11 +163,11 @@ func (s *AuthSvc) RegisterUser(accessToken, username, password string, role uint
 	if err != nil {
 		return http.StatusUnauthorized, err
 	}
-	callerRole, err := s.users.GetRole(claims.Username)
+	caller, err := s.users.GetUser(claims.Username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if callerRole < model.RoleTeacher {
+	if caller.Role < model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("權限不足")
 	}
 	if role > model.RoleTeacher {

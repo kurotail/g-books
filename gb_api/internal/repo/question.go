@@ -15,22 +15,11 @@ import (
 const sessionTTL = 15 * time.Minute
 
 type QuestionRepo interface {
-	// CreateSession picks a random question, stores a single-use session for it,
-	// and returns the session ID together with the picked question.
 	CreateSession(groupID uint) (string, model.Question, error)
-	// ConsumeSession loads and deletes a session. ok is false when absent.
 	ConsumeSession(session string) (model.QuestionSession, bool, error)
-	// AddQuestions appends questions to the pool, assigning each a new id, and
-	// returns the created records.
 	AddQuestions(qs []model.Question) ([]model.QuestionRecord, error)
-	// SearchQuestions returns pool questions whose description contains query
-	// (case-insensitive); an empty query returns all, sorted by id.
 	SearchQuestions(query string) ([]model.QuestionRecord, error)
-	// UpdateQuestion overwrites the question with the given id. ok is false when
-	// no such question exists.
 	UpdateQuestion(id uint, q model.Question) (bool, error)
-	// DeleteQuestion removes the question with the given id. ok is false when no
-	// such question exists.
 	DeleteQuestion(id uint) (bool, error)
 }
 
@@ -63,8 +52,6 @@ func (_ *questionRepo) CreateSession(groupID uint) (string, model.Question, erro
 	return id, q, nil
 }
 
-// randomQuestion returns a uniformly random question from the pool. ok is false
-// when the pool is empty. Callers must hold at least db.mu.RLock.
 func randomQuestion() (model.Question, bool) {
 	n := len(db.questions)
 	if n == 0 {

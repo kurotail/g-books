@@ -23,8 +23,14 @@ type RegisterRequest struct {
 	Role     *uint  `json:"role"` // 0=student, 1=teacher; required
 }
 
+type User struct {
+	Username string `json:"username"`
+	Role     uint   `json:"role"`
+	GroupID  *uint  `json:"group_id"` // nil = not in any group
+}
+
 type UsersResponse struct {
-	Users []string `json:"users"`
+	Users []User `json:"users"`
 }
 
 // Role levels (see README).
