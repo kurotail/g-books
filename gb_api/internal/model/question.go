@@ -5,16 +5,42 @@ import "time"
 type Question struct {
 	Description string
 	Answer      uint
+	Difficulty  uint
+	Area        uint
+}
+
+// SessionKind distinguishes the two quiz flows a session can drive.
+type SessionKind uint
+
+const (
+	KindItem   SessionKind = iota // answering correctly grants the new item
+	KindTarget                    // answering correctly breaks/repairs a target slot
+)
+
+// Target identifies a group's slot for the QUIZ-state attack/repair flow.
+type Target struct {
+	GroupID uint
+	SlotID  uint
 }
 
 type QuestionSession struct {
 	ExpiresAt time.Time
 	GroupID   uint
-	Question
+	Question  // embedded: the graded Description/Answer
+	Kind      SessionKind
+	ItemID    uint    // KindItem: the new item granted on a correct answer
+	Target    *Target // KindTarget: the slot to break/repair
 }
 
-type GenerateQuestionRequest struct {
-	GroupID uint `json:"group_id"`
+// GenerateItemRequest is the body of POST /api/question/generate (NORMAL state).
+type GenerateItemRequest struct {
+	Difficulty *uint `json:"difficulty"`
+}
+
+// GenerateTargetRequest is the body of POST /api/question/target (QUIZ state).
+type GenerateTargetRequest struct {
+	TargetGroupID *uint `json:"target_group_id"`
+	TargetSlotID  *uint `json:"target_slot_id"`
 }
 
 // QuestionInput is a single question supplied by a teacher when uploading to or
@@ -23,6 +49,8 @@ type GenerateQuestionRequest struct {
 type QuestionInput struct {
 	Description string `json:"description"`
 	Answer      uint   `json:"answer"`
+	Difficulty  uint   `json:"difficulty"`
+	Area        uint   `json:"area"`
 }
 
 // UploadQuestionsRequest is the body of POST /api/question/upload.
@@ -36,6 +64,8 @@ type QuestionRecord struct {
 	ID          uint   `json:"id"`
 	Description string `json:"description"`
 	Answer      uint   `json:"answer"`
+	Difficulty  uint   `json:"difficulty"`
+	Area        uint   `json:"area"`
 }
 
 // QuestionListResponse is returned by the search endpoint.
@@ -66,11 +96,16 @@ type QuestionResponse struct {
 
 type AnswerRequest struct {
 	Session string `json:"session"`
-	Answer  uint   `json:"answer"`
+	Answer  *uint  `json:"answer"`
 }
 
+// AnswerResponse reports the outcome of answering a session. ItemID is set when a
+// KindItem answer grants an item; Success is set for KindTarget answers and reports
+// whether the break/repair actually happened (false when the precondition no longer holds).
 type AnswerResponse struct {
-	Correct bool `json:"correct"`
+	Correct bool  `json:"correct"`
+	ItemID  uint  `json:"item_id,omitempty"`
+	Success *bool `json:"success,omitempty"`
 }
 
 // ServerState is the global quiz state machine. Students may only generate or

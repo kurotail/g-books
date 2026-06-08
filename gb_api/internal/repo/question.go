@@ -8,29 +8,19 @@ import (
 	"strings"
 	"time"
 
-	apperr "gb-api/internal/error"
 	"gb-api/internal/model"
 )
 
 const sessionTTL = 15 * time.Minute
 
 type QuestionRepo interface {
-	// CreateSession picks a random question, stores a single-use session for it,
-	// and returns the session ID together with the picked question.
-	CreateSession(groupID uint) (string, model.Question, error)
-	// ConsumeSession loads and deletes a session. ok is false when absent.
+	StoreSession(sess model.QuestionSession) (string, error)
 	ConsumeSession(session string) (model.QuestionSession, bool, error)
-	// AddQuestions appends questions to the pool, assigning each a new id, and
-	// returns the created records.
+	RandomQuestion(area uint, difficulty *uint) (uint, model.Question, bool, error)
+	GetQuestion(id uint) (model.Question, bool, error)
 	AddQuestions(qs []model.Question) ([]model.QuestionRecord, error)
-	// SearchQuestions returns pool questions whose description contains query
-	// (case-insensitive); an empty query returns all, sorted by id.
-	SearchQuestions(query string) ([]model.QuestionRecord, error)
-	// UpdateQuestion overwrites the question with the given id. ok is false when
-	// no such question exists.
+	SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error)
 	UpdateQuestion(id uint, q model.Question) (bool, error)
-	// DeleteQuestion removes the question with the given id. ok is false when no
-	// such question exists.
 	DeleteQuestion(id uint) (bool, error)
 }
 
@@ -44,41 +34,50 @@ func newSessionID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (_ *questionRepo) CreateSession(groupID uint) (string, model.Question, error) {
+// StoreSession assigns the session's TTL and a fresh id, then stores it.
+func (_ *questionRepo) StoreSession(sess model.QuestionSession) (string, error) {
 	id, err := newSessionID()
 	if err != nil {
-		return "", model.Question{}, err
+		return "", err
 	}
+	sess.ExpiresAt = time.Now().Add(sessionTTL)
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	q, ok := randomQuestion()
-	if !ok {
-		return "", model.Question{}, apperr.ErrNoQuestions
-	}
-	db.sessions[id] = model.QuestionSession{
-		ExpiresAt: time.Now().Add(sessionTTL),
-		GroupID:   groupID,
-		Question:  q,
-	}
-	return id, q, nil
+	db.sessions[id] = sess
+	return id, nil
 }
 
-// randomQuestion returns a uniformly random question from the pool. ok is false
-// when the pool is empty. Callers must hold at least db.mu.RLock.
-func randomQuestion() (model.Question, bool) {
-	n := len(db.questions)
-	if n == 0 {
-		return model.Question{}, false
+// RandomQuestion returns a random pool question (and its id) matching area, and
+// difficulty when non-nil. ok is false when none match.
+func (_ *questionRepo) RandomQuestion(area uint, difficulty *uint) (uint, model.Question, bool, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	type entry struct {
+		id uint
+		q  model.Question
 	}
-	pick := mrand.Intn(n)
-	i := 0
-	for _, q := range db.questions {
-		if i == pick {
-			return q, true
+	var matches []entry
+	for id, q := range db.questions {
+		if q.Area != area {
+			continue
 		}
-		i++
+		if difficulty != nil && q.Difficulty != *difficulty {
+			continue
+		}
+		matches = append(matches, entry{id, q})
 	}
-	return model.Question{}, false
+	if len(matches) == 0 {
+		return 0, model.Question{}, false, nil
+	}
+	pick := matches[mrand.Intn(len(matches))]
+	return pick.id, pick.q, true, nil
+}
+
+func (_ *questionRepo) GetQuestion(id uint) (model.Question, bool, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	q, ok := db.questions[id]
+	return q, ok, nil
 }
 
 func (_ *questionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord, error) {
@@ -89,23 +88,44 @@ func (_ *questionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord
 		id := db.nextQuestionID
 		db.nextQuestionID++
 		db.questions[id] = q
-		records = append(records, model.QuestionRecord{ID: id, Description: q.Description, Answer: q.Answer})
+		records = append(records, toRecord(id, q))
 	}
 	return records, nil
 }
 
-func (_ *questionRepo) SearchQuestions(query string) ([]model.QuestionRecord, error) {
+// SearchQuestions returns pool questions matching the description substring (empty
+// matches all). The difficulty and area filters are applied only when non-nil, each
+// as an exact match, AND-combined with the substring.
+func (_ *questionRepo) SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error) {
 	needle := strings.ToLower(query)
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	records := make([]model.QuestionRecord, 0, len(db.questions))
 	for id, q := range db.questions {
-		if needle == "" || strings.Contains(strings.ToLower(q.Description), needle) {
-			records = append(records, model.QuestionRecord{ID: id, Description: q.Description, Answer: q.Answer})
+		if needle != "" && !strings.Contains(strings.ToLower(q.Description), needle) {
+			continue
 		}
+		if difficulty != nil && q.Difficulty != *difficulty {
+			continue
+		}
+		if area != nil && q.Area != *area {
+			continue
+		}
+		records = append(records, toRecord(id, q))
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
 	return records, nil
+}
+
+// toRecord maps a stored question to its teacher-facing record.
+func toRecord(id uint, q model.Question) model.QuestionRecord {
+	return model.QuestionRecord{
+		ID:          id,
+		Description: q.Description,
+		Answer:      q.Answer,
+		Difficulty:  q.Difficulty,
+		Area:        q.Area,
+	}
 }
 
 func (_ *questionRepo) UpdateQuestion(id uint, q model.Question) (bool, error) {

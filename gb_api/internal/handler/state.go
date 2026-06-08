@@ -100,6 +100,14 @@ func (h *StateHandler) SetState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
+	if req.State == "" {
+		http.Error(w, "缺少 state", http.StatusBadRequest)
+		return
+	}
+	if req.State != model.StateNormal && req.State != model.StateQuiz {
+		http.Error(w, "不合法的狀態", http.StatusBadRequest)
+		return
+	}
 	data, status, err := h.svc.SetState(token, req.State)
 	if err != nil {
 		http.Error(w, err.Error(), status)

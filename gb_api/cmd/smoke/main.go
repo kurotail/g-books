@@ -271,8 +271,8 @@ func main() {
 
 	section("REGISTER (teacher-only)")
 
-	st, _ = req("POST", "/api/register", access, map[string]any{"username": "stud1", "password": "pw", "role": 0})
-	show("teacher registers a student", st, 201, "")
+	st, _ = req("POST", "/api/register", access, map[string]any{"username": "stud1", "password": "pw", "role": 0, "group_id": 2})
+	show("teacher registers a student into group 2", st, 201, "")
 
 	st, body = req("POST", "/api/register", access, map[string]any{"username": "stud1", "password": "pw", "role": 0})
 	show("register duplicate username", st, 409, body)
@@ -295,42 +295,53 @@ func main() {
 	st, body = req("GET", "/api/group", access, nil)
 	show("teacher queries own group", st, 200, body)
 
-	st, _ = req("POST", "/api/group/set", access, map[string]any{"username": "stud1", "group_id": 0})
-	show("teacher adds stud1 to group 0", st, 200, "")
+	st, _ = req("POST", "/api/group/set", access, map[string]any{"username": "stud1", "group_id": 1})
+	show("teacher adds stud1 to group 1", st, 200, "")
 
-	st, body = req("POST", "/api/group/members", access, map[string]any{"group_id": 0})
-	show("query members of group 0", st, 200, body)
+	st, body = req("POST", "/api/group/members", access, map[string]any{"group_id": 1})
+	show("query members of group 1", st, 200, body)
+
+	st, _ = req("POST", "/api/group/set", access, map[string]any{"username": "stud1", "group_id": 0})
+	show("teacher removes stud1 from group (group_id 0)", st, 200, "")
+
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 0})
+	show("query items of group 0 (rejected, must be > 0)", st, 400, body)
 
 	st, body = req("POST", "/api/group/set", sAccess, map[string]any{"username": "stud1", "group_id": 1})
 	show("student tries to set group (forbidden)", st, 403, body)
 
 	section("ITEMS")
 
-	st, body = req("POST", "/api/item/inv", access, map[string]any{"group_id": 0})
-	show("query inventory of group 0", st, 200, body)
+	// Assign building 1 to group 1 so the Type-allowed-slot rule applies
+	// (building 1 allows type 10 in slots 0,1 and type 20 in slot 2).
+	st, _ = req("POST", "/api/group/building", access, map[string]any{"group_id": 1, "building_id": 1})
+	show("assign building 1 to group 1", st, 200, "")
 
-	st, body = req("POST", "/api/item/slot", access, map[string]any{"group_id": 0})
-	show("query slots of group 0", st, 200, body)
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
+	show("query items of group 1 (inventory + slots)", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 0, "item_id": 0, "slot_id": 9})
+	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 0, "slot_id": 1})
 	show("inv2slot with item_id 0 (rejected)", st, 400, body)
 
-	st, _ = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 0, "item_id": 1, "slot_id": 9})
-	show("move item 1 from inv to slot 9", st, 200, "")
+	st, _ = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 1, "slot_id": 1})
+	show("move item 1 (type 10) into allowed slot 1", st, 200, "")
 
-	st, body = req("POST", "/api/item/inv", access, map[string]any{"group_id": 0})
-	show("inventory after inv2slot", st, 200, body)
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
+	show("items after inv2slot", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 0, "item_id": 99, "slot_id": 8})
-	show("move nonexistent item (insufficient)", st, 400, body)
+	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 2, "slot_id": 1})
+	show("move item 2 (type 20) into slot 1 (type not allowed)", st, 400, body)
 
-	st, body = req("POST", "/api/item/slot2inv", access, map[string]any{"group_id": 0, "slot_id": 9})
-	show("move slot 9 back to inventory", st, 200, body)
+	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 99, "slot_id": 1})
+	show("move item not in inventory (rejected)", st, 400, body)
 
-	st, body = req("POST", "/api/item/inv", access, map[string]any{"group_id": 0})
-	show("inventory after slot2inv (item 1 restored)", st, 200, body)
+	st, body = req("POST", "/api/item/slot2inv", access, map[string]any{"group_id": 1, "slot_id": 1})
+	show("move slot 1 back to inventory", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 0})
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
+	show("items after slot2inv (item 1 restored)", st, 200, body)
+
+	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1})
 	show("inv2slot missing item_id/slot_id", st, 400, body)
 
 	section("STATE + QUESTIONS")
@@ -347,15 +358,20 @@ func main() {
 	st, body = req("POST", "/api/state", access, map[string]any{"state": "BOGUS"})
 	show("set invalid state value", st, 400, body)
 
-	st, body = req("POST", "/api/question/generate", access, map[string]any{"group_id": 0})
-	show("teacher generates a question", st, 200, body)
 	var q struct {
 		Session string `json:"session"`
 	}
+
+	// --- item flow (NORMAL): generate a new item, answer correctly to earn it ---
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
+	show("teacher sets state NORMAL", st, 200, "")
+
+	st, body = req("POST", "/api/question/generate", access, map[string]any{"difficulty": 1})
+	show("teacher generates an item (difficulty 1)", st, 200, body)
 	json.Unmarshal([]byte(body), &q)
 
 	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 1})
-	show("answer generated question (answer=1)", st, 200, body)
+	show("answer correctly -> item granted (item_id)", st, 200, body)
 
 	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 1})
 	show("answer same session again (consumed)", st, 400, body)
@@ -363,11 +379,43 @@ func main() {
 	st, body = req("POST", "/api/question/answer", access, map[string]any{"answer": 0})
 	show("answer missing session", st, 400, body)
 
+	st, body = req("POST", "/api/question/generate", access, map[string]any{"difficulty": 9})
+	show("generate item for a difficulty with no type (rejected)", st, 400, body)
+
+	// --- attack/repair flow (QUIZ) ---
+	st, _ = req("POST", "/api/register", access, map[string]any{"username": "quizzer", "password": "pw", "role": 0, "group_id": 2})
+	show("register attacker quizzer in group 2", st, 201, "")
+	_, body = req("POST", "/api/login", "", map[string]any{"username": "quizzer", "password": "pw"})
+	qAccess, _ := tokens(body)
+
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "QUIZ"})
+	show("teacher sets state QUIZ", st, 200, "")
+
+	// group-2 student attacks group-1 slot 0 (item 3, normal, carries a question)
+	st, body = req("POST", "/api/question/target", qAccess, map[string]any{"target_group_id": 1, "target_slot_id": 0})
+	show("group-2 student targets group-1 slot 0 (attack)", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+	st, body = req("POST", "/api/question/answer", qAccess, map[string]any{"session": q.Session, "answer": 1})
+	show("answer correctly -> break the item (success)", st, 200, body)
+
+	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
+	show("group 1 items (slot 0 now broken)", st, 200, body)
+
+	// teacher repairs their own now-broken slot (repair question is area 2, answer 0)
+	st, body = req("POST", "/api/question/target", access, map[string]any{"target_group_id": 1, "target_slot_id": 0})
+	show("teacher targets own broken slot (repair)", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 0})
+	show("answer correctly -> repair the item (success)", st, 200, body)
+
+	st, body = req("POST", "/api/question/target", access, map[string]any{"target_group_id": 1, "target_slot_id": 0})
+	show("target own non-broken slot (invalid)", st, 400, body)
+
+	st, body = req("POST", "/api/question/generate", qAccess, map[string]any{"difficulty": 1})
+	show("student generates item in QUIZ (blocked)", st, 403, body)
+
 	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
 	show("teacher sets state NORMAL", st, 200, "")
-
-	st, body = req("POST", "/api/question/generate", sAccess, map[string]any{"group_id": 0})
-	show("student generates in NORMAL (blocked)", st, 403, body)
 
 	section("STATE WEBSOCKET")
 	wsChecks(access, sAccess)

@@ -27,25 +27,49 @@ type fixture struct {
 }
 
 func newFixture() *fixture {
+	// In production UserRepo and GroupRepo read/write the same users table; the
+	// shared map mirrors that so SetGroup is visible to QueryGroup.
+	groups := map[string]uint{"user": 1}
 	authRepo := &mock.AuthRepo{
-		Users: map[string]string{"user": "pass"},
-		Roles: map[string]uint{"user": model.RoleTeacher},
+		Users:  map[string]string{"user": "pass"},
+		Roles:  map[string]uint{"user": model.RoleTeacher},
+		Groups: groups,
 	}
 	itemRepo := &mock.ItemRepo{
-		Inv:  map[uint]uint{1: 3, 2: 1},
-		Slot: map[uint]uint{0: 1},
+		Inv:  map[uint]struct{}{1: {}, 2: {}},
+		Slot: map[uint]int{0: 3},
+		Items: map[uint]model.Item{
+			1: {ItemID: 1, Type: 10, QuestionID: 1},
+			2: {ItemID: 2, Type: 20, QuestionID: 2},
+			3: {ItemID: 3, Type: 10},
+		},
+		// Allowed is nil: every slot accepts every type, so the move-flow test
+		// isn't coupled to a building.
 	}
 	groupRepo := &mock.GroupRepo{
-		UserGroups: map[string]uint{"user": 0},
+		UserGroups:  groups,
+		BuildingIDs: map[uint]uint{1: 1}, // group 1 -> building 1
+	}
+	buildingRepo := &mock.BuildingRepo{
+		Buildings: map[uint]model.Building{
+			1: {
+				ID:              1,
+				TypeAllowedSlot: map[uint][]uint{10: {0, 1, 5}, 20: {0, 1, 2, 5}},
+				DifficultyType:  map[uint][]uint{1: {10}}, // difficulty 1 -> type 10 (for GenerateItem)
+			},
+		},
 	}
 	questionRepo := &mock.QuestionRepo{
 		Sessions: map[string]model.QuestionSession{},
+		Questions: map[uint]model.Question{
+			1: {Description: "2+2?\n(a)3\n(b)4", Answer: 1, Difficulty: 1, Area: 1},
+		},
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
-		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo)),
+		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, authRepo, groupRepo, buildingRepo)),
 		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo, authRepo)),
-		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo)),
+		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, groupRepo, buildingRepo, itemRepo)),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
 		authRepo:     authRepo,
 		groupRepo:    groupRepo,
@@ -110,12 +134,30 @@ func doReq(t *testing.T, fn http.HandlerFunc, method, target, token string, body
 	return rec
 }
 
-// decodeMap parses a JSON object response into map[string]uint.
-func decodeMap(t *testing.T, rec *httptest.ResponseRecorder) map[string]uint {
+// decodeInv parses the item-query response inventory into a set keyed by item id.
+func decodeInv(t *testing.T, rec *httptest.ResponseRecorder) map[uint]model.ItemView {
 	t.Helper()
-	var m map[string]uint
-	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
-		t.Fatalf("decodeMap: %v — body: %s", err, rec.Body.String())
+	var r struct {
+		Inventory []model.ItemView `json:"inventory"`
 	}
-	return m
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+		t.Fatalf("decodeInv: %v — body: %s", err, rec.Body.String())
+	}
+	out := make(map[uint]model.ItemView, len(r.Inventory))
+	for _, v := range r.Inventory {
+		out[v.ItemID] = v
+	}
+	return out
+}
+
+// decodeSlots parses the item-query response slots, keyed by slot id.
+func decodeSlots(t *testing.T, rec *httptest.ResponseRecorder) map[uint]model.SlotView {
+	t.Helper()
+	var r struct {
+		Slots map[uint]model.SlotView `json:"slots"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+		t.Fatalf("decodeSlots: %v — body: %s", err, rec.Body.String())
+	}
+	return r.Slots
 }

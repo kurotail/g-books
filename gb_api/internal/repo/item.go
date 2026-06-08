@@ -1,14 +1,19 @@
 package repo
 
 import (
-	apperr "gb-api/internal/error"
+	"sort"
+
+	"gb-api/internal/model"
 )
 
 type ItemRepo interface {
-	QueryInv(groupID uint) (map[uint]uint, error)
-	QuerySlot(groupID uint) (map[uint]uint, error)
-	ChangeInv(groupID, itemID uint, delta int) error
-	SetSlot(groupID, slotID, itemID uint) error
+	QueryInv(groupID uint) ([]uint, error)        // owned (unslotted) item ids, sorted
+	QuerySlot(groupID uint) (map[uint]int, error) // slot_id -> signed item_id (negative = broken)
+	GetItem(itemID uint) (model.Item, bool, error)
+	CreateItem(itemType, questionID uint) (uint, error)
+	AddInvItem(groupID, itemID uint) error
+	RemoveInvItem(groupID, itemID uint) error
+	SetSlot(groupID, slotID uint, itemID int) error // itemID 0 clears the slot
 }
 
 type itemRepo struct{}
@@ -20,30 +25,32 @@ func group(groupID uint) *Group {
 	if g == nil {
 		g = &Group{
 			ID:        groupID,
-			Inventory: make(map[uint]uint),
-			Slots:     make(map[uint]uint),
+			Inventory: make(map[uint]struct{}),
+			Slots:     make(map[uint]int),
 		}
 		db.groups[groupID] = g
 	}
 	return g
 }
 
-func (_ *itemRepo) QueryInv(groupID uint) (map[uint]uint, error) {
+func (_ *itemRepo) QueryInv(groupID uint) ([]uint, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	result := make(map[uint]uint)
+	var ids []uint
 	if g := db.groups[groupID]; g != nil {
-		for k, v := range g.Inventory {
-			result[k] = v
+		ids = make([]uint, 0, len(g.Inventory))
+		for id := range g.Inventory {
+			ids = append(ids, id)
 		}
 	}
-	return result, nil
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
 }
 
-func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]uint, error) {
+func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]int, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	result := make(map[uint]uint)
+	result := make(map[uint]int)
 	if g := db.groups[groupID]; g != nil {
 		for k, v := range g.Slots {
 			result[k] = v
@@ -52,37 +59,48 @@ func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]uint, error) {
 	return result, nil
 }
 
-// ChangeInv adjusts itemID's count in a group's inventory by delta (which may be
-// negative), atomically under the write lock. A decrement that would drop the
-// count below zero is rejected with ErrInsufficientStock; reaching exactly zero
-// removes the item.
-func (_ *itemRepo) ChangeInv(groupID, itemID uint, delta int) error {
+func (_ *itemRepo) GetItem(itemID uint) (model.Item, bool, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	it, ok := db.items[itemID]
+	return it, ok, nil
+}
+
+// CreateItem inserts a new item with the given type and question, returning its id.
+func (_ *itemRepo) CreateItem(itemType, questionID uint) (uint, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	g := group(groupID)
-	next := int(g.Inventory[itemID]) + delta
-	if next < 0 {
-		return apperr.ErrInsufficientStock
-	}
-	if next == 0 {
-		delete(g.Inventory, itemID)
-	} else {
-		g.Inventory[itemID] = uint(next)
-	}
+	id := db.nextItemID
+	db.nextItemID++
+	db.items[id] = model.Item{ItemID: id, Type: itemType, QuestionID: questionID}
+	return id, nil
+}
+
+func (_ *itemRepo) AddInvItem(groupID, itemID uint) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	group(groupID).Inventory[itemID] = struct{}{}
 	return nil
 }
 
-// SetSlot places itemID in a group's slot. Item IDs are always > 0; itemID 0 is
-// the sentinel for "empty" and clears the slot instead of storing item 0.
-func (_ *itemRepo) SetSlot(groupID, slotID, itemID uint) error {
+func (_ *itemRepo) RemoveInvItem(groupID, itemID uint) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	delete(group(groupID).Inventory, itemID)
+	// TODO: maybeDeleteItem(itemID) — once no group inventory and no slot references
+	// an item, delete it from db.items. Left as a no-op for now.
+	return nil
+}
+
+func (_ *itemRepo) SetSlot(groupID, slotID uint, itemID int) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	g := group(groupID)
 	if itemID == 0 {
 		delete(g.Slots, slotID)
-		return nil
+	} else {
+		g.Slots[slotID] = itemID
 	}
-	g.Slots[slotID] = itemID
 	return nil
 }
 

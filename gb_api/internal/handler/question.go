@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"gb-api/internal/model"
@@ -17,18 +19,55 @@ func NewQuestionHandler(s *service.QuestionSvc) *QuestionHandler {
 	return &QuestionHandler{svc: s}
 }
 
-func (h *QuestionHandler) Generate(w http.ResponseWriter, r *http.Request) {
+// GenerateItem issues an item-earning session (NORMAL state).
+func (h *QuestionHandler) GenerateItem(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	var req model.GenerateQuestionRequest
+	var req model.GenerateItemRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Generate(token, req.GroupID)
+	if req.Difficulty == nil {
+		http.Error(w, "缺少 difficulty", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.GenerateItem(token, *req.Difficulty)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, data)
+}
+
+// GenerateTarget issues an attack/repair session against a group's slot (QUIZ state).
+func (h *QuestionHandler) GenerateTarget(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.GenerateTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if req.TargetGroupID == nil {
+		http.Error(w, "缺少 target_group_id", http.StatusBadRequest)
+		return
+	}
+	if *req.TargetGroupID == 0 {
+		http.Error(w, "target_group_id 必須大於 0", http.StatusBadRequest)
+		return
+	}
+	if req.TargetSlotID == nil {
+		http.Error(w, "缺少 target_slot_id", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.GenerateTarget(token, *req.TargetGroupID, *req.TargetSlotID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -48,6 +87,10 @@ func (h *QuestionHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
+	if len(req.Questions) == 0 {
+		http.Error(w, "缺少 questions", http.StatusBadRequest)
+		return
+	}
 	data, status, err := h.svc.Upload(token, req.Questions)
 	if err != nil {
 		http.Error(w, err.Error(), status)
@@ -56,14 +99,46 @@ func (h *QuestionHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, status, data)
 }
 
-// Search returns pool questions matching the ?q= query parameter.
+func optionalUint(q url.Values, key string) (*uint, error) {
+	raw := q.Get(key)
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("不合法的 %s", key)
+	}
+	u := uint(v)
+	return &u, nil
+}
+
+// parseSearchFilters extracts the optional difficulty and area exact-match filters
+// from the search query parameters.
+func parseSearchFilters(q url.Values) (difficulty, area *uint, err error) {
+	if difficulty, err = optionalUint(q, "difficulty"); err != nil {
+		return nil, nil, err
+	}
+	if area, err = optionalUint(q, "area"); err != nil {
+		return nil, nil, err
+	}
+	return difficulty, area, nil
+}
+
+// Search returns pool questions matching the ?q= substring, optionally filtered by
+// the exact-match ?difficulty= and ?area= parameters.
 func (h *QuestionHandler) Search(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	data, status, err := h.svc.Search(token, r.URL.Query().Get("q"))
+	q := r.URL.Query()
+	difficulty, area, err := parseSearchFilters(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.Search(token, q.Get("q"), difficulty, area)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -71,7 +146,6 @@ func (h *QuestionHandler) Search(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
-// Update overwrites the question identified by the {id} path segment.
 func (h *QuestionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
@@ -88,6 +162,10 @@ func (h *QuestionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
+	if req.Description == "" {
+		http.Error(w, "description 不可為空", http.StatusBadRequest)
+		return
+	}
 	status, err := h.svc.Update(token, uint(id), req)
 	if err != nil {
 		http.Error(w, err.Error(), status)
@@ -96,7 +174,6 @@ func (h *QuestionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
-// Delete removes the question identified by the {id} path segment.
 func (h *QuestionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
@@ -131,7 +208,11 @@ func (h *QuestionHandler) Answer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 session", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Answer(token, req.Session, req.Answer)
+	if req.Answer == nil {
+		http.Error(w, "缺少 answer", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.Answer(token, req.Session, *req.Answer)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

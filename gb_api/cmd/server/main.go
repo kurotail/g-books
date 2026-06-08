@@ -18,10 +18,11 @@ import (
 
 func routes() (http.Handler, *handler.StateHandler) {
 	authHandler := handler.NewAuthHandler(service.NewAuthSvc(repo.InitUserRepo(), repo.InitRefreshTokenRepo()))
-	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo()))
-	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo()))
+	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitUserRepo(), repo.InitGroupRepo(), repo.InitBuildingRepo()))
+	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitGroupRepo(), repo.InitBuildingRepo(), repo.InitItemRepo()))
 	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
 	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo(), repo.InitUserRepo()))
+	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
 
 	mux := http.NewServeMux()
 
@@ -30,16 +31,22 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/refresh", authHandler.Refresh)
 	mux.HandleFunc("GET /api/users", authHandler.QueryUser)
 
-	mux.HandleFunc("POST /api/item/inv", itemHandler.QueryInv)
-	mux.HandleFunc("POST /api/item/slot", itemHandler.QuerySlot)
+	mux.HandleFunc("POST /api/item", itemHandler.QueryItems)
 	mux.HandleFunc("POST /api/item/inv2slot", itemHandler.TranInv2Slot)
 	mux.HandleFunc("POST /api/item/slot2inv", itemHandler.TranSlot2Inv)
 
 	mux.HandleFunc("POST /api/group/set", groupHandler.SetGroup)
+	mux.HandleFunc("POST /api/group/name", groupHandler.SetName)
+	mux.HandleFunc("POST /api/group/building", groupHandler.SetBuilding)
 	mux.HandleFunc("GET /api/group", groupHandler.QueryGroup)
 	mux.HandleFunc("POST /api/group/members", groupHandler.QueryMember)
 
-	mux.HandleFunc("POST /api/question/generate", questionHandler.Generate)
+	mux.HandleFunc("POST /api/building", buildingHandler.Create)
+	mux.HandleFunc("GET /api/building", buildingHandler.List)
+	mux.HandleFunc("GET /api/building/{id}", buildingHandler.Get)
+
+	mux.HandleFunc("POST /api/question/generate", questionHandler.GenerateItem)
+	mux.HandleFunc("POST /api/question/target", questionHandler.GenerateTarget)
 	mux.HandleFunc("POST /api/question/answer", questionHandler.Answer)
 	mux.HandleFunc("POST /api/question/upload", questionHandler.Upload)
 	mux.HandleFunc("GET /api/question/search", questionHandler.Search)

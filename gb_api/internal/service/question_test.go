@@ -10,11 +10,24 @@ import (
 	"gb-api/internal/repo/mock"
 )
 
-// newQuestionSvc builds a QuestionSvc whose every user reports the given role,
-// returning the service and its underlying question repo mock.
+// newQuestionSvc builds a QuestionSvc whose every user reports the given role (group
+// 0), with empty group/building/item repos — enough for the pool-management and
+// session-only tests. Returns the service and its question repo mock.
 func newQuestionSvc(role uint) (*QuestionSvc, *mock.QuestionRepo) {
 	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}}
-	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}), r
+	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}, &mock.GroupRepo{}, &mock.BuildingRepo{}, &mock.ItemRepo{}), r
+}
+
+// newQuizSvc builds a QuestionSvc for caller "u" (role + group), a building (id 1)
+// assigned to that group with the given DifficultyType, and a question repo seeded with
+// `questions`. Returns the service, its question repo, and its item repo.
+func newQuizSvc(role, group uint, difficultyType map[uint][]uint, questions map[uint]model.Question) (*QuestionSvc, *mock.QuestionRepo, *mock.ItemRepo) {
+	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}, Questions: questions}
+	users := &mock.AuthRepo{Roles: map[string]uint{"u": role}, Groups: map[string]uint{"u": group}}
+	groups := &mock.GroupRepo{BuildingIDs: map[uint]uint{group: 1}}
+	buildings := &mock.BuildingRepo{Buildings: map[uint]model.Building{1: {ID: 1, DifficultyType: difficultyType}}}
+	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
+	return NewQuestionSvc(r, users, groups, buildings, items), r, items
 }
 
 func accessTokenFor(t *testing.T, username string) string {
@@ -34,53 +47,108 @@ func useState(t *testing.T, s model.ServerState) {
 	t.Cleanup(func() { setState(model.StateNormal) })
 }
 
-// --- Generate ---
+// --- GenerateItem (NORMAL state) ---
 
-func TestQuestionSvc_Generate_TeacherSucceeds(t *testing.T) {
-	s, _ := newQuestionSvc(model.RoleTeacher)
+// area1Q1 is an area-1, difficulty-1 question the item flow can draw.
+var area1Q1 = map[uint]model.Question{
+	1: {Description: "2+2?", Answer: 1, Difficulty: 1, Area: 1},
+}
 
-	data, status, err := s.Generate(accessTokenFor(t, "teacher"), 0)
+func TestQuestionSvc_GenerateItem_Succeeds(t *testing.T) {
+	s, r, items := newQuizSvc(model.RoleTeacher, 1, map[uint][]uint{1: {10}}, area1Q1)
+
+	data, status, err := s.GenerateItem(accessTokenFor(t, "u"), 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	// Response must carry a session + description but never leak the answer.
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if raw["session"] == "" || raw["session"] == nil {
-		t.Error("expected a session in response")
-	}
-	if raw["description"] == nil {
-		t.Error("expected a description in response")
-	}
-	if _, leaked := raw["Answer"]; leaked {
-		t.Error("response must not contain the answer")
+	if raw["session"] == nil || raw["description"] == nil {
+		t.Error("expected session + description")
 	}
 	if _, leaked := raw["answer"]; leaked {
-		t.Error("response must not contain the answer")
+		t.Error("response must not leak the answer")
+	}
+	// An item was created and the stored session is a KindItem pointing at it.
+	if len(items.Items) != 1 {
+		t.Errorf("expected one created item, got %d", len(items.Items))
+	}
+	sess := r.Sessions[r.Created]
+	if sess.Kind != model.KindItem || sess.ItemID == 0 || sess.GroupID != 1 {
+		t.Errorf("expected a KindItem session for group 1 with an item, got %+v", sess)
 	}
 }
 
-func TestQuestionSvc_Generate_StudentForbiddenInNormal(t *testing.T) {
-	s, _ := newQuestionSvc(model.RoleStudent)
+func TestQuestionSvc_GenerateItem_StudentForbiddenOutsideNormal(t *testing.T) {
+	useState(t, model.StateQuiz)
+	s, _, _ := newQuizSvc(model.RoleStudent, 1, map[uint][]uint{1: {10}}, area1Q1)
 
-	_, status, err := s.Generate(accessTokenFor(t, "student"), 0)
+	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 1)
 	if err == nil {
-		t.Fatal("expected error for student in NORMAL state")
+		t.Fatal("expected error for student outside NORMAL state")
 	}
 	if status != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", status)
 	}
 }
 
-func TestQuestionSvc_Generate_InvalidToken(t *testing.T) {
-	s, _ := newQuestionSvc(model.RoleAdmin)
+func TestQuestionSvc_GenerateItem_StudentAllowedInNormal(t *testing.T) {
+	s, _, _ := newQuizSvc(model.RoleStudent, 1, map[uint][]uint{1: {10}}, area1Q1)
 
-	_, status, err := s.Generate("bad.token", 0)
+	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+}
+
+func TestQuestionSvc_GenerateItem_NoGroup(t *testing.T) {
+	s, _, _ := newQuizSvc(model.RoleTeacher, 0, map[uint][]uint{1: {10}}, area1Q1)
+
+	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 1)
+	if err == nil {
+		t.Fatal("expected error when caller is in no group")
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", status)
+	}
+}
+
+func TestQuestionSvc_GenerateItem_NoTypeForDifficulty(t *testing.T) {
+	s, _, _ := newQuizSvc(model.RoleTeacher, 1, map[uint][]uint{1: {10}}, area1Q1)
+
+	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 2) // building lists no type for difficulty 2
+	if err == nil {
+		t.Fatal("expected error when no type is available for the difficulty")
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", status)
+	}
+}
+
+func TestQuestionSvc_GenerateItem_NoQuestion(t *testing.T) {
+	s, _, _ := newQuizSvc(model.RoleTeacher, 1, map[uint][]uint{2: {10}}, area1Q1)
+
+	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 2) // no area-1 difficulty-2 question
+	if err == nil {
+		t.Fatal("expected error when no matching question exists")
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", status)
+	}
+}
+
+func TestQuestionSvc_GenerateItem_InvalidToken(t *testing.T) {
+	s, _, _ := newQuizSvc(model.RoleAdmin, 1, map[uint][]uint{1: {10}}, area1Q1)
+
+	_, status, err := s.GenerateItem("bad.token", 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -89,16 +157,84 @@ func TestQuestionSvc_Generate_InvalidToken(t *testing.T) {
 	}
 }
 
-func TestQuestionSvc_Generate_StudentAllowedInQuizState(t *testing.T) {
-	useState(t, model.StateQuiz)
-	s, _ := newQuestionSvc(model.RoleStudent)
+// --- GenerateTarget (QUIZ state) ---
 
-	_, status, err := s.Generate(accessTokenFor(t, "student"), 0)
+// area2Q is an area-2 question the repair flow can draw.
+var area2Q = map[uint]model.Question{
+	5: {Description: "repair?", Answer: 0, Difficulty: 1, Area: 2},
+}
+
+func TestQuestionSvc_GenerateTarget_AttackValid(t *testing.T) {
+	useState(t, model.StateQuiz)
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
+	items.Slot[0] = 7 // target group 2 slot 0 holds normal item 7
+	items.Items[7] = model.Item{ItemID: 7, Type: 10, QuestionID: 5}
+
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), 2, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
+	}
+	sess := r.Sessions[r.Created]
+	if sess.Kind != model.KindTarget || sess.Target == nil || sess.Target.GroupID != 2 {
+		t.Errorf("expected a KindTarget session at group 2, got %+v", sess)
+	}
+}
+
+func TestQuestionSvc_GenerateTarget_RepairValid(t *testing.T) {
+	useState(t, model.StateQuiz)
+	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
+	items.Slot[0] = -7 // own group's slot 0 holds a broken item
+
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), 1, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+}
+
+func TestQuestionSvc_GenerateTarget_InvalidTarget(t *testing.T) {
+	useState(t, model.StateQuiz)
+	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
+	items.Slot[0] = -7 // broken item in ANOTHER group — neither attack nor repair
+
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), 2, 0)
+	if err == nil {
+		t.Fatal("expected error for an invalid target")
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", status)
+	}
+}
+
+func TestQuestionSvc_GenerateTarget_EmptySlot(t *testing.T) {
+	useState(t, model.StateQuiz)
+	s, _, _ := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
+
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), 2, 0)
+	if err == nil {
+		t.Fatal("expected error for an empty slot")
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", status)
+	}
+}
+
+func TestQuestionSvc_GenerateTarget_StudentForbiddenOutsideQuiz(t *testing.T) {
+	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
+	items.Slot[0] = 7
+	items.Items[7] = model.Item{ItemID: 7, QuestionID: 5}
+
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), 2, 0)
+	if err == nil {
+		t.Fatal("expected error for student outside QUIZ state")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
 	}
 }
 
@@ -230,7 +366,7 @@ func TestQuestionSvc_Search_FindsMatch(t *testing.T) {
 		{Description: "Capital of France?", Answer: 0},
 	})
 
-	data, status, err := s.Search(accessTokenFor(t, "teacher"), "france")
+	data, status, err := s.Search(accessTokenFor(t, "teacher"), "france", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,6 +379,57 @@ func TestQuestionSvc_Search_FindsMatch(t *testing.T) {
 	}
 	if len(resp.Questions) != 1 || resp.Questions[0].Description != "Capital of France?" {
 		t.Errorf("expected the France question, got %+v", resp.Questions)
+	}
+}
+
+func TestQuestionSvc_Search_FiltersByDifficultyAndArea(t *testing.T) {
+	s, r := newQuestionSvc(model.RoleTeacher)
+	r.AddQuestions([]model.Question{
+		{Description: "easy algebra", Answer: 0, Difficulty: 1, Area: 7},
+		{Description: "hard algebra", Answer: 0, Difficulty: 3, Area: 7},
+		{Description: "hard geometry", Answer: 0, Difficulty: 3, Area: 9},
+	})
+
+	u := func(v uint) *uint { return &v }
+
+	search := func(query string, difficulty, area *uint) []model.QuestionRecord {
+		t.Helper()
+		data, status, err := s.Search(accessTokenFor(t, "teacher"), query, difficulty, area)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if status != http.StatusOK {
+			t.Fatalf("expected 200, got %d", status)
+		}
+		var resp model.QuestionListResponse
+		if err := json.Unmarshal(data, &resp); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		return resp.Questions
+	}
+
+	// difficulty only: the two hard questions.
+	if got := search("", u(3), nil); len(got) != 2 {
+		t.Errorf("difficulty=3: expected 2, got %d (%+v)", len(got), got)
+	}
+	// area only: the two area-7 questions.
+	if got := search("", nil, u(7)); len(got) != 2 {
+		t.Errorf("area=7: expected 2, got %d (%+v)", len(got), got)
+	}
+	// both: exact match on one question.
+	got := search("", u(3), u(7))
+	if len(got) != 1 || got[0].Description != "hard algebra" {
+		t.Errorf("difficulty=3&area=7: expected only 'hard algebra', got %+v", got)
+	}
+	if got[0].Difficulty != 3 || got[0].Area != 7 {
+		t.Errorf("record must carry difficulty/area, got %+v", got[0])
+	}
+	// q AND-combines with the filters: substring excludes the geometry question.
+	if got := search("geometry", u(3), nil); len(got) != 1 || got[0].Description != "hard geometry" {
+		t.Errorf("q=geometry&difficulty=3: expected only 'hard geometry', got %+v", got)
+	}
+	if got := search("geometry", nil, u(7)); len(got) != 0 {
+		t.Errorf("q=geometry&area=7: expected no match, got %+v", got)
 	}
 }
 
@@ -308,13 +495,17 @@ func TestQuestionSvc_Delete_NotFound(t *testing.T) {
 
 // --- Answer ---
 
-func TestQuestionSvc_Answer_Correct(t *testing.T) {
-	useState(t, model.StateQuiz) // let the student through the gate
-	s, r := newQuestionSvc(model.RoleStudent)
-	r.CreateSession(0) // seeds answer = 1
-	id := r.Created
+func TestQuestionSvc_Answer_ItemCorrectGrantsItem(t *testing.T) {
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		GroupID:   1,
+		Kind:      model.KindItem,
+		ItemID:    42,
+		Question:  model.Question{Answer: 1},
+	}
 
-	data, status, err := s.Answer(accessTokenFor(t, "student"), id, 1)
+	data, status, err := s.Answer(accessTokenFor(t, "u"), "sid", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -325,74 +516,145 @@ func TestQuestionSvc_Answer_Correct(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if !resp.Correct {
-		t.Error("expected correct=true")
+	if !resp.Correct || resp.ItemID != 42 {
+		t.Errorf("expected correct with item_id 42, got %+v", resp)
 	}
-	// Session must be deleted (single-use).
-	if _, ok := r.Sessions[id]; ok {
-		t.Error("expected session to be deleted after answering")
+	if _, ok := items.Inv[42]; !ok {
+		t.Error("expected item 42 added to the group's inventory")
+	}
+	if _, ok := r.Sessions["sid"]; ok {
+		t.Error("expected session to be consumed")
 	}
 }
 
-func TestQuestionSvc_Answer_Wrong(t *testing.T) {
-	useState(t, model.StateQuiz)
-	s, r := newQuestionSvc(model.RoleStudent)
-	r.CreateSession(0)
-	id := r.Created
+func TestQuestionSvc_Answer_ItemWrongGrantsNothing(t *testing.T) {
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		GroupID:   1,
+		Kind:      model.KindItem,
+		ItemID:    42,
+		Question:  model.Question{Answer: 1},
+	}
 
-	data, status, err := s.Answer(accessTokenFor(t, "student"), id, 3)
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
 	var resp model.AnswerResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
+	json.Unmarshal(data, &resp)
 	if resp.Correct {
 		t.Error("expected correct=false")
 	}
-}
-
-func TestQuestionSvc_Answer_StudentForbiddenInNormal(t *testing.T) {
-	s, r := newQuestionSvc(model.RoleStudent)
-	r.CreateSession(0)
-	id := r.Created
-
-	_, status, err := s.Answer(accessTokenFor(t, "student"), id, 1)
-	if err == nil {
-		t.Fatal("expected error for student in NORMAL state")
-	}
-	if status != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", status)
-	}
-	// The gate must reject before the session is consumed.
-	if _, ok := r.Sessions[id]; !ok {
-		t.Error("session must not be consumed when answering is forbidden")
+	if len(items.Inv) != 0 {
+		t.Error("a wrong answer must not grant the item")
 	}
 }
 
-func TestQuestionSvc_Answer_TeacherAllowedInNormal(t *testing.T) {
-	s, r := newQuestionSvc(model.RoleTeacher)
-	r.CreateSession(0)
-	id := r.Created
+func TestQuestionSvc_Answer_TargetAttackBreaks(t *testing.T) {
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
+	items.Slot[0] = 7 // target group 2, normal item
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		GroupID:   1,
+		Kind:      model.KindTarget,
+		Target:    &model.Target{GroupID: 2, SlotID: 0},
+		Question:  model.Question{Answer: 1},
+	}
 
-	_, status, err := s.Answer(accessTokenFor(t, "teacher"), id, 1)
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
+	var resp model.AnswerResponse
+	json.Unmarshal(data, &resp)
+	if !resp.Correct || resp.Success == nil || !*resp.Success {
+		t.Errorf("expected correct with success=true, got %+v", resp)
+	}
+	if items.Slot[0] != -7 {
+		t.Errorf("expected slot item broken (-7), got %d", items.Slot[0])
+	}
+}
+
+func TestQuestionSvc_Answer_TargetAttackAlreadyBrokenFails(t *testing.T) {
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
+	items.Slot[0] = -7 // already broken
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		GroupID:   1,
+		Kind:      model.KindTarget,
+		Target:    &model.Target{GroupID: 2, SlotID: 0},
+		Question:  model.Question{Answer: 1},
+	}
+
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var resp model.AnswerResponse
+	json.Unmarshal(data, &resp)
+	if !resp.Correct || resp.Success == nil || *resp.Success {
+		t.Errorf("expected correct with success=false, got %+v", resp)
+	}
+	if items.Slot[0] != -7 {
+		t.Errorf("slot must be unchanged, got %d", items.Slot[0])
+	}
+}
+
+func TestQuestionSvc_Answer_TargetRepairFixes(t *testing.T) {
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
+	items.Slot[0] = -7 // own group's broken item
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		GroupID:   1,
+		Kind:      model.KindTarget,
+		Target:    &model.Target{GroupID: 1, SlotID: 0},
+		Question:  model.Question{Answer: 1},
+	}
+
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var resp model.AnswerResponse
+	json.Unmarshal(data, &resp)
+	if !resp.Correct || resp.Success == nil || !*resp.Success {
+		t.Errorf("expected correct with success=true, got %+v", resp)
+	}
+	if items.Slot[0] != 7 {
+		t.Errorf("expected slot item repaired (7), got %d", items.Slot[0])
+	}
+}
+
+func TestQuestionSvc_Answer_TargetWrongNoAction(t *testing.T) {
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
+	items.Slot[0] = 7
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		GroupID:   1,
+		Kind:      model.KindTarget,
+		Target:    &model.Target{GroupID: 2, SlotID: 0},
+		Question:  model.Question{Answer: 1},
+	}
+
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 9) // wrong
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var resp model.AnswerResponse
+	json.Unmarshal(data, &resp)
+	if resp.Correct || resp.Success != nil {
+		t.Errorf("expected correct=false and no success field, got %+v", resp)
+	}
+	if items.Slot[0] != 7 {
+		t.Error("a wrong answer must not change the slot")
 	}
 }
 
 func TestQuestionSvc_Answer_UnknownSession(t *testing.T) {
-	useState(t, model.StateQuiz)
-	s, _ := newQuestionSvc(model.RoleStudent)
+	s, _, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
 
-	_, status, err := s.Answer(accessTokenFor(t, "student"), "nope", 1)
+	_, status, err := s.Answer(accessTokenFor(t, "u"), "nope", 1)
 	if err == nil {
 		t.Fatal("expected error for unknown session")
 	}
@@ -402,14 +664,13 @@ func TestQuestionSvc_Answer_UnknownSession(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_Expired(t *testing.T) {
-	useState(t, model.StateQuiz)
-	s, r := newQuestionSvc(model.RoleStudent)
+	s, r, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
 	r.Sessions["expired"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(-time.Minute),
 		Question:  model.Question{Answer: 1},
 	}
 
-	_, status, err := s.Answer(accessTokenFor(t, "student"), "expired", 1)
+	_, status, err := s.Answer(accessTokenFor(t, "u"), "expired", 1)
 	if err == nil {
 		t.Fatal("expected error for expired session")
 	}
@@ -419,7 +680,7 @@ func TestQuestionSvc_Answer_Expired(t *testing.T) {
 }
 
 func TestQuestionSvc_Answer_InvalidToken(t *testing.T) {
-	s, _ := newQuestionSvc(model.RoleStudent)
+	s, _, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
 
 	_, status, err := s.Answer("bad.token", "session-id", 1)
 	if err == nil {

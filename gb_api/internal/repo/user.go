@@ -2,15 +2,16 @@ package repo
 
 import (
 	apperr "gb-api/internal/error"
+	"gb-api/internal/model"
 )
 
 // UserRepo is the user-account table: credentials, roles, and membership. It is
 // shared by services that need to identify or authorize users.
 type UserRepo interface {
 	ValidateCredentials(username, password string) (bool, error)
-	GetAllUsers() ([]string, error)
-	GetRole(username string) (uint, error)
-	CreateUser(username, password string, role uint) error
+	GetAllUsers() ([]model.User, error)
+	GetUser(username string) (model.User, error)
+	CreateUser(username, password string, role, groupID uint) error
 }
 
 type userRepo struct{}
@@ -22,27 +23,32 @@ func (_ *userRepo) ValidateCredentials(username, password string) (bool, error) 
 	return u != nil && u.Password == password, nil
 }
 
-func (_ *userRepo) GetAllUsers() ([]string, error) {
+func (_ *userRepo) GetAllUsers() ([]model.User, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	users := make([]string, 0, len(db.users))
-	for username := range db.users {
-		users = append(users, username)
+	users := make([]model.User, 0, len(db.users))
+	for _, u := range db.users {
+		users = append(users, toModelUser(u))
 	}
 	return users, nil
 }
 
-func (_ *userRepo) GetRole(username string) (uint, error) {
+func (_ *userRepo) GetUser(username string) (model.User, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	u := db.users[username]
 	if u == nil {
-		return 0, apperr.ErrUserNotFound
+		return model.User{}, apperr.ErrUserNotFound
 	}
-	return u.Role, nil
+	return toModelUser(u), nil
 }
 
-func (_ *userRepo) CreateUser(username, password string, role uint) error {
+// toModelUser maps a users-table row to the model exposed to the service layer.
+func toModelUser(u *User) model.User {
+	return model.User{Username: u.Username, Role: u.Role, GroupID: u.GroupID}
+}
+
+func (_ *userRepo) CreateUser(username, password string, role, groupID uint) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	if db.users[username] != nil {
@@ -52,7 +58,7 @@ func (_ *userRepo) CreateUser(username, password string, role uint) error {
 		Username: username,
 		Password: password,
 		Role:     role,
-		GroupID:  nil,
+		GroupID:  groupID,
 	}
 	return nil
 }
