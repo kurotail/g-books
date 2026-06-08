@@ -7,13 +7,6 @@ final Map<String, List<HeritageSlot>> _slotsByHeritage = {};
 List<HeritageSlot> slotsOf(String heritageId) =>
     _slotsByHeritage[heritageId] ?? const [];
 
-HeritageSlot? slotById(String heritageId, int id) {
-  for (final s in slotsOf(heritageId)) {
-    if (s.id == id) return s;
-  }
-  return null;
-}
-
 /// 套用某古蹟的 slot 幾何（啟動種子化 / 管理者儲存後即時生效）。
 void setHeritageSlots(String heritageId, List<HeritageSlot> slots) {
   _slotsByHeritage[heritageId] = List<HeritageSlot>.from(slots);
