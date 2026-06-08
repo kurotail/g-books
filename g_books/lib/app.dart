@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'data/models/staff_account.dart';
 import 'state/app_state.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/upload_avatar_screen.dart';
@@ -7,7 +8,10 @@ import 'features/auth/group_naming_screen.dart';
 import 'features/auth/group_overview_screen.dart';
 import 'features/heritage/heritage_selection_screen.dart';
 import 'features/heritage/my_heritage_screen.dart';
-import 'features/heritage/slot_editor_screen.dart';
+import 'features/admin/staff_login_screen.dart';
+import 'features/admin/admin_heritage_picker_screen.dart';
+import 'features/admin/admin_editor_screen.dart';
+import 'features/admin/teacher_home_screen.dart';
 
 class GBooksApp extends StatefulWidget {
   final AppState appState;
@@ -32,6 +36,27 @@ class _GBooksAppState extends State<GBooksApp> {
         GoRoute(
           path: '/login',
           pageBuilder: (_, state) => _fadePage(state, const LoginScreen()),
+        ),
+        // 教師 / 管理者登入與後台。
+        GoRoute(
+          path: '/staff-login',
+          pageBuilder: (_, state) => _fadePage(state, const StaffLoginScreen()),
+        ),
+        GoRoute(
+          path: '/teacher',
+          pageBuilder: (_, state) => _fadePage(state, const TeacherHomeScreen()),
+        ),
+        GoRoute(
+          path: '/admin',
+          pageBuilder: (_, state) =>
+              _fadePage(state, const AdminHeritagePickerScreen()),
+        ),
+        GoRoute(
+          path: '/admin/edit/:hid',
+          pageBuilder: (_, state) => _fadePage(
+            state,
+            AdminEditorScreen(heritageId: state.pathParameters['hid']!),
+          ),
         ),
         GoRoute(
           path: '/setup/group-avatar',
@@ -63,13 +88,6 @@ class _GBooksAppState extends State<GBooksApp> {
           pageBuilder: (_, state) =>
               _fadePage(state, const MyHeritageScreen()),
         ),
-        GoRoute(
-          path: '/slot-editor/:hid',
-          pageBuilder: (_, state) => _fadePage(
-            state,
-            SlotEditorScreen(heritageId: state.pathParameters['hid']!),
-          ),
-        ),
       ],
     );
   }
@@ -89,16 +107,26 @@ class _GBooksAppState extends State<GBooksApp> {
   }
 
   String? _redirect(BuildContext context, GoRouterState state) {
-    final loggedIn = widget.appState.isLoggedIn;
-    final setupDone = widget.appState.isSetupComplete;
+    final s = widget.appState;
+    final loggedIn = s.isLoggedIn;
+    final staff = s.isStaffLoggedIn;
+    final setupDone = s.isSetupComplete;
     final path = state.matchedLocation;
 
-    if (!loggedIn) {
-      return path == '/login' ? null : '/login';
+    // 教師 / 管理者已登入：鎖在各自的後台區。
+    if (staff) {
+      if (s.staffRole == StaffRole.admin) {
+        return path.startsWith('/admin') ? null : '/admin';
+      }
+      return path == '/teacher' ? null : '/teacher';
     }
-    // 已登入卻還停在登入頁（含登出後重新登入）：依是否完成設定導向對應起點。
+    // 皆未登入：允許學生登入頁與教師 / 管理者登入頁。
+    if (!loggedIn) {
+      return (path == '/login' || path == '/staff-login') ? null : '/login';
+    }
+    // 學生已登入卻還停在任一登入頁：依是否完成設定導向對應起點。
     // 初次登入由小組頭像開始（個人頭像改於小組總攬設定）。
-    if (path == '/login') {
+    if (path == '/login' || path == '/staff-login') {
       return setupDone ? '/heritage-selection' : '/setup/group-avatar';
     }
     // 已完成設定卻想回到設定流程：擋下，導到古蹟選擇。

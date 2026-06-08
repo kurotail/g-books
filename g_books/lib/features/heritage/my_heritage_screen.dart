@@ -14,7 +14,7 @@ import '../../state/heritage_board_controller.dart';
 import 'package:go_router/go_router.dart';
 import 'heritage_view_geometry.dart';
 import 'widgets/framed_component_tile.dart';
-import 'widgets/heritage_info_dialog.dart';
+import 'widgets/info_dialog.dart';
 import 'widgets/component_codex_dialog.dart';
 
 class MyHeritageScreen extends StatefulWidget {
@@ -186,9 +186,10 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     if (_dragging?.id != c?.id) setState(() => _dragging = c);
   }
 
-  void _showInfo() => showDialog(
-    context: context,
-    builder: (_) => HeritageInfoDialog(heritage: _heritage),
+  void _showInfo() => InfoDialog.showHeritage(
+    context,
+    heritageId: _heritage.id,
+    title: _heritage.name,
   );
 
   void _openCodex() => showDialog(
@@ -712,29 +713,20 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
   // ── Edit-mode top bar ───────────────────────────────────────────────────────
 
   Widget _buildEditTopBar() {
+    // 設定（slot/原料對應/物品）已改為管理者後台專屬，這裡只留返回。
     return Positioned(
       top: 8,
       left: 8,
-      right: 8,
-      child: Row(
-        children: [
-          _editPill(
-            onTap: _exitEdit,
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.arrow_back, color: Colors.white, size: 18),
-                SizedBox(width: 6),
-                Text('返回', style: TextStyle(color: Colors.white, fontSize: 13)),
-              ],
-            ),
-          ),
-          const Spacer(),
-          _editPill(
-            onTap: () => context.push('/slot-editor/${_heritage.id}'),
-            child: const Icon(Icons.grid_on, color: Colors.white, size: 18),
-          ),
-        ],
+      child: _editPill(
+        onTap: _exitEdit,
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.arrow_back, color: Colors.white, size: 18),
+            SizedBox(width: 6),
+            Text('返回', style: TextStyle(color: Colors.white, fontSize: 13)),
+          ],
+        ),
       ),
     );
   }

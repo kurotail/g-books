@@ -4,8 +4,8 @@ import '../../../data/models/component_model.dart';
 /// 原料「卡框圖磚」：填滿給定區域，由下往上疊 —— 米色圓角底（可選）、等級卡框、
 /// 原料圖（依寬度等比例內縮，底部多留白避開卡框的橫飾條），右下角可選數量徽章。
 ///
-/// 背包物品卡（[_InventoryCard]）與原料介紹頁（[ComponentDetailDialog]）共用此視覺，
-/// 比例以容器寬度為基準，因此同一份係數可同時還原兩處（150 寬背包卡、200 寬詳情卡）。
+/// 背包物品卡與原料介紹框（InfoDialog 左側 leading）共用此視覺，
+/// 比例以容器寬度為基準，因此同一份係數可同時還原兩處（150 寬背包卡、190 寬介紹卡）。
 class FramedComponentTile extends StatelessWidget {
   final ComponentModel component;
 

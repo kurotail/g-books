@@ -1,28 +1,30 @@
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import '../../data/component_data.dart';
+import '../../data/models/heritage_config.dart';
 import '../../data/models/heritage_slot.dart';
-import '../../data/slot_data.dart';
-import 'heritage_view_geometry.dart';
+import '../../services/heritage_config_service.dart';
+import '../heritage/heritage_view_geometry.dart';
 
-/// 開發用編輯器，兩種模式：
-///   - Slot 模式：擺放 / 縮放 slot（八方向控制點），輸出 slot 幾何 JSON
-///   - 原料對應模式：選一個原料，點 slot 切換可放與否，輸出原料→slot 對應 JSON
+/// 管理者古蹟設定編輯器（取代舊 SlotEditorScreen）。三種模式：
+///   - Slot：擺放 / 縮放 slot（八方向控制點），輸出 slot 幾何
+///   - 原料對應：選一個原料，點 slot 切換可放與否
+///   - 物品：自動列出該古蹟 assets 內的原料圖片，設定名稱與等級
 ///
-/// 手勢：兩指縮放/平移畫布；單指拖 slot 本體=移動；拖控制點=縮放；拖空白=平移；
-/// 點空白=新增 slot（Slot 模式）。座標為 main.png 正規化值（與顯示縮放無關）。
-class SlotEditorScreen extends StatefulWidget {
+/// 進場向（假）後端 [HeritageConfigService.fetch] 取設定；按「儲存」整包 [save] 回後端，
+/// 並即時 [applyHeritageConfig] 讓執行中的 app 反映。
+class AdminEditorScreen extends StatefulWidget {
   final String heritageId;
-  const SlotEditorScreen({super.key, required this.heritageId});
+  const AdminEditorScreen({super.key, required this.heritageId});
 
   @override
-  State<SlotEditorScreen> createState() => _SlotEditorScreenState();
+  State<AdminEditorScreen> createState() => _AdminEditorScreenState();
 }
 
-enum _Mode { slots, mapping }
+enum _Mode { slots, mapping, items }
 
 enum _Grab { none, move, resize }
 
@@ -33,53 +35,82 @@ const List<List<int>> _handleDirs = [
   [-1, 1], [0, 1], [1, 1],
 ];
 
-class _SlotEditorScreenState extends State<SlotEditorScreen> {
+class _AdminEditorScreenState extends State<AdminEditorScreen> {
+  late final HeritageConfigService _service;
+
+  bool _loading = true;
+  bool _saving = false;
   _Mode _mode = _Mode.slots;
 
-  late List<HeritageSlot> _slots;
-  int? _selectedId;
+  // 編輯中狀態
+  List<HeritageSlot> _slots = [];
+  Map<int, Set<int>> _allowed = {}; // componentId → 可放 slotIds
+  final Map<int, ComponentMeta> _meta = {}; // componentId → 名稱/等級
+  final Map<int, TextEditingController> _nameCtrls = {};
+  late List<int> _imageIds; // 該古蹟可用原料圖片 id
 
-  // 原料對應：componentId → 可放 slotIds
-  late Map<int, Set<int>> _allowed;
-  int? _mapComponentId;
+  int? _selectedId; // slots 模式選取
+  int? _mapComponentId; // mapping 模式選取的原料
 
   // 畫布變換：v = offset + scale * scenePoint
   double _scale = 1.0;
   Offset _offset = Offset.zero;
-
-  // 手勢暫存
   double _startScale = 1.0;
   Offset _startOffset = Offset.zero;
   Offset _startFocal = Offset.zero;
   _Grab _grab = _Grab.none;
   HeritageSlot? _grabStart;
-  int _hx = 0, _hy = 0; // resize 方向
+  int _hx = 0, _hy = 0;
   bool _moved = false;
 
-  // 以 Listener 自行統計觸點，避免雙指誤判為點擊；並用按住時間判定 click。
   int _activePointers = 0;
   int _gestureMaxPointers = 0;
   DateTime _downTime = DateTime.now();
-  static const int _tapMaxMs = 250; // 按下→放開 < 0.25s 才算點擊
+  static const int _tapMaxMs = 250;
 
   static const double _defaultSize = 0.06;
   static const double _minSize = 0.015;
-  static const double _handleMaxPx = 11; // 控制點螢幕半徑上限
+  static const double _handleMaxPx = 11;
 
   @override
   void initState() {
     super.initState();
-    _slots = slotsOf(widget.heritageId).map((s) => s.copyWith()).toList();
+    _service = context.read<HeritageConfigService>();
+    _imageIds = componentImageIdsOf(widget.heritageId);
+    _load();
+  }
+
+  Future<void> _load() async {
+    final cfg = await _service.fetch(widget.heritageId);
+    if (!mounted) return;
+    _applyLoaded(cfg);
+    setState(() => _loading = false);
+  }
+
+  void _applyLoaded(HeritageConfig cfg) {
+    _slots = cfg.slots.map((s) => s.copyWith()).toList();
     _allowed = {
-      for (final c in componentsOf(widget.heritageId))
-        c.id: Set<int>.from(c.allowedSlotIds),
+      for (final e in cfg.componentSlots.entries) e.key: Set<int>.from(e.value),
     };
-    final comps = componentsOf(widget.heritageId);
-    if (comps.isNotEmpty) _mapComponentId = comps.first.id;
+    _meta.clear();
+    for (final id in _imageIds) {
+      _meta[id] = cfg.components[id]?.copy() ?? ComponentMeta(name: '', level: 1);
+      final ctrl = _nameCtrls.putIfAbsent(id, () => TextEditingController());
+      ctrl.text = _meta[id]!.name;
+    }
+    _mapComponentId = _imageIds.isNotEmpty ? _imageIds.first : null;
+    _selectedId = null;
+  }
+
+  @override
+  void dispose() {
+    for (final c in _nameCtrls.values) {
+      c.dispose();
+    }
+    super.dispose();
   }
 
   // ── slot helpers ────────────────────────────────────────────────────────────
-
   int get _nextId {
     final used = _slots.map((s) => s.id).toSet();
     var id = 1;
@@ -103,8 +134,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
 
   Offset _toScene(Offset viewportPt) => (viewportPt - _offset) / _scale;
 
-  /// 控制點 scene 半徑：上限 [_handleMaxPx] 螢幕像素，但當 slot 在螢幕上變小時，
-  /// 隨之縮小（取 slot 較短邊螢幕長度的 0.28），避免小 slot 被控制點蓋住。
   double _handleSceneR(Rect rect) {
     final minScreen = math.min(rect.width, rect.height) * _scale;
     final px = (minScreen * 0.28).clamp(3.0, _handleMaxPx);
@@ -116,8 +145,15 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
         ay < 0 ? r.top : (ay > 0 ? r.bottom : r.center.dy),
       );
 
-  // ── gesture ─────────────────────────────────────────────────────────────────
+  String _componentImage(int id) =>
+      'assets/images/heritages/${widget.heritageId}/components/$id.png';
 
+  String _displayName(int id) {
+    final t = _nameCtrls[id]?.text.trim() ?? '';
+    return t.isNotEmpty ? t : '原料$id';
+  }
+
+  // ── gesture ─────────────────────────────────────────────────────────────────
   void _onScaleStart(ScaleStartDetails d, Rect main) {
     _startScale = _scale;
     _startOffset = _offset;
@@ -126,11 +162,9 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
     _grab = _Grab.none;
     _grabStart = null;
 
-    if (_mode != _Mode.slots) return; // 對應模式只看點擊（在 end 處理）
+    if (_mode != _Mode.slots) return;
 
     final scene = _toScene(d.localFocalPoint);
-
-    // 1) 選取中 slot 的八方向控制點 → 縮放
     final sel = _selected;
     if (sel != null) {
       final r = HeritageViewGeometry.slotRect(sel, main);
@@ -145,7 +179,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
         }
       }
     }
-    // 2) slot 本體 → 移動
     for (final s in _slots.reversed) {
       if (HeritageViewGeometry.slotRect(s, main).contains(scene)) {
         _grab = _Grab.move;
@@ -156,7 +189,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d, Rect main) {
-    // 兩指：縮放 + 平移畫布
     if (d.pointerCount >= 2) {
       _moved = true;
       final newScale = (_startScale * d.scale).clamp(0.5, 12.0);
@@ -194,7 +226,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
     var right = start.right + (_hx > 0 ? sceneDelta.dx : 0);
     var top = start.top + (_hy < 0 ? sceneDelta.dy : 0);
     var bottom = start.bottom + (_hy > 0 ? sceneDelta.dy : 0);
-    // 避免翻轉
     final minW = _minSize * main.width;
     final minH = _minSize * main.height;
     if (right - left < minW) {
@@ -224,7 +255,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
 
   void _onScaleEnd(Rect main) {
     final elapsed = DateTime.now().difference(_downTime).inMilliseconds;
-    // 點擊判定：全程單指 + 幾乎沒移動 + 按住時間夠短。
     final wasTap = !_moved && _gestureMaxPointers <= 1 && elapsed <= _tapMaxMs;
     if (wasTap) {
       final scene = _toScene(_startFocal);
@@ -232,13 +262,11 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
         if (_grab != _Grab.none && _grabStart != null) {
           setState(() => _selectedId = _grabStart!.id);
         } else if (_selectedId != null) {
-          // 空白點擊：先取消先前選取（不新增）
           setState(() => _selectedId = null);
         } else {
-          // 沒有選取才新增 slot
           _addAtScene(scene, main);
         }
-      } else {
+      } else if (_mode == _Mode.mapping) {
         _toggleMappingAt(scene, main);
       }
     }
@@ -249,8 +277,8 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
   void _addAtScene(Offset scene, Rect main) {
     final cx = ((scene.dx - main.left) / main.width).clamp(0.0, 1.0);
     final cy = ((scene.dy - main.top) / main.height).clamp(0.0, 1.0);
-    final slot =
-        HeritageSlot(id: _nextId, cx: cx, cy: cy, w: _defaultSize, h: _defaultSize);
+    final slot = HeritageSlot(
+        id: _nextId, cx: cx, cy: cy, w: _defaultSize, h: _defaultSize);
     setState(() {
       _slots.add(slot);
       _selectedId = slot.id;
@@ -272,7 +300,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
   }
 
   // ── actions ───────────────────────────────────────────────────────────────
-
   void _deleteSelected() {
     if (_selectedId == null) return;
     setState(() {
@@ -296,90 +323,185 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
     });
   }
 
-  void _resetToSaved() => setState(() {
-        _slots = slotsOf(widget.heritageId).map((s) => s.copyWith()).toList();
-        _allowed = {
-          for (final c in componentsOf(widget.heritageId))
-            c.id: Set<int>.from(c.allowedSlotIds),
-        };
-        _selectedId = null;
-      });
+  Future<void> _reloadFromServer() async {
+    setState(() => _loading = true);
+    final cfg = await _service.fetch(widget.heritageId);
+    if (!mounted) return;
+    _applyLoaded(cfg);
+    setState(() => _loading = false);
+  }
 
-  void _export() {
-    final String jsonStr;
-    final String path;
-    if (_mode == _Mode.slots) {
-      _slots.sort((a, b) => a.id.compareTo(b.id));
-      jsonStr = const JsonEncoder.withIndent('  ')
-          .convert(_slots.map((s) => s.toJson()).toList());
-      path = 'assets/data/slots/${widget.heritageId}.json';
-    } else {
-      final map = <String, List<int>>{};
-      final ids = _allowed.keys.toList()..sort();
-      for (final id in ids) {
-        map['$id'] = _allowed[id]!.toList()..sort();
-      }
-      jsonStr = const JsonEncoder.withIndent('  ').convert(map);
-      path = 'assets/data/component_slots/${widget.heritageId}.json';
-    }
-    Clipboard.setData(ClipboardData(text: jsonStr));
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2225),
-        title: const Text('JSON（已複製到剪貼簿）',
-            style: TextStyle(color: Colors.white, fontSize: 16)),
-        content: SizedBox(
-          width: 460,
-          child: SingleChildScrollView(
-            child: SelectableText(
-              '貼到 $path 後 hot restart 即生效。\n\n$jsonStr',
-              style: const TextStyle(
-                  color: Colors.white70,
-                  fontFamily: 'monospace',
-                  fontSize: 12),
-            ),
-          ),
+  HeritageConfig _buildConfig() {
+    _slots.sort((a, b) => a.id.compareTo(b.id));
+    final componentSlots = <int, Set<int>>{
+      for (final e in _allowed.entries)
+        if (e.value.isNotEmpty) e.key: Set<int>.from(e.value),
+    };
+    final components = <int, ComponentMeta>{
+      for (final id in _imageIds)
+        id: ComponentMeta(
+          name: _nameCtrls[id]?.text.trim() ?? '',
+          level: _meta[id]?.level ?? 1,
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('關閉')),
-        ],
-      ),
+    };
+    return HeritageConfig(
+      slots: _slots,
+      componentSlots: componentSlots,
+      components: components,
     );
   }
 
-  // ── build ─────────────────────────────────────────────────────────────────
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    final cfg = _buildConfig();
+    await _service.save(widget.heritageId, cfg);
+    // 即時套用，讓執行中的學生畫面與此處下次進入都反映新值。
+    applyHeritageConfig(widget.heritageId, cfg);
+    if (!mounted) return;
+    setState(() => _saving = false);
+    Fluttertoast.showToast(msg: '已儲存並同步');
+  }
 
+  // ── build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF15171A),
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (_, constraints) {
-            final viewport = Size(constraints.maxWidth, constraints.maxHeight);
-            final side = viewport.shortestSide * 0.92;
-            final main = Rect.fromCenter(
-              center: Offset(viewport.width / 2, viewport.height / 2),
-              width: side,
-              height: side,
-            );
-            return Stack(
-              children: [
-                _buildCanvas(viewport, main),
-                _buildTopOverlay(),
-                _buildBottomOverlay(),
-                _buildZoomControls(viewport),
-              ],
-            );
-          },
+        child: _loading
+            ? const Center(
+                child: CircularProgressIndicator(color: Color(0xFFD4A843)))
+            : LayoutBuilder(
+                builder: (_, constraints) {
+                  final viewport =
+                      Size(constraints.maxWidth, constraints.maxHeight);
+                  final side = viewport.shortestSide * 0.92;
+                  final main = Rect.fromCenter(
+                    center: Offset(viewport.width / 2, viewport.height / 2),
+                    width: side,
+                    height: side,
+                  );
+                  return Stack(
+                    children: [
+                      if (_mode != _Mode.items) ...[
+                        _buildCanvas(viewport, main),
+                        _buildBottomOverlay(),
+                        _buildZoomControls(viewport),
+                      ] else
+                        _buildItemsEditor(),
+                      _buildTopOverlay(),
+                    ],
+                  );
+                },
+              ),
+      ),
+    );
+  }
+
+  // ── items（物品）模式 ─────────────────────────────────────────────────────────
+  Widget _buildItemsEditor() {
+    return Positioned.fill(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 64, 12, 12),
+        child: _imageIds.isEmpty
+            ? const Center(
+                child: Text('此古蹟尚無原料圖片\n（放入 components/<id>.png 後即可編輯）',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white38, fontSize: 15)),
+              )
+            : ListView.separated(
+                itemCount: _imageIds.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 10),
+                itemBuilder: (_, i) => _itemRow(_imageIds[i]),
+              ),
+      ),
+    );
+  }
+
+  Widget _itemRow(int id) {
+    final level = _meta[id]?.level ?? 1;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F2225),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            height: 56,
+            child: Image.asset(_componentImage(id),
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) => const Icon(
+                    Icons.image_not_supported, color: Colors.white24)),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 40,
+            child: Text('#$id',
+                style: const TextStyle(color: Colors.white38, fontSize: 13)),
+          ),
+          Expanded(
+            child: TextField(
+              controller: _nameCtrls[id],
+              onChanged: (v) => _meta[id]?.name = v,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '原料名稱',
+                hintStyle: const TextStyle(color: Colors.white24, fontSize: 14),
+                filled: true,
+                fillColor: const Color(0xFF15171A),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          for (final lv in const [1, 2, 3]) _levelChip(id, lv, level == lv),
+        ],
+      ),
+    );
+  }
+
+  Widget _levelChip(int id, int lv, bool on) {
+    const colors = {
+      1: Color(0xFF6FBF73),
+      2: Color(0xFFE3B341),
+      3: Color(0xFFD9534F),
+    };
+    final c = colors[lv]!;
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: GestureDetector(
+        onTap: () => setState(() => _meta[id]?.level = lv),
+        child: Container(
+          width: 40,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: on ? c.withValues(alpha: 0.30) : Colors.transparent,
+            shape: BoxShape.circle,
+            border: Border.all(color: on ? c : Colors.white24, width: on ? 2 : 1),
+          ),
+          child: Text('$lv',
+              style: TextStyle(
+                  color: on ? c : Colors.white38,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15)),
         ),
       ),
     );
   }
 
+  // ── 畫布（slots / mapping 共用）───────────────────────────────────────────────
   Widget _buildCanvas(Size viewport, Rect main) {
     return Positioned.fill(
       child: Listener(
@@ -391,8 +513,7 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
           _activePointers++;
           _gestureMaxPointers = math.max(_gestureMaxPointers, _activePointers);
         },
-        onPointerUp: (_) =>
-            _activePointers = math.max(0, _activePointers - 1),
+        onPointerUp: (_) => _activePointers = math.max(0, _activePointers - 1),
         onPointerCancel: (_) =>
             _activePointers = math.max(0, _activePointers - 1),
         child: GestureDetector(
@@ -401,49 +522,49 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
           onScaleUpdate: (d) => _onScaleUpdate(d, main),
           onScaleEnd: (_) => _onScaleEnd(main),
           child: ClipRect(
-          child: Transform(
-            transform: Matrix4.identity()
-              ..translateByDouble(_offset.dx, _offset.dy, 0, 1)
-              ..scaleByDouble(_scale, _scale, 1, 1),
-            child: SizedBox(
-              width: viewport.width,
-              height: viewport.height,
-              child: Stack(
-                children: [
-                  RepaintBoundary(
-                    child: Stack(
-                      children: [
-                        Positioned.fromRect(
-                          rect: main,
-                          child: Image.asset(
-                            'assets/images/heritages/${widget.heritageId}/main.png',
-                            fit: BoxFit.fill,
-                            filterQuality: FilterQuality.low,
-                            errorBuilder: (_, _, _) => Container(
-                              color: Colors.white10,
-                              alignment: Alignment.center,
-                              child: const Text('main.png 不存在',
-                                  style: TextStyle(color: Colors.white38)),
+            child: Transform(
+              transform: Matrix4.identity()
+                ..translateByDouble(_offset.dx, _offset.dy, 0, 1)
+                ..scaleByDouble(_scale, _scale, 1, 1),
+              child: SizedBox(
+                width: viewport.width,
+                height: viewport.height,
+                child: Stack(
+                  children: [
+                    RepaintBoundary(
+                      child: Stack(
+                        children: [
+                          Positioned.fromRect(
+                            rect: main,
+                            child: Image.asset(
+                              'assets/images/heritages/${widget.heritageId}/main.png',
+                              fit: BoxFit.fill,
+                              filterQuality: FilterQuality.low,
+                              errorBuilder: (_, _, _) => Container(
+                                color: Colors.white10,
+                                alignment: Alignment.center,
+                                child: const Text('main.png 不存在',
+                                    style: TextStyle(color: Colors.white38)),
+                              ),
                             ),
                           ),
-                        ),
-                        Positioned.fromRect(
-                          rect: main,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                                border: Border.all(color: Colors.white24)),
+                          Positioned.fromRect(
+                            rect: main,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                  border: Border.all(color: Colors.white24)),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  for (final s in _slots) _slotBox(s, main),
-                ],
+                    for (final s in _slots) _slotBox(s, main),
+                  ],
+                ),
               ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -459,7 +580,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
     final double fill;
     final double borderW;
     if (mapping) {
-      // 已選(可放)=亮綠色，未選=紅色
       color = allowedForComp ? const Color(0xFF00E676) : const Color(0xFFFF3B30);
       fill = allowedForComp ? 0.50 : 0.22;
       borderW = allowedForComp ? 3 : 1.5;
@@ -497,15 +617,18 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
                 ),
               ),
             ),
-            // 八方向控制點（固定螢幕大小：scene 半徑 = px / scale）
             if (selected)
               for (final dir in _handleDirs)
                 Positioned(
                   left: r * 1.5 +
-                      (dir[0] < 0 ? 0 : (dir[0] > 0 ? rect.width : rect.width / 2)) -
+                      (dir[0] < 0
+                          ? 0
+                          : (dir[0] > 0 ? rect.width : rect.width / 2)) -
                       r,
                   top: r * 1.5 +
-                      (dir[1] < 0 ? 0 : (dir[1] > 0 ? rect.height : rect.height / 2)) -
+                      (dir[1] < 0
+                          ? 0
+                          : (dir[1] > 0 ? rect.height : rect.height / 2)) -
                       r,
                   width: r * 2,
                   height: r * 2,
@@ -524,7 +647,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
   }
 
   // ── overlays ────────────────────────────────────────────────────────────────
-
   Widget _buildTopOverlay() {
     return Positioned(
       top: 8,
@@ -535,35 +657,46 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
           _pill(
             child: InkWell(
               onTap: () => context.pop(),
-              child: const Icon(Icons.close, color: Colors.white, size: 20),
+              child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
             ),
           ),
           const SizedBox(width: 8),
-          // 模式切換
           _pill(
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               _modeTab('Slot', _Mode.slots),
               const SizedBox(width: 4),
               _modeTab('原料對應', _Mode.mapping),
+              const SizedBox(width: 4),
+              _modeTab('物品', _Mode.items),
             ]),
           ),
           const Spacer(),
-          if (_mode == _Mode.slots)
+          if (_mode != _Mode.items)
             _pill(
               child: InkWell(
-                onTap: _resetToSaved,
+                onTap: _reloadFromServer,
                 child: const Icon(Icons.restore, color: Colors.white, size: 20),
               ),
             ),
           const SizedBox(width: 8),
           _pill(
             child: InkWell(
-              onTap: _export,
-              child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.code, color: Color(0xFFD4A843), size: 18),
-                SizedBox(width: 6),
-                Text('輸出 JSON',
-                    style: TextStyle(color: Color(0xFFD4A843), fontSize: 13)),
+              onTap: _saving ? null : _save,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (_saving)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFFD4A843)),
+                  )
+                else
+                  const Icon(Icons.save_outlined,
+                      color: Color(0xFFD4A843), size: 18),
+                const SizedBox(width: 6),
+                Text(_saving ? '儲存中' : '儲存',
+                    style:
+                        const TextStyle(color: Color(0xFFD4A843), fontSize: 13)),
               ]),
             ),
           ),
@@ -620,8 +753,7 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
               child: InkWell(
                 onTap: _deleteSelected,
                 child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.delete_outline,
-                      color: Colors.redAccent, size: 18),
+                  Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
                   SizedBox(width: 4),
                   Text('刪除',
                       style: TextStyle(color: Colors.redAccent, fontSize: 13)),
@@ -635,7 +767,6 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
   }
 
   Widget _buildComponentPicker() {
-    final comps = componentsOf(widget.heritageId);
     return Positioned(
       left: 8,
       right: 8,
@@ -647,27 +778,25 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('選原料後，點 main 上的 slot 切換可放（金色=可放）',
+              const Text('選原料後，點 main 上的 slot 切換可放（綠色=可放）',
                   style: TextStyle(color: Colors.white54, fontSize: 11)),
               const SizedBox(height: 4),
               Expanded(
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
-                  itemCount: comps.length,
+                  itemCount: _imageIds.length,
                   separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (_, i) {
-                    final c = comps[i];
-                    final on = c.id == _mapComponentId;
-                    final count = _allowed[c.id]?.length ?? 0;
+                    final id = _imageIds[i];
+                    final on = id == _mapComponentId;
+                    final count = _allowed[id]?.length ?? 0;
                     return GestureDetector(
-                      onTap: () => setState(() => _mapComponentId = c.id),
+                      onTap: () => setState(() => _mapComponentId = id),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: on
-                              ? const Color(0xFFD4A843)
-                              : Colors.white12,
+                          color: on ? const Color(0xFFD4A843) : Colors.white12,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Row(
@@ -675,7 +804,7 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
                             SizedBox(
                               width: 28,
                               height: 28,
-                              child: Image.asset(c.imagePath,
+                              child: Image.asset(_componentImage(id),
                                   fit: BoxFit.contain,
                                   errorBuilder: (_, _, _) => const SizedBox()),
                             ),
@@ -684,11 +813,10 @@ class _SlotEditorScreenState extends State<SlotEditorScreen> {
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(c.name,
+                                Text(_displayName(id),
                                     style: TextStyle(
-                                        color: on
-                                            ? Colors.black87
-                                            : Colors.white,
+                                        color:
+                                            on ? Colors.black87 : Colors.white,
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600)),
                                 Text('$count slot',

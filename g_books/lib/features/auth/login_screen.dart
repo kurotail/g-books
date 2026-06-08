@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/parchment_scaffold.dart';
@@ -58,13 +59,41 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       },
       child: ParchmentScaffold(
+        backgroundImage: 'assets/images/bg_login.png',
         child: Stack(
           children: [
-            // Watermark logo
-            Center(
-              child: Opacity(
-                opacity: 0.10,
-                child: Image.asset('assets/logo.png', width: 300),
+            // 左下角：教師 / 管理者登入入口
+            Positioned(
+              left: 20,
+              bottom: 16,
+              child: GestureDetector(
+                onTap: () => context.push('/staff-login'),
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: const Color(0x14000000),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0x33000000)),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.admin_panel_settings_outlined,
+                          size: 16, color: AppColors.labelText),
+                      SizedBox(width: 6),
+                      Text(
+                        '教師 / 管理者登入',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.labelText,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
             // Login form

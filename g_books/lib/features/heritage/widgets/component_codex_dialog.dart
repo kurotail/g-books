@@ -4,7 +4,8 @@ import '../../../data/component_data.dart';
 import '../../../data/models/component_model.dart';
 import '../../../state/heritage_board_controller.dart';
 import 'component_card.dart';
-import 'component_detail_dialog.dart';
+import 'framed_component_tile.dart';
+import 'info_dialog.dart';
 
 /// 原料庫圖鑑：列出該古蹟全部原料（依等級分組），顯示擁有數量（未擁有顯示 ×0），
 /// 點任一原料可看詳細介紹。
@@ -145,10 +146,16 @@ class ComponentCodexDialog extends StatelessWidget {
           children: items.map((c) {
             final qty = board.qty(c.id);
             return GestureDetector(
-              onTap: () => showDialog(
-                context: context,
-                builder: (_) =>
-                    ComponentDetailDialog(component: c, quantity: qty),
+              onTap: () => InfoDialog.showComponent(
+                context,
+                heritageId: heritageId,
+                componentId: c.id,
+                title: c.name,
+                leading: SizedBox(
+                  width: 190,
+                  height: 270,
+                  child: FramedComponentTile(component: c),
+                ),
               ),
               child: ComponentCard(
                 component: c,

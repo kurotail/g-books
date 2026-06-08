@@ -1,11 +1,13 @@
 import 'package:flutter/foundation.dart';
 import '../data/models/user_model.dart';
 import '../data/models/group_model.dart';
+import '../data/models/staff_account.dart';
 import '../data/mock_data.dart';
 import '../services/avatar_service.dart';
 
 class AppState extends ChangeNotifier {
   UserModel? _currentUser;
+  StaffAccount? _currentStaff;
   final List<GroupModel> _groups = List.from(mockGroups);
   final AvatarService avatarService;
 
@@ -16,9 +18,23 @@ class AppState extends ChangeNotifier {
   bool get isLoggedIn => _currentUser != null;
   bool get isSetupComplete => _currentUser?.hasCompletedSetup ?? false;
 
-  /// 初次登入旗標。目前由 [UserModel.hasCompletedSetup]（mock）推導，
-  /// 未來改為後端登入回傳值即可，無需更動導向邏輯。
-  bool get isFirstLogin => _currentUser?.isFirstLogin ?? false;
+  // ── 後台（教師 / 管理者）session ───────────────────────────────────────────
+  StaffAccount? get currentStaff => _currentStaff;
+  bool get isStaffLoggedIn => _currentStaff != null;
+  StaffRole? get staffRole => _currentStaff?.role;
+
+  /// 以教師 / 管理者帳密登入（現階段比對本機 mock 清單）。成功回 null、失敗回錯誤訊息。
+  String? loginAsStaff(String username, String password) {
+    try {
+      _currentStaff = mockStaff.firstWhere(
+        (a) => a.username == username.trim() && a.password == password,
+      );
+      notifyListeners();
+      return null;
+    } catch (_) {
+      return '帳號或密碼錯誤';
+    }
+  }
 
   GroupModel? get currentGroup {
     if (_currentUser == null) return null;
@@ -70,12 +86,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // TODO(backend): 以真實登入 API 取代 loginWithMock。
-  // 後端回傳應包含組長基本資料、小組成員清單與 hasCompletedSetup（或等價的
-  // 初次登入旗標），建立 UserModel 後 set _currentUser 即可，導向流程不變：
-  //   非初次登入   → /heritage-selection
-  //   初次登入     → 小組頭像 → 小組命名 → 小組總攬（各組員設頭像）→ 進入遊戲
-
   /// 設定某位組員（含組長本人）的個人頭像，於小組總攬編輯後呼叫。
   void setMemberAvatarUrl(String seatNumber, String? url) {
     final member = memberBySeat(seatNumber);
@@ -101,6 +111,7 @@ class AppState extends ChangeNotifier {
 
   void logout() {
     _currentUser = null;
+    _currentStaff = null;
     notifyListeners();
   }
 }
