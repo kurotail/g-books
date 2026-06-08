@@ -18,6 +18,7 @@ dependencies:
   crop_your_image: ^2.0.0
   path_provider: ^2.1.5
   fluttertoast: ^9.1.0
+  flutter_markdown_plus: ^1.0.7
 
 dev_dependencies:
   flutter_test:
@@ -31,11 +32,17 @@ flutter:
     - assets/logo.png
     - assets/data/slots/             # 各古蹟 slot 幾何 JSON
     - assets/data/component_slots/   # 各古蹟 元件→可放slot 對應 JSON
+    # 各古蹟的圖文資訊（Markdown）：heritage.md = 古蹟介紹、components/<id>.md = 各原料
+    - assets/data/heritages/beigang_chaotian_temple/
+    - assets/data/heritages/beigang_chaotian_temple/components/
+    - assets/images/heritages/beigang_chaotian_temple/info/
+    - assets/images/bg_login.png      # 登入頁背景
+    - assets/images/bg_group_info.png # 小組總覽背景
     - assets/images/bg_view.png       # 古蹟檢視頁背景
     - assets/images/edit_grid.png     # 古蹟編輯頁背景
     - assets/images/fight_map.png
     - assets/images/heritages/heritage_cards/
     - assets/images/heritages/beigang_chaotian_temple/
-    - assets/images/heritages/beigang_chaotian_temple/conponents/
+    - assets/images/heritages/beigang_chaotian_temple/components/
     - assets/icons/buttons/
     - assets/icons/card_frames/

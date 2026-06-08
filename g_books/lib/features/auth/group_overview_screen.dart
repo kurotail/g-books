@@ -31,6 +31,7 @@ class GroupOverviewScreen extends StatelessWidget {
         if (!didPop) _back(context, editMode);
       },
       child: ParchmentScaffold(
+        backgroundImage: 'assets/images/bg_group_info.png',
         child: Stack(
           children: [
             // 左上：小組頭像 + 名稱

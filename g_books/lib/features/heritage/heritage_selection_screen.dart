@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../data/heritage_data.dart';
 import '../../data/models/heritage_model.dart';
-import 'widgets/heritage_info_dialog.dart';
+import 'widgets/info_dialog.dart';
 
 class HeritageSelectionScreen extends StatefulWidget {
   const HeritageSelectionScreen({super.key});
@@ -63,9 +63,10 @@ class _HeritageSelectionScreenState extends State<HeritageSelectionScreen> {
   void _togglePanel() => setState(() => _isPanelVisible = !_isPanelVisible);
 
   void _showInfo() {
-    showDialog(
-      context: context,
-      builder: (_) => HeritageInfoDialog(heritage: _current),
+    InfoDialog.showHeritage(
+      context,
+      heritageId: _current.id,
+      title: _current.name,
     );
   }
 

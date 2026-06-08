@@ -1,5 +1,6 @@
 import 'models/user_model.dart';
 import 'models/group_model.dart';
+import 'models/staff_account.dart';
 
 // 以小組為主的登入：學生由「組長」帳號登入整組。每組人數刻意不同，
 // 用來驗證小組總攬的「多人左右滑動 / 少人置中」版面。
@@ -25,4 +26,20 @@ final mockGroups = [
   GroupModel(id: 1),
   GroupModel(id: 2),
   GroupModel(id: 3),
+];
+
+// 後台（教師 / 管理者）帳號。現階段為假後端 mock；之後改由後端登入驗證。
+const mockStaff = <StaffAccount>[
+  StaffAccount(
+    username: 'admin',
+    password: 'admin123',
+    displayName: '系統管理者',
+    role: StaffRole.admin,
+  ),
+  StaffAccount(
+    username: 'teacher',
+    password: 'teacher123',
+    displayName: '王老師',
+    role: StaffRole.teacher,
+  ),
 ];
