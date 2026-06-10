@@ -264,7 +264,7 @@ func TestItemSvc_TranInv2Slot_BrokenSlotRejected(t *testing.T) {
 func TestItemSvc_TranInv2Slot_StudentBlockedInQuiz(t *testing.T) {
 	s, _ := newItemSvcAs(model.RoleStudent, 0)
 
-	setState(model.StateQuiz)
+	setState(model.StateQuiz2)
 	defer setState(model.StateNormal)
 
 	status, err := s.TranInv2Slot(validAccessToken(t), 0, 1, 5)
@@ -335,7 +335,7 @@ func TestItemSvc_TranSlot2Inv_BrokenSlotRejected(t *testing.T) {
 func TestItemSvc_TranSlot2Inv_StudentBlockedInQuiz(t *testing.T) {
 	s, _ := newItemSvcAs(model.RoleStudent, 0)
 
-	setState(model.StateQuiz)
+	setState(model.StateQuiz2)
 	defer setState(model.StateNormal)
 
 	status, err := s.TranSlot2Inv(validAccessToken(t), 0, 0)

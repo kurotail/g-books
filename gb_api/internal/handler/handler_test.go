@@ -322,7 +322,6 @@ func TestGroupHandler_MissingToken(t *testing.T) {
 		"SetName":     f.group.SetName,
 		"SetBuilding": f.group.SetBuilding,
 		"QueryGroup":  f.group.QueryGroup,
-		"QueryMember": f.group.QueryMember,
 	}
 	for name, fn := range cases {
 		rec := do(t, fn, "", map[string]any{"group_id": 1, "username": "user"})
@@ -377,7 +376,7 @@ func TestGroupHandler_SetNameThenQueryRoundtrip(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
 	}
-	var gr model.GroupResponse
+	var gr model.Group
 	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
 		t.Fatalf("QueryGroup: invalid JSON: %v", err)
 	}
@@ -410,7 +409,7 @@ func TestGroupHandler_SetBuildingThenQueryRoundtrip(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
 	}
-	var gr model.GroupResponse
+	var gr model.Group
 	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
 		t.Fatalf("QueryGroup: invalid JSON: %v", err)
 	}
@@ -434,25 +433,12 @@ func TestGroupHandler_SetThenQueryRoundtrip(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
 	}
-	var gr model.GroupResponse
+	var gr model.Group
 	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
 		t.Fatalf("QueryGroup: invalid JSON: %v", err)
 	}
-	if gr.GroupID != 7 {
-		t.Errorf("expected group_id 7, got %d", gr.GroupID)
-	}
-
-	// QueryMember(7) should list "user"
-	rec = do(t, f.group.QueryMember, tok, map[string]any{"group_id": 7})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("QueryMember: expected 200, got %d", rec.Code)
-	}
-	var mr model.MembersResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &mr); err != nil {
-		t.Fatalf("QueryMember: invalid JSON: %v", err)
-	}
-	if len(mr.Members) != 1 || mr.Members[0] != "user" {
-		t.Errorf("expected members [user], got %v", mr.Members)
+	if gr.ID != 7 {
+		t.Errorf("expected group_id 7, got %d", gr.ID)
 	}
 }
 
@@ -469,6 +455,23 @@ func TestGroupHandler_SetGroup_ZeroRemovesUser(t *testing.T) {
 	rec = do(t, f.group.QueryGroup, tok, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("QueryGroup after remove: expected 404, got %d", rec.Code)
+	}
+}
+
+func TestGroupHandler_QueryGroup_IncludesMembers(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := do(t, f.group.QueryGroup, tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
+	}
+	var gr model.Group
+	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
+		t.Fatalf("QueryGroup: invalid JSON: %v", err)
+	}
+	if len(gr.Members) != 1 || gr.Members[0] != "user" {
+		t.Errorf("expected members [user], got %v", gr.Members)
 	}
 }
 
@@ -554,8 +557,8 @@ func TestQuestionHandler_GetState_ReflectsTransitions(t *testing.T) {
 		return resp.State
 	}
 
-	f.forceState(t, tok, model.StateQuiz)
-	if got := readState(); got != model.StateQuiz {
+	f.forceState(t, tok, model.StateQuiz2)
+	if got := readState(); got != model.StateQuiz2 {
 		t.Errorf("after SetState QUIZ: expected QUIZ, got %q", got)
 	}
 
@@ -568,7 +571,7 @@ func TestQuestionHandler_GetState_ReflectsTransitions(t *testing.T) {
 func TestQuestionHandler_StudentItemBlockedOutsideNormal(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
-	f.forceState(t, tok, model.StateQuiz)
+	f.forceState(t, tok, model.StateQuiz2)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
 	gen := do(t, f.question.GenerateItem, tok, map[string]any{"difficulty": 1})
@@ -627,7 +630,7 @@ func TestQuestionHandler_SetState_StudentForbidden(t *testing.T) {
 	tok := f.login(t)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	rec := do(t, f.state.SetState, tok, map[string]any{"state": "QUIZ"})
+	rec := do(t, f.state.SetState, tok, map[string]any{"state": "QUIZ1"})
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("SetState as student: expected 403, got %d", rec.Code)
 	}

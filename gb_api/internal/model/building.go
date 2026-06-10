@@ -8,15 +8,7 @@ type CreateBuildingRequest struct {
 }
 
 type Building struct {
-	ID              uint
-	Name            string
-	Layout          string
-	TypeAllowedSlot map[uint][]uint
-	DifficultyType  map[uint][]uint
-}
-
-type BuildingResponse struct {
-	BuildingID      uint            `json:"building_id"`
+	ID              uint            `json:"building_id"`
 	Name            string          `json:"name"`
 	Layout          string          `json:"layout"`
 	TypeAllowedSlot map[uint][]uint `json:"item_allowed_slot"`

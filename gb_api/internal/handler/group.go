@@ -118,30 +118,3 @@ func (h *GroupHandler) QueryGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, data)
 }
-
-func (h *GroupHandler) QueryMember(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	var req model.QueryMemberRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	if req.GroupID == nil {
-		http.Error(w, "缺少 group_id", http.StatusBadRequest)
-		return
-	}
-	if *req.GroupID == 0 {
-		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
-		return
-	}
-	data, status, err := h.svc.QueryMember(token, *req.GroupID)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	writeJSON(w, data)
-}

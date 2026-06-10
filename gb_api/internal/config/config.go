@@ -4,19 +4,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"time"
 
 	"gb-api/internal/logger"
 )
 
-// JWT signing keys, loaded from env vars with insecure development defaults.
 // Set JWT_KEY and JWT_REFRESH_KEY in production to 64-char hex strings
-// (32 bytes / 256 bits, the minimum for HS256).
 var JwtKey = keyFromEnv("JWT_KEY", "your_secret_key_keep_it_safe")
 var RefreshKey = keyFromEnv("JWT_REFRESH_KEY", "your_refresh_secret_keep_it_safe")
 
-// keyFromEnv reads name from the environment and decodes its first 64 hex
-// characters into a 32-byte key. If name is unset it falls back to the
-// development default. A set-but-invalid value (too short or not hex) is fatal.
 func keyFromEnv(name, fallback string) []byte {
 	v := os.Getenv(name)
 	if v == "" {
@@ -38,3 +34,8 @@ func keyFromEnv(name, fallback string) []byte {
 	logger.L.Info(fmt.Sprintf("config: %s loaded", name))
 	return key
 }
+
+const (
+	AccessTokenTTL  = 15 * time.Minute
+	RefreshTokenTTL = 7 * 24 * time.Hour
+)

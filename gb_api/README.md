@@ -59,8 +59,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/group/set` | Bearer (> Student) | Assign a user to a group (`group_id` `0` removes them) |
 | `POST /api/group/name` | Bearer (member or > Student) | Rename a group |
 | `POST /api/group/building` | Bearer (member or > Student) | Set a group's building (`building_id` `0` clears it) |
-| `GET /api/group` | Bearer | Read the caller's own group |
-| `POST /api/group/members` | Bearer | List the members of a group |
+| `GET /api/group` | Bearer | Read the caller's own group (includes members list) |
 | `POST /api/building` | Bearer (> Student) | Create a building |
 | `GET /api/building` | Bearer | List all buildings |
 | `GET /api/building/{id}` | Bearer | Read a building by ID |
@@ -291,13 +290,14 @@ clears the assignment.
 
 ### `GET /api/group`
 
-Return the calling user's own group. `name` defaults to `"Group <id>"` when
-unset; `building_id` is `0` when no building is assigned.
+Return the calling user's own group, including the full members list. `name`
+defaults to `"Group <id>"` when unset; `building_id` is `0` when no building
+is assigned.
 
 **Response `200 OK`**
 
 ```json
-{ "group_id": 1, "name": "Group 1", "building_id": 0 }
+{ "group_id": 1, "name": "Group 1", "building_id": 0, "members": ["user", "alice"] }
 ```
 
 **Error responses**
@@ -306,31 +306,6 @@ unset; `building_id` is `0` when no building is assigned.
 |--------|-----------|
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `404`  | The caller is not in any group |
-
----
-
-### `POST /api/group/members`
-
-List the members of a group. Any authenticated user may call it.
-
-**Request** — `group_id` must be greater than 0
-
-```json
-{ "group_id": 1 }
-```
-
-**Response `200 OK`**
-
-```json
-{ "group_id": 1, "name": "Group 1", "members": ["user", "alice"] }
-```
-
-**Error responses**
-
-| Status | Condition |
-|--------|-----------|
-| `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
-| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 
 ---
 

@@ -217,15 +217,18 @@ func TestGroupSvc_QueryGroup_Member(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	var resp model.GroupResponse
+	var resp model.Group
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if resp.GroupID != 2 {
-		t.Errorf("expected group_id 2, got %d", resp.GroupID)
+	if resp.ID != 2 {
+		t.Errorf("expected group_id 2, got %d", resp.ID)
 	}
 	if resp.Name != "Group 2" {
 		t.Errorf("expected default name %q, got %q", "Group 2", resp.Name)
+	}
+	if len(resp.Members) != 1 || resp.Members[0] != "carol" {
+		t.Errorf("expected members [carol], got %v", resp.Members)
 	}
 }
 
@@ -239,7 +242,7 @@ func TestGroupSvc_QueryGroup_CustomName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var resp model.GroupResponse
+	var resp model.Group
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
@@ -256,7 +259,7 @@ func TestGroupSvc_QueryGroup_BuildingID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var resp model.GroupResponse
+	var resp model.Group
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
@@ -295,67 +298,6 @@ func TestGroupSvc_QueryGroup_NonMember(t *testing.T) {
 func TestGroupSvc_QueryGroup_InvalidToken(t *testing.T) {
 	s, _ := newGroupSvc()
 	_, status, err := s.QueryGroup("bad.token")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if status != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", status)
-	}
-}
-
-// --- QueryMember ---
-
-func TestGroupSvc_QueryMember_ReturnsMembers(t *testing.T) {
-	s, _ := newGroupSvc()
-
-	data, status, err := s.QueryMember(tokenFor(t, "alice"), 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-	var resp model.MembersResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if resp.GroupID != 1 {
-		t.Errorf("expected group_id 1, got %d", resp.GroupID)
-	}
-	if resp.Name != "Group 1" {
-		t.Errorf("expected default name %q, got %q", "Group 1", resp.Name)
-	}
-	got := map[string]bool{}
-	for _, m := range resp.Members {
-		got[m] = true
-	}
-	if len(resp.Members) != 2 || !got["alice"] || !got["bob"] {
-		t.Errorf("expected members [alice bob], got %v", resp.Members)
-	}
-}
-
-func TestGroupSvc_QueryMember_EmptyGroup(t *testing.T) {
-	s, _ := newGroupSvc()
-
-	data, status, err := s.QueryMember(tokenFor(t, "alice"), 99)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-	var resp model.MembersResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if len(resp.Members) != 0 {
-		t.Errorf("expected no members, got %v", resp.Members)
-	}
-}
-
-func TestGroupSvc_QueryMember_InvalidToken(t *testing.T) {
-	s, _ := newGroupSvc()
-	_, status, err := s.QueryMember("bad.token", 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}

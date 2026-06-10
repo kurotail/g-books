@@ -3,7 +3,6 @@ package service
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 
 	apperr "gb-api/internal/error"
@@ -22,16 +21,8 @@ func NewBuildingSvc(r repo.BuildingRepo, users repo.UserRepo) *BuildingSvc {
 
 // Create defines a new building. Only teachers/admins may create buildings.
 func (s *BuildingSvc) Create(accessToken, name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) ([]byte, int, error) {
-	claims, err := validateAccessToken(accessToken)
-	if err != nil {
-		return nil, http.StatusUnauthorized, err
-	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	if caller.Role < model.RoleTeacher {
-		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
+		return nil, status, err
 	}
 	id, err := s.repo.CreateBuilding(name, layout, typeAllowedSlot, difficultyType)
 	if err != nil {
@@ -41,7 +32,15 @@ func (s *BuildingSvc) Create(accessToken, name, layout string, typeAllowedSlot m
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	data, err := json.Marshal(toBuildingResponse(b))
+	data, err := json.Marshal(
+		model.Building{
+			ID:              b.ID,
+			Name:            b.Name,
+			Layout:          b.Layout,
+			TypeAllowedSlot: b.TypeAllowedSlot,
+			DifficultyType:  b.DifficultyType,
+		},
+	)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -59,7 +58,15 @@ func (s *BuildingSvc) Get(accessToken string, id uint) ([]byte, int, error) {
 		}
 		return nil, http.StatusInternalServerError, err
 	}
-	data, err := json.Marshal(toBuildingResponse(b))
+	data, err := json.Marshal(
+		model.Building{
+			ID:              b.ID,
+			Name:            b.Name,
+			Layout:          b.Layout,
+			TypeAllowedSlot: b.TypeAllowedSlot,
+			DifficultyType:  b.DifficultyType,
+		},
+	)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -74,23 +81,21 @@ func (s *BuildingSvc) List(accessToken string) ([]byte, int, error) {
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	resp := make([]model.BuildingResponse, 0, len(buildings))
+	resp := make([]model.Building, 0, len(buildings))
 	for _, b := range buildings {
-		resp = append(resp, toBuildingResponse(b))
+		resp = append(resp,
+			model.Building{
+				ID:              b.ID,
+				Name:            b.Name,
+				Layout:          b.Layout,
+				TypeAllowedSlot: b.TypeAllowedSlot,
+				DifficultyType:  b.DifficultyType,
+			},
+		)
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 	return data, http.StatusOK, nil
-}
-
-func toBuildingResponse(b model.Building) model.BuildingResponse {
-	return model.BuildingResponse{
-		BuildingID:      b.ID,
-		Name:            b.Name,
-		Layout:          b.Layout,
-		TypeAllowedSlot: b.TypeAllowedSlot,
-		DifficultyType:  b.DifficultyType,
-	}
 }

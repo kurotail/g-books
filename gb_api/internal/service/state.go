@@ -34,18 +34,6 @@ func setState(s model.ServerState) {
 	}
 }
 
-func studentBlockedByState(role uint) bool {
-	return role <= model.RoleStudent && getState() != model.StateQuiz
-}
-
-func studentBlockedUnlessNormal(role uint) bool {
-	return role <= model.RoleStudent && getState() != model.StateNormal
-}
-
-func studentBlockedDuringQuiz(role uint) bool {
-	return role <= model.RoleStudent && getState() == model.StateQuiz
-}
-
 // --- broadcast hub ---
 
 var stateHub = &hub{subs: make(map[chan model.ServerState]struct{})}
@@ -105,18 +93,10 @@ func (s *StateSvc) GetState(accessToken string) ([]byte, int, error) {
 }
 
 func (s *StateSvc) SetState(accessToken string, state model.ServerState) ([]byte, int, error) {
-	claims, err := validateAccessToken(accessToken)
-	if err != nil {
-		return nil, http.StatusUnauthorized, err
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
+		return nil, status, err
 	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	if caller.Role < model.RoleTeacher {
-		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
-	}
-	if state != model.StateNormal && state != model.StateQuiz {
+	if state != model.StateNormal && state != model.StateQuiz2 {
 		return nil, http.StatusBadRequest, fmt.Errorf("不合法的狀態: %q", state)
 	}
 	setState(state)

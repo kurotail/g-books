@@ -17,11 +17,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const (
-	accessTokenTTL  = 15 * time.Minute
-	refreshTokenTTL = 7 * 24 * time.Hour
-)
-
 type AuthSvc struct {
 	users  repo.UserRepo
 	tokens repo.RefreshTokenRepo
@@ -51,15 +46,12 @@ func (s *AuthSvc) newAccessToken(username string) (string, error) {
 		Username:  username,
 		TokenType: "access",
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(t.Add(accessTokenTTL)),
+			ExpiresAt: jwt.NewNumericDate(t.Add(config.AccessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(t),
 		},
 	}, config.JwtKey)
 }
 
-// newRefreshToken mints a refresh token carrying a unique jti, which it also
-// returns so the caller can register the jti as the single-use handle for this
-// token in the store.
 func (s *AuthSvc) newRefreshToken(username string) (token, jti string, err error) {
 	jti, err = newJTI()
 	if err != nil {
@@ -71,7 +63,7 @@ func (s *AuthSvc) newRefreshToken(username string) (token, jti string, err error
 		TokenType: "refresh",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
-			ExpiresAt: jwt.NewNumericDate(t.Add(refreshTokenTTL)),
+			ExpiresAt: jwt.NewNumericDate(t.Add(config.RefreshTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(t),
 		},
 	}, config.RefreshKey)
@@ -95,30 +87,6 @@ func (s *AuthSvc) genTokenPair(username string) (accessToken, refreshToken, jti 
 	return accessToken, refreshToken, jti, nil
 }
 
-func marshalTokenPair(accessToken, refreshToken string) ([]byte, error) {
-	return json.Marshal(map[string]string{
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
-	})
-}
-
-func validateAccessToken(tokenString string) (*model.Claims, error) {
-	claims := &model.Claims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("未預期的簽章演算法: %v", t.Header["alg"])
-		}
-		return config.JwtKey, nil
-	})
-	if err != nil || !token.Valid {
-		return nil, fmt.Errorf("token 無效或已過期")
-	}
-	if claims.TokenType != "access" {
-		return nil, fmt.Errorf("請使用 access token")
-	}
-	return claims, nil
-}
-
 func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
 	ok, err := s.users.ValidateCredentials(creds.Username, creds.Password)
 	if err != nil {
@@ -135,7 +103,10 @@ func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
 
 	s.tokens.StoreRefreshToken(jti)
 
-	data, err := marshalTokenPair(accessToken, refreshToken)
+	data, err := json.Marshal(map[string]string{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+	})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -159,16 +130,8 @@ func (s *AuthSvc) QueryUser(accessToken string) ([]byte, int, error) {
 }
 
 func (s *AuthSvc) RegisterUser(accessToken, username, password string, role, groupID uint) (int, error) {
-	claims, err := validateAccessToken(accessToken)
-	if err != nil {
-		return http.StatusUnauthorized, err
-	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	if caller.Role < model.RoleTeacher {
-		return http.StatusForbidden, fmt.Errorf("權限不足")
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
+		return status, err
 	}
 	if role > model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("無法建立此權限的使用者")
@@ -211,7 +174,10 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 	}
 	s.tokens.StoreRefreshToken(jti)
 
-	data, err := marshalTokenPair(accessToken, newRefresh)
+	data, err := json.Marshal(map[string]string{
+		"access_token":  accessToken,
+		"refresh_token": newRefresh,
+	})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}

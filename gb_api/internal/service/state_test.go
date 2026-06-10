@@ -19,7 +19,7 @@ func TestStateSvc_SetState_TeacherTransitions(t *testing.T) {
 	t.Cleanup(func() { setState(model.StateNormal) })
 	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher))
 
-	data, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateQuiz)
+	data, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateQuiz2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -30,10 +30,10 @@ func TestStateSvc_SetState_TeacherTransitions(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if resp.State != model.StateQuiz {
+	if resp.State != model.StateQuiz2 {
 		t.Errorf("expected response state QUIZ, got %q", resp.State)
 	}
-	if getState() != model.StateQuiz {
+	if getState() != model.StateQuiz2 {
 		t.Errorf("expected package state QUIZ, got %q", getState())
 	}
 }
@@ -41,7 +41,7 @@ func TestStateSvc_SetState_TeacherTransitions(t *testing.T) {
 func TestStateSvc_SetState_StudentForbidden(t *testing.T) {
 	s := NewStateSvc(newRoleRepo("student", model.RoleStudent))
 
-	_, status, err := s.SetState(accessTokenFor(t, "student"), model.StateQuiz)
+	_, status, err := s.SetState(accessTokenFor(t, "student"), model.StateQuiz2)
 	if err == nil {
 		t.Fatal("expected error for student role")
 	}
@@ -63,7 +63,7 @@ func TestStateSvc_SetState_InvalidValue(t *testing.T) {
 }
 
 func TestStateSvc_GetState(t *testing.T) {
-	useState(t, model.StateQuiz)
+	useState(t, model.StateQuiz2)
 	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent))
 
 	data, status, err := s.GetState(accessTokenFor(t, "anyone"))
@@ -77,7 +77,7 @@ func TestStateSvc_GetState(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if resp.State != model.StateQuiz {
+	if resp.State != model.StateQuiz2 {
 		t.Errorf("expected QUIZ, got %q", resp.State)
 	}
 }
@@ -100,10 +100,10 @@ func TestStateSvc_SubscribeState(t *testing.T) {
 		t.Errorf("expected snapshot NORMAL, got %q", cur)
 	}
 
-	setState(model.StateQuiz)
+	setState(model.StateQuiz2)
 	select {
 	case got := <-events:
-		if got != model.StateQuiz {
+		if got != model.StateQuiz2 {
 			t.Errorf("expected QUIZ event, got %q", got)
 		}
 	default:

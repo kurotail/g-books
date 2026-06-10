@@ -114,11 +114,14 @@ type ServerState string
 
 const (
 	StateNormal ServerState = "NORMAL"
-	StateQuiz   ServerState = "QUIZ"
+	StateQuiz1  ServerState = "QUIZ1"
+	StateQuiz2  ServerState = "QUIZ2"
 )
 
-type SetStateRequest struct {
-	State ServerState `json:"state"`
+var States = map[ServerState]struct{}{
+	StateNormal: {},
+	StateQuiz1:  {},
+	StateQuiz2:  {},
 }
 
 type StateResponse struct {

@@ -85,7 +85,7 @@ func TestQuestionSvc_GenerateItem_Succeeds(t *testing.T) {
 }
 
 func TestQuestionSvc_GenerateItem_StudentForbiddenOutsideNormal(t *testing.T) {
-	useState(t, model.StateQuiz)
+	useState(t, model.StateQuiz2)
 	s, _, _ := newQuizSvc(model.RoleStudent, 1, map[uint][]uint{1: {10}}, area1Q1)
 
 	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 1)
@@ -165,7 +165,7 @@ var area2Q = map[uint]model.Question{
 }
 
 func TestQuestionSvc_GenerateTarget_AttackValid(t *testing.T) {
-	useState(t, model.StateQuiz)
+	useState(t, model.StateQuiz2)
 	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = 7 // target group 2 slot 0 holds normal item 7
 	items.Items[7] = model.Item{ItemID: 7, Type: 10, QuestionID: 5}
@@ -184,7 +184,7 @@ func TestQuestionSvc_GenerateTarget_AttackValid(t *testing.T) {
 }
 
 func TestQuestionSvc_GenerateTarget_RepairValid(t *testing.T) {
-	useState(t, model.StateQuiz)
+	useState(t, model.StateQuiz2)
 	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = -7 // own group's slot 0 holds a broken item
 
@@ -198,7 +198,7 @@ func TestQuestionSvc_GenerateTarget_RepairValid(t *testing.T) {
 }
 
 func TestQuestionSvc_GenerateTarget_InvalidTarget(t *testing.T) {
-	useState(t, model.StateQuiz)
+	useState(t, model.StateQuiz2)
 	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = -7 // broken item in ANOTHER group — neither attack nor repair
 
@@ -212,7 +212,7 @@ func TestQuestionSvc_GenerateTarget_InvalidTarget(t *testing.T) {
 }
 
 func TestQuestionSvc_GenerateTarget_EmptySlot(t *testing.T) {
-	useState(t, model.StateQuiz)
+	useState(t, model.StateQuiz2)
 	s, _, _ := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 
 	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), 2, 0)

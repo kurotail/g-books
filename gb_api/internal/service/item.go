@@ -62,24 +62,6 @@ func (s *ItemSvc) slotAllowsType(groupID, slotID, itemType uint) (bool, error) {
 	return false, nil
 }
 
-// blockStudentDuringQuiz returns a non-nil error (with an HTTP status) when the
-// caller is a student and the server is in QUIZ state, in which inventory moves
-// are disabled for students.
-func (s *ItemSvc) blockStudentDuringQuiz(accessToken string) (int, error) {
-	claims, err := validateAccessToken(accessToken)
-	if err != nil {
-		return http.StatusUnauthorized, err
-	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	if studentBlockedDuringQuiz(caller.Role) {
-		return http.StatusForbidden, fmt.Errorf("QUIZ 狀態下學生無法移動物品")
-	}
-	return http.StatusOK, nil
-}
-
 func (s *ItemSvc) QueryItems(accessToken string, groupID uint) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
@@ -155,7 +137,7 @@ func slotView(it model.Item, broken, full bool) model.SlotView {
 // item's Type must be allowed in the slot by the group's building. A normal item
 // already in the slot is swapped back into the inventory; a broken one blocks the move.
 func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint) (int, error) {
-	if status, err := s.blockStudentDuringQuiz(accessToken); err != nil {
+	if status, err := s.blockStudentQuiz2(s.users, accessToken); err != nil {
 		return status, err
 	}
 	has, err := s.ownsItem(groupID, itemID)
@@ -204,7 +186,7 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint)
 // TranSlot2Inv returns the item held in a slot to the group's inventory. Only a
 // normal (non-broken) item can be returned.
 func (s *ItemSvc) TranSlot2Inv(accessToken string, groupID, slotID uint) (int, error) {
-	if status, err := s.blockStudentDuringQuiz(accessToken); err != nil {
+	if status, err := s.blockStudentQuiz2(s.users, accessToken); err != nil {
 		return status, err
 	}
 	slot, err := s.repo.QuerySlot(groupID)

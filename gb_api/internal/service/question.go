@@ -29,16 +29,9 @@ func NewQuestionSvc(r repo.QuestionRepo, users repo.UserRepo, groups repo.GroupR
 // difficulty — drawn from the caller-group's building DifficultyType — tied to a random
 // area-1 question of that difficulty. Answering correctly grants the item.
 func (s *QuestionSvc) GenerateItem(accessToken string, difficulty uint) ([]byte, int, error) {
-	claims, err := validateAccessToken(accessToken)
+	caller, status, err := studentBlockedNotNormal(s.users, accessToken)
 	if err != nil {
-		return nil, http.StatusUnauthorized, err
-	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	if studentBlockedUnlessNormal(caller.Role) {
-		return nil, http.StatusForbidden, fmt.Errorf("非 NORMAL 狀態下學生無法產生題目")
+		return nil, status, err
 	}
 	if caller.GroupID == 0 {
 		return nil, http.StatusBadRequest, fmt.Errorf("尚未加入任何群組")
@@ -99,16 +92,9 @@ func (s *QuestionSvc) randomTypeForDifficulty(buildingID, difficulty uint) (uint
 }
 
 func (s *QuestionSvc) GenerateTarget(accessToken string, targetGroupID, targetSlotID uint) ([]byte, int, error) {
-	claims, err := validateAccessToken(accessToken)
+	caller, status, err := studentBlockedNotQuiz2(s.users, accessToken)
 	if err != nil {
-		return nil, http.StatusUnauthorized, err
-	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	if studentBlockedByState(caller.Role) {
-		return nil, http.StatusForbidden, fmt.Errorf("非 QUIZ 狀態下學生無法攻擊或修復")
+		return nil, status, err
 	}
 	if caller.GroupID == 0 {
 		return nil, http.StatusBadRequest, fmt.Errorf("尚未加入任何群組")
@@ -177,23 +163,8 @@ func marshalQuestionResponse(session, description string) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
-func (s *QuestionSvc) requireTeacher(accessToken string) (int, error) {
-	claims, err := validateAccessToken(accessToken)
-	if err != nil {
-		return http.StatusUnauthorized, err
-	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	if caller.Role < model.RoleTeacher {
-		return http.StatusForbidden, fmt.Errorf("權限不足")
-	}
-	return http.StatusOK, nil
-}
-
 func (s *QuestionSvc) Upload(accessToken string, inputs []model.QuestionInput) ([]byte, int, error) {
-	if status, err := s.requireTeacher(accessToken); err != nil {
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return nil, status, err
 	}
 	if len(inputs) == 0 {
@@ -238,7 +209,7 @@ func (s *QuestionSvc) Upload(accessToken string, inputs []model.QuestionInput) (
 }
 
 func (s *QuestionSvc) Search(accessToken, query string, difficulty, area *uint) ([]byte, int, error) {
-	if status, err := s.requireTeacher(accessToken); err != nil {
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return nil, status, err
 	}
 	records, err := s.repo.SearchQuestions(query, difficulty, area)
@@ -253,7 +224,7 @@ func (s *QuestionSvc) Search(accessToken, query string, difficulty, area *uint) 
 }
 
 func (s *QuestionSvc) Update(accessToken string, id uint, in model.QuestionInput) (int, error) {
-	if status, err := s.requireTeacher(accessToken); err != nil {
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return status, err
 	}
 	if in.Description == "" {
@@ -270,7 +241,7 @@ func (s *QuestionSvc) Update(accessToken string, id uint, in model.QuestionInput
 }
 
 func (s *QuestionSvc) Delete(accessToken string, id uint) (int, error) {
-	if status, err := s.requireTeacher(accessToken); err != nil {
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return status, err
 	}
 	ok, err := s.repo.DeleteQuestion(id)

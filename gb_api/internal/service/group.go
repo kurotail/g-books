@@ -21,16 +21,8 @@ func NewGroupSvc(r repo.GroupRepo, users repo.UserRepo) *GroupSvc {
 }
 
 func (s *GroupSvc) SetGroup(accessToken, username string, groupID uint) (int, error) {
-	claims, err := validateAccessToken(accessToken)
-	if err != nil {
-		return http.StatusUnauthorized, err
-	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	if caller.Role < model.RoleTeacher {
-		return http.StatusForbidden, fmt.Errorf("權限不足")
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
+		return status, err
 	}
 	if _, err := s.users.GetUser(username); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
@@ -83,7 +75,7 @@ func (s *GroupSvc) SetBuilding(accessToken string, groupID uint, buildingID uint
 	return http.StatusOK, nil
 }
 
-// QueryGroup reports which group the calling user belongs to.
+// QueryGroup reports the calling user's group, including its members list.
 func (s *GroupSvc) QueryGroup(accessToken string) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
@@ -100,23 +92,7 @@ func (s *GroupSvc) QueryGroup(accessToken string) ([]byte, int, error) {
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	data, err := json.Marshal(model.GroupResponse{GroupID: u.GroupID, Name: g.Name, BuildingID: g.BuildingID})
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	return data, http.StatusOK, nil
-}
-
-// QueryMember lists the members of a group. Any authenticated user may call it.
-func (s *GroupSvc) QueryMember(accessToken string, groupID uint) ([]byte, int, error) {
-	if _, err := validateAccessToken(accessToken); err != nil {
-		return nil, http.StatusUnauthorized, err
-	}
-	g, err := s.repo.GetGroup(groupID)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	data, err := json.Marshal(model.MembersResponse{GroupID: groupID, Name: g.Name, Members: g.Members})
+	data, err := json.Marshal(g)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
