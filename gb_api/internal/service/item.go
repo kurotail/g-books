@@ -137,8 +137,12 @@ func slotView(it model.Item, broken, full bool) model.SlotView {
 // item's Type must be allowed in the slot by the group's building. A normal item
 // already in the slot is swapped back into the inventory; a broken one blocks the move.
 func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint) (int, error) {
-	if status, err := s.blockStudentQuiz2(s.users, accessToken); err != nil {
+	caller, status, err := s.blockStudentQuiz2(s.users, accessToken, groupID)
+	if err != nil {
 		return status, err
+	}
+	if caller.GroupID == 0 || caller.GroupID != groupID {
+		return http.StatusForbidden, fmt.Errorf("學生無法操作其他組別的物品")
 	}
 	has, err := s.ownsItem(groupID, itemID)
 	if err != nil {
@@ -186,8 +190,12 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint)
 // TranSlot2Inv returns the item held in a slot to the group's inventory. Only a
 // normal (non-broken) item can be returned.
 func (s *ItemSvc) TranSlot2Inv(accessToken string, groupID, slotID uint) (int, error) {
-	if status, err := s.blockStudentQuiz2(s.users, accessToken); err != nil {
+	caller, status, err := s.blockStudentQuiz2(s.users, accessToken, groupID)
+	if err != nil {
 		return status, err
+	}
+	if caller.GroupID == 0 || caller.GroupID != groupID {
+		return http.StatusForbidden, fmt.Errorf("學生無法操作其他組別的物品")
 	}
 	slot, err := s.repo.QuerySlot(groupID)
 	if err != nil {

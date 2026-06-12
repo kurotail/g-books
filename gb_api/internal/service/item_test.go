@@ -163,9 +163,9 @@ func TestItemSvc_QueryItems_InvalidToken(t *testing.T) {
 // --- TranInv2Slot ---
 
 func TestItemSvc_TranInv2Slot_MovesItemToSlot(t *testing.T) {
-	s, r := newItemSvc(t)
+	s, r := itemSvc(model.RoleTeacher, 5, allowAll())
 
-	status, err := s.TranInv2Slot(validAccessToken(t), 0, 1, 5)
+	status, err := s.TranInv2Slot(validAccessToken(t), 5, 1, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -181,9 +181,9 @@ func TestItemSvc_TranInv2Slot_MovesItemToSlot(t *testing.T) {
 }
 
 func TestItemSvc_TranInv2Slot_ItemNotInInventory(t *testing.T) {
-	s, _ := newItemSvc(t)
+	s, _ := itemSvc(model.RoleTeacher, 5, allowAll())
 
-	status, err := s.TranInv2Slot(validAccessToken(t), 0, 99, 5)
+	status, err := s.TranInv2Slot(validAccessToken(t), 5, 99, 5)
 	if err == nil {
 		t.Fatal("expected error for an item the group does not own")
 	}
@@ -194,9 +194,9 @@ func TestItemSvc_TranInv2Slot_ItemNotInInventory(t *testing.T) {
 
 func TestItemSvc_TranInv2Slot_TypeNotAllowed(t *testing.T) {
 	// building allows type 10 only in slot 1
-	s, r := itemSvc(model.RoleTeacher, 0, map[uint][]uint{10: {1}})
+	s, r := itemSvc(model.RoleTeacher, 5, map[uint][]uint{10: {1}})
 
-	status, err := s.TranInv2Slot(validAccessToken(t), 0, 1, 2) // item 1 is type 10, slot 2
+	status, err := s.TranInv2Slot(validAccessToken(t), 5, 1, 2) // item 1 is type 10, slot 2
 	if err == nil {
 		t.Fatal("expected error: type not allowed in slot")
 	}
@@ -220,11 +220,11 @@ func TestItemSvc_TranInv2Slot_InvalidToken(t *testing.T) {
 }
 
 func TestItemSvc_TranInv2Slot_SwapNormalItem(t *testing.T) {
-	s, r := newItemSvc(t)
+	s, r := itemSvc(model.RoleTeacher, 5, allowAll())
 
 	// slot 0 already holds normal item 3; moving item 1 in should swap item 3
 	// back into the inventory set.
-	status, err := s.TranInv2Slot(validAccessToken(t), 0, 1, 0)
+	status, err := s.TranInv2Slot(validAccessToken(t), 5, 1, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,10 +243,10 @@ func TestItemSvc_TranInv2Slot_SwapNormalItem(t *testing.T) {
 }
 
 func TestItemSvc_TranInv2Slot_BrokenSlotRejected(t *testing.T) {
-	s, r := newItemSvc(t)
+	s, r := itemSvc(model.RoleTeacher, 5, allowAll())
 	r.Slot[2] = -3 // slot 2 holds a broken item 3
 
-	status, err := s.TranInv2Slot(validAccessToken(t), 0, 1, 2)
+	status, err := s.TranInv2Slot(validAccessToken(t), 5, 1, 2)
 	if err == nil {
 		t.Fatal("expected error placing into a broken slot")
 	}
@@ -276,12 +276,54 @@ func TestItemSvc_TranInv2Slot_StudentBlockedInQuiz(t *testing.T) {
 	}
 }
 
+func TestItemSvc_TranInv2Slot_StudentInGroupAllowed(t *testing.T) {
+	s, r := newItemSvcAs(model.RoleStudent, 5)
+
+	status, err := s.TranInv2Slot(validAccessToken(t), 5, 1, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if r.Slot[5] != 1 {
+		t.Errorf("expected slot[5]==1, got %d", r.Slot[5])
+	}
+}
+
+func TestItemSvc_TranInv2Slot_StudentOtherGroupForbidden(t *testing.T) {
+	// Student belongs to group 5 but tries to operate on group 0.
+	s, _ := newItemSvcAs(model.RoleStudent, 5)
+
+	status, err := s.TranInv2Slot(validAccessToken(t), 0, 1, 5)
+	if err == nil {
+		t.Fatal("expected error for student operating on another group")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestItemSvc_TranInv2Slot_TeacherOtherGroupForbidden(t *testing.T) {
+	// The own-group rule is universal: even a teacher may only operate on the
+	// group they belong to. Here the teacher belongs to group 5 but targets group 6.
+	s, _ := itemSvc(model.RoleTeacher, 5, allowAll())
+
+	status, err := s.TranInv2Slot(validAccessToken(t), 6, 1, 5)
+	if err == nil {
+		t.Fatal("expected error for a caller operating on another group")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
 // --- TranSlot2Inv ---
 
 func TestItemSvc_TranSlot2Inv_ClearsSlotAndAddsToInv(t *testing.T) {
-	s, r := newItemSvc(t)
+	s, r := itemSvc(model.RoleTeacher, 5, allowAll())
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), 0, 0)
+	status, err := s.TranSlot2Inv(validAccessToken(t), 5, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -297,9 +339,9 @@ func TestItemSvc_TranSlot2Inv_ClearsSlotAndAddsToInv(t *testing.T) {
 }
 
 func TestItemSvc_TranSlot2Inv_NonExistentSlot(t *testing.T) {
-	s, _ := newItemSvc(t)
+	s, _ := itemSvc(model.RoleTeacher, 5, allowAll())
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), 0, 99)
+	status, err := s.TranSlot2Inv(validAccessToken(t), 5, 99)
 	if err == nil {
 		t.Fatal("expected error for non-existent slot")
 	}
@@ -320,15 +362,42 @@ func TestItemSvc_TranSlot2Inv_InvalidToken(t *testing.T) {
 }
 
 func TestItemSvc_TranSlot2Inv_BrokenSlotRejected(t *testing.T) {
-	s, r := newItemSvc(t)
+	s, r := itemSvc(model.RoleTeacher, 5, allowAll())
 	r.Slot[2] = -3 // broken item 3
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), 0, 2)
+	status, err := s.TranSlot2Inv(validAccessToken(t), 5, 2)
 	if err == nil {
 		t.Fatal("expected error returning a broken item")
 	}
 	if status != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", status)
+	}
+}
+
+func TestItemSvc_TranSlot2Inv_StudentInGroupAllowed(t *testing.T) {
+	s, r := newItemSvcAs(model.RoleStudent, 5)
+
+	status, err := s.TranSlot2Inv(validAccessToken(t), 5, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if _, ok := r.Inv[3]; !ok {
+		t.Error("expected item 3 to return to the inventory set")
+	}
+}
+
+func TestItemSvc_TranSlot2Inv_StudentOtherGroupForbidden(t *testing.T) {
+	s, _ := newItemSvcAs(model.RoleStudent, 5)
+
+	status, err := s.TranSlot2Inv(validAccessToken(t), 0, 0)
+	if err == nil {
+		t.Fatal("expected error for student operating on another group")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
 	}
 }
 

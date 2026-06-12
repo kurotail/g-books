@@ -73,13 +73,13 @@ func studentBlockedNotNormal(r repo.UserRepo, accessToken string) (*model.User, 
 	return caller, http.StatusOK, nil
 }
 
-func (s *ItemSvc) blockStudentQuiz2(r repo.UserRepo, accessToken string) (int, error) {
+func (s *ItemSvc) blockStudentQuiz2(r repo.UserRepo, accessToken string, groupID uint) (*model.User, int, error) {
 	caller, status, err := getCaller(r, accessToken)
 	if err != nil {
-		return status, err
+		return nil, status, err
 	}
 	if caller.Role <= model.RoleStudent && getState() == model.StateQuiz2 {
-		return http.StatusForbidden, fmt.Errorf("QUIZ 狀態下學生無法移動物品")
+		return nil, http.StatusForbidden, fmt.Errorf("QUIZ 狀態下學生無法移動物品")
 	}
-	return http.StatusOK, nil
+	return caller, http.StatusOK, nil
 }
