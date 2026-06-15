@@ -32,6 +32,10 @@ ComponentModel? componentById(String heritageId, int id) {
   return null;
 }
 
+/// 該古蹟指定等級（1~3）的全部原料，供資源採集「依難度給對應等級獎勵」挑選。
+List<ComponentModel> componentsByLevel(String heritageId, int level) =>
+    [for (final c in componentsOf(heritageId)) if (c.level == level) c];
+
 /// 啟動時讀 AssetManifest，列出每座古蹟 `components/<id>.png` 的 id 清單。
 Future<void> loadComponentImageIds(Iterable<String> heritageIds) async {
   final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);

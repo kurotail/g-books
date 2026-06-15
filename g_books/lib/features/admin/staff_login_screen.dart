@@ -54,21 +54,27 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                 decoration: BoxDecoration(
-                  color: const Color(0x14000000),
+                  color: AppColors.pillDark,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0x33000000)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x40000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
                 ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.arrow_back_ios_new_rounded,
-                        size: 16, color: AppColors.labelText),
+                        size: 16, color: Colors.white),
                     SizedBox(width: 6),
                     Text('返回學生登入',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.labelText,
+                          color: Colors.white,
                         )),
                   ],
                 ),

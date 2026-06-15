@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
-/// 進入古蹟頁前的載入畫面：羊皮紙底 + 置中 logo + 右下角轉圈。
+/// 進入古蹟頁前的載入畫面：登入頁同款背景 + 置中 logo + 右下角轉圈。
 /// 純視覺元件，顯示/隱藏由呼叫端控制（例如資源預載完成後淡出）。
 /// 註：右下角暫用系統轉圈，之後會換成自製 loading icon。
 class LoadingScreen extends StatelessWidget {
@@ -12,7 +12,10 @@ class LoadingScreen extends StatelessWidget {
     return ColoredBox(
       color: AppColors.parchmentBg,
       child: Stack(
+        fit: StackFit.expand,
         children: [
+          // 背景圖（與其他頁一致；已於啟動時預載，故立即顯示不留白）。
+          Image.asset('assets/images/bg_login.png', fit: BoxFit.cover),
           // 四周暈影，讓中央更聚焦。
           const Positioned.fill(
             child: DecoratedBox(

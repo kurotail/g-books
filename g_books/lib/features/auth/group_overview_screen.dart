@@ -12,7 +12,8 @@ import 'upload_avatar_screen.dart';
 /// 小組總攬。兩種用途，依 [AppState.isSetupComplete] 區分：
 /// - 設定流程最後一步（尚未完成設定）：顯示步驟列，底部「進入遊戲」完成設定並進古蹟選擇。
 /// - 檢視古蹟時從面板進入（已完成設定）：不顯示步驟列，底部「完成」返回上一頁。
-/// 兩種用途都可點組員卡片進入上傳畫面設定該組員頭像（人數多可左右滑動、少人置中）。
+/// 兩種用途都可點組員卡片進入上傳畫面設定該組員頭像（卡片一律靠左排列；人數多到
+/// 超出畫面時可左右滑動，並在還能滑動的方向顯示箭頭提示）。
 class GroupOverviewScreen extends StatelessWidget {
   const GroupOverviewScreen({super.key});
 
@@ -56,14 +57,33 @@ class GroupOverviewScreen extends StatelessWidget {
               ),
             // 右上：返回（往畫面內側收一點，避免太靠近螢幕邊緣不好點）
             Positioned(
-              top: 36,
-              right: 64,
+              top: 32,
+              right: 56,
               child: GestureDetector(
                 onTap: () => _back(context, editMode),
-                child: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  size: 24,
-                  color: Color(0xFF6A6A6A),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: AppColors.pillDark,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x40000000),
+                        blurRadius: 4,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 3),
+                    child: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 20,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -89,7 +109,10 @@ class GroupOverviewScreen extends StatelessWidget {
                     child: Center(
                       child: SizedBox(
                         height: 212,
-                        child: _memberStrip(context, members),
+                        child: _MemberStrip(
+                          members: members,
+                          onEdit: (seat) => _editMember(context, seat),
+                        ),
                       ),
                     ),
                   ),
@@ -131,31 +154,6 @@ class GroupOverviewScreen extends StatelessWidget {
       ),
     );
     if (url != null) appState.setMemberAvatarUrl(seat, url);
-  }
-
-  /// 橫向組員卡片帶：人數少時置中（minWidth = 視窗寬），人數多時可左右滑動。
-  Widget _memberStrip(BuildContext context, List<UserModel> members) {
-    return LayoutBuilder(
-      builder: (_, c) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minWidth: c.maxWidth),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              for (var i = 0; i < members.length; i++) ...[
-                if (i > 0) const SizedBox(width: 20),
-                _MemberCard(
-                  member: members[i],
-                  onEdit: () => _editMember(context, members[i].seatNumber),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _bottomButton(BuildContext context, bool editMode) {
@@ -220,6 +218,146 @@ class _GroupHeader extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── 橫向組員卡片帶 ───────────────────────────────────────────────────────────
+/// 卡片一律靠左排列（minWidth = 視窗寬，故人少時不再置中而是貼左）；人數多到超出
+/// 可視寬度時可水平滑動，並在「還能往該方向滑」時於左／右邊緣顯示箭頭提示。
+class _MemberStrip extends StatefulWidget {
+  final List<UserModel> members;
+  final void Function(String seat) onEdit;
+
+  const _MemberStrip({required this.members, required this.onEdit});
+
+  @override
+  State<_MemberStrip> createState() => _MemberStripState();
+}
+
+class _MemberStripState extends State<_MemberStrip> {
+  static const double _gap = 20;
+  // 左右各保留一段空白，讓首/末張卡片不會被邊緣的滑動箭頭（寬 38）蓋住。
+  static const double _edgeGutter = 48;
+  final _controller = ScrollController();
+  bool _canLeft = false;
+  bool _canRight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_syncArrows);
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_syncArrows);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// 依目前捲動位置更新左右箭頭：尚未捲到頭可往左、尚未捲到底可往右。
+  /// 不可滑動時 maxScrollExtent 為 0，兩者皆 false。
+  void _syncArrows() {
+    if (!_controller.hasClients) return;
+    final p = _controller.position;
+    final left = p.pixels > 0.5;
+    final right = p.pixels < p.maxScrollExtent - 0.5;
+    if (left != _canLeft || right != _canRight) {
+      setState(() {
+        _canLeft = left;
+        _canRight = right;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final members = widget.members;
+    // 版面（人數變動、首次佈局）後依實際捲動範圍重算箭頭。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncArrows());
+
+    return LayoutBuilder(
+      builder: (_, c) => Stack(
+        children: [
+          SingleChildScrollView(
+            controller: _controller,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: _edgeGutter),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: c.maxWidth - _edgeGutter * 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  for (var i = 0; i < members.length; i++) ...[
+                    if (i > 0) const SizedBox(width: _gap),
+                    _MemberCard(
+                      member: members[i],
+                      onEdit: () => widget.onEdit(members[i].seatNumber),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: _ScrollArrow(
+              icon: Icons.chevron_left_rounded,
+              visible: _canLeft,
+            ),
+          ),
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            child: _ScrollArrow(
+              icon: Icons.chevron_right_rounded,
+              visible: _canRight,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 卡片帶左／右邊緣的滑動提示箭頭。淡入淡出，且不攔截點擊（讓底下卡片仍可點）。
+class _ScrollArrow extends StatelessWidget {
+  final IconData icon;
+  final bool visible;
+
+  const _ScrollArrow({required this.icon, required this.visible});
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Center(
+        child: AnimatedOpacity(
+          opacity: visible ? 1 : 0,
+          duration: const Duration(milliseconds: 180),
+          child: Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: Color(0xF03A332E),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x40000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Icon(icon, color: Colors.white, size: 24),
+          ),
+        ),
       ),
     );
   }

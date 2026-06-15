@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/widgets/avatar_frame.dart';
 import '../../core/widgets/loading_screen.dart';
+import '../../services/game_state_service.dart';
 import '../../data/component_data.dart';
 import '../../data/heritage_data.dart';
 import '../../data/models/component_model.dart';
@@ -38,6 +40,17 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
   bool _loadingMounted = true; // 載入畫面淡出後才從樹上移除
   ComponentModel? _dragging; // 編輯模式下拖曳中的原料
   int? _level = 1; // 底部背包等級篩選（null = 顯示全部原料）
+
+  // 選單內容固定不變：只建一次並重用同一個 widget 實例。Flutter 對「與舊 widget
+  // identical 的子樹」會略過重建，按鈕圖因此保持掛載、不會在面板動畫每幀或切到小組
+  // 資訊再切回來時被重新解碼而閃爍。（遊戲狀態到達導致解鎖狀態變更時，才令其失效重建。）
+  Widget? _menuCache;
+
+  // 進入檢視古蹟時 fetch 一次遊戲狀態，並訂閱老師端推播：quiz1 解鎖「資源採集」、
+  // quiz2 解鎖「攻防戰」（攻防戰畫面尚未實作，暫維持鎖定）。
+  GamePhase? _gamePhase;
+  StreamSubscription<GameStateSnapshot>? _gameSub;
+  bool get _collectionUnlocked => _gamePhase == GamePhase.quiz1;
 
   // 左上角面板選單按鈕圖：先 precache 進 ImageCache，面板每次展開時
   // Image.asset 直接命中快取，不會再有逐張解碼造成的閃爍。
@@ -111,6 +124,22 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
         );
       }
     });
+    _loadGameState();
+  }
+
+  /// 進入檢視古蹟時取得目前遊戲狀態並訂閱推播；解鎖狀態變更時令選單快取失效重建。
+  void _loadGameState() {
+    final svc = context.read<GameStateService>();
+    void apply(GamePhase phase) {
+      if (!mounted || _gamePhase == phase) return;
+      setState(() {
+        _gamePhase = phase;
+        _menuCache = null; // 解鎖狀態變了 → 重建選單以反映
+      });
+    }
+
+    svc.fetch().then((s) => apply(s.phase));
+    _gameSub = svc.watch().listen((s) => apply(s.phase));
   }
 
   @override
@@ -149,6 +178,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
 
   @override
   void dispose() {
+    _gameSub?.cancel();
     _introCtrl.dispose();
     _blink.dispose();
     _viewAnim.dispose();
@@ -204,6 +234,16 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     setState(() => _isPanelOpen = false);
     _panelCtrl.reverse();
     context.push('/group-overview');
+  }
+
+  /// 進入資源採集（quiz1）。本頁保持掛載於背景，採集頁以新路由覆蓋；返回若回傳
+  /// true（時間到後選「前往編輯」）則直接進入編輯模式，無需重載本頁。
+  Future<void> _openCollection() async {
+    setState(() => _isPanelOpen = false);
+    _panelCtrl.reverse();
+    final goEdit = await context.push<bool>('/resource-collection');
+    if (!mounted) return;
+    if (goEdit == true) _enterEdit();
   }
 
   /// 開始拆卸確認：記住目前鏡頭、推近聚焦該 slot（置中、留左側空間給確認框），
@@ -997,7 +1037,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
       feedback: Transform.translate(
         offset: const Offset(-cardSize / 2, -cardSize / 2),
         child: Opacity(
-          opacity: 0.9,
+          opacity: 0.5,
           child: SizedBox(
             width: cardSize,
             height: cardSize,
@@ -1073,7 +1113,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
             child: Align(
               alignment: Alignment.topLeft,
               heightFactor: tc,
-              child: Opacity(opacity: tc, child: _panelMenu()),
+              child: Opacity(opacity: tc, child: _menuCache ??= _panelMenu()),
             ),
           ),
         ],
@@ -1132,8 +1172,8 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
         _menuBtn(
           'assets/icons/buttons/component_collection_btn.png',
           '資源採集',
-          onTap: null,
-          locked: true,
+          onTap: _collectionUnlocked ? _openCollection : null,
+          locked: !_collectionUnlocked,
         ),
         _menuBtn(
           'assets/icons/buttons/fight_btn.png',
@@ -1175,7 +1215,11 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
                 width: _btnIconSize,
                 height: _btnIconSize,
                 child: assetPath != null
-                    ? Image.asset(assetPath, fit: BoxFit.contain)
+                    ? Image.asset(
+                        assetPath,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                      )
                     : Icon(icon, color: Colors.white70, size: 28),
               ),
               const SizedBox(width: 10),

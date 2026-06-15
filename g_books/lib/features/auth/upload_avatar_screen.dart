@@ -255,16 +255,34 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
         children: [
           // back（往畫面內側收一點，避免太靠近螢幕邊緣）
           Positioned(
-            top: 36,
-            right: 64,
+            top: 32,
+            right: 56,
             child: GestureDetector(
               onTap: isUploading ? null : _onBack,
-              child: Icon(
-                Icons.arrow_back_ios_new_rounded,
-                size: 24,
-                color: isUploading
-                    ? const Color(0xFFAAAAAA)
-                    : const Color(0xFF6A6A6A),
+              child: Container(
+                width: 44,
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.pillDark
+                      .withValues(alpha: isUploading ? 0.5 : 0.94),
+                  shape: BoxShape.circle,
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x40000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 3),
+                  child: Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    size: 20,
+                    color: isUploading ? Colors.white38 : Colors.white,
+                  ),
+                ),
               ),
             ),
           ),
@@ -399,7 +417,8 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
     child: ElevatedButton(
       onPressed: onTap,
       style: ElevatedButton.styleFrom(
-        backgroundColor: dark ? AppColors.buttonDark : AppColors.buttonLight,
+        // 「確定」用品牌金色，與淺色背景 / 旁邊的深色鈕都明顯區隔。
+        backgroundColor: dark ? AppColors.buttonDark : AppColors.accentGold,
         foregroundColor: dark ? Colors.white : AppColors.labelText,
         padding: const EdgeInsets.symmetric(vertical: 16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),

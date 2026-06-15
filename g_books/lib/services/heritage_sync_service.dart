@@ -46,6 +46,12 @@ abstract class HeritageSyncService {
     required int slotId,
   });
 
+  /// 發給某組一個 [itemId]（資源採集答對的獎勵）。成功回 true。
+  Future<bool> grantItem({
+    required int groupId,
+    required int itemId,
+  });
+
   /// 訂閱該組的即時變動（其他裝置 / 攻防戰造成）。連線時先送一份目前快照。
   Stream<HeritageBoardSnapshot> watch(int groupId);
 
@@ -127,6 +133,17 @@ class MockHeritageSyncService implements HeritageSyncService {
     final slots = _slt(groupId);
     final itemId = slots.remove(slotId);
     if (itemId == null) return false;
+    final inv = _inv(groupId);
+    inv[itemId] = (inv[itemId] ?? 0) + 1;
+    _emit(groupId);
+    return true;
+  }
+
+  @override
+  Future<bool> grantItem({
+    required int groupId,
+    required int itemId,
+  }) async {
     final inv = _inv(groupId);
     inv[itemId] = (inv[itemId] ?? 0) + 1;
     _emit(groupId);
