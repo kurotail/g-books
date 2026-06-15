@@ -153,7 +153,7 @@ func (h *StateHandler) StateSocket(w http.ResponseWriter, r *http.Request) {
 
 	ctx := conn.CloseRead(r.Context())
 
-	if err := wsjson.Write(ctx, conn, model.StateResponse{State: cur}); err != nil {
+	if err := wsjson.Write(ctx, conn, cur); err != nil {
 		return
 	}
 	for {
@@ -164,7 +164,7 @@ func (h *StateHandler) StateSocket(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			if err := wsjson.Write(ctx, conn, model.StateResponse{State: s}); err != nil {
+			if err := wsjson.Write(ctx, conn, s); err != nil {
 				return
 			}
 		}

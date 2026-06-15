@@ -191,5 +191,6 @@ var States = map[ServerState]struct{}{
 }
 
 type StateResponse struct {
-	State ServerState `json:"state"`
+	State     ServerState `json:"state"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }

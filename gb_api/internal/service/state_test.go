@@ -80,6 +80,9 @@ func TestStateSvc_GetState(t *testing.T) {
 	if resp.State != model.StateQuiz2 {
 		t.Errorf("expected QUIZ, got %q", resp.State)
 	}
+	if resp.UpdatedAt.IsZero() {
+		t.Error("expected GetState to return a non-zero updated_at")
+	}
 }
 
 // SubscribeState delivers the current state as the snapshot and then every
@@ -96,15 +99,21 @@ func TestStateSvc_SubscribeState(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	if cur != model.StateNormal {
-		t.Errorf("expected snapshot NORMAL, got %q", cur)
+	if cur.State != model.StateNormal {
+		t.Errorf("expected snapshot NORMAL, got %q", cur.State)
+	}
+	if cur.UpdatedAt.IsZero() {
+		t.Error("expected snapshot to carry a non-zero updated_at")
 	}
 
 	setState(model.StateQuiz2)
 	select {
 	case got := <-events:
-		if got != model.StateQuiz2 {
-			t.Errorf("expected QUIZ event, got %q", got)
+		if got.State != model.StateQuiz2 {
+			t.Errorf("expected QUIZ event, got %q", got.State)
+		}
+		if got.UpdatedAt.IsZero() {
+			t.Error("expected event to carry a non-zero updated_at")
 		}
 	default:
 		t.Fatal("expected a QUIZ transition event")

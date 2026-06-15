@@ -929,12 +929,13 @@ Remove the pooled question with the given `id`.
 
 ### `GET /api/state`
 
-Read the current server state.
+Read the current server state. `updated_at` is the RFC 3339 timestamp of the last
+state change (the server start time for the initial `NORMAL`).
 
 **Response `200 OK`**
 
 ```json
-{ "state": "NORMAL" }
+{ "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z" }
 ```
 
 ---
@@ -950,10 +951,10 @@ Admins may call it.
 { "state": "QUIZ2" }
 ```
 
-**Response `200 OK`**
+**Response `200 OK`** — echoes the new state and the `updated_at` it was set at
 
 ```json
-{ "state": "QUIZ2" }
+{ "state": "QUIZ2", "updated_at": "2026-06-15T09:30:00Z" }
 ```
 
 **Error responses**
@@ -981,7 +982,7 @@ may be supplied either way:
 **Messages** — each frame is JSON, identical in shape to `GET /api/state`:
 
 ```json
-{ "state": "QUIZ2" }
+{ "state": "QUIZ2", "updated_at": "2026-06-15T09:30:00Z" }
 ```
 
 **Lifecycle**
