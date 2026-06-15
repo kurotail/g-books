@@ -49,6 +49,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/question/answer", questionHandler.Answer)
 	mux.HandleFunc("POST /api/question/upload", questionHandler.Upload)
 	mux.HandleFunc("GET /api/question/search", questionHandler.Search)
+	mux.HandleFunc("GET /api/question/{id}", questionHandler.Get)
 	mux.HandleFunc("PUT /api/question/{id}", questionHandler.Update)
 	mux.HandleFunc("DELETE /api/question/{id}", questionHandler.Delete)
 

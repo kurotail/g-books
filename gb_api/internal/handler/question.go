@@ -146,6 +146,27 @@ func (h *QuestionHandler) Search(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+// Get returns the pooled question identified by the {id} path segment. Open to any
+// authenticated user; the response includes the answer.
+func (h *QuestionHandler) Get(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "不合法的 question id", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.Get(token, uint(id))
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, data)
+}
+
 func (h *QuestionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {

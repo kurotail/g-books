@@ -71,6 +71,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/question/answer` | Bearer | Answer the held session: grant item, or break/repair the target |
 | `POST /api/question/upload` | Bearer (> Student) | Bulk-add questions to the pool; returns a `207` per-question result list |
 | `GET /api/question/search` | Bearer (> Student) | List the question pool, optionally filtered by difficulty/area |
+| `GET /api/question/{id}` | Bearer | Fetch a single pooled question by ID |
 | `PUT /api/question/{id}` | Bearer (> Student) | Update a pooled question by ID |
 | `DELETE /api/question/{id}` | Bearer (> Student) | Delete a pooled question by ID |
 | `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ1` / `QUIZ2`) |
@@ -480,7 +481,7 @@ full fields.
     { "item_id": 2, "type": 20, "question_id": 2 }
   ],
   "slots": {
-    "0": { "item_id": 3, "type": 10, "broken": false }
+    "0": { "item_id": 3, "type": 10, "question_id": 1, "broken": false }
   }
 }
 ```
@@ -837,6 +838,43 @@ GET /api/question/search?difficulty=1&area=2
 | `400`  | `difficulty` or `area` is present but not a valid non-negative integer |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
+
+---
+
+### `GET /api/question/{id}`
+
+Fetch a single pooled question by `id`. Open to **any** authenticated user (no role
+restriction); the response is the same teacher-facing record as `search` and **includes
+the answer**.
+
+**Request** — no body
+
+```
+GET /api/question/1
+```
+
+**Response `200 OK`** — the full `{ id, content, answer, difficulty, area }` record
+
+```json
+{
+  "id": 1,
+  "content": {
+    "description": { "type": "text", "data": "What is six times three?" },
+    "choices": { "type": "text", "data": ["6", "18", "9", "12"] }
+  },
+  "answer": { "type": "index", "data": 1 },
+  "difficulty": 1,
+  "area": 1
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `404`  | No question with that `id` |
 
 ---
 

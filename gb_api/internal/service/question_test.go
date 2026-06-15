@@ -497,6 +497,61 @@ func TestQuestionSvc_Delete_NotFound(t *testing.T) {
 	}
 }
 
+// --- Get (single question by id) ---
+
+// A Student (no role gate) can fetch a question by id, answer included.
+func TestQuestionSvc_Get_AnyRoleSucceeds(t *testing.T) {
+	s, r := newQuestionSvc(model.RoleStudent)
+	created, _ := r.AddQuestions([]model.Question{
+		{Content: model.TextContent("2+2?", "3", "4"), Answer: model.IndexAnswer(1), Difficulty: 1, Area: 2},
+	})
+	id := created[0].ID
+
+	data, status, err := s.Get(accessTokenFor(t, "student"), id)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	var rec model.QuestionRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	var ans uint
+	json.Unmarshal(rec.Answer.Data, &ans)
+	if rec.ID != id || rec.Content.Description.Data != "2+2?" || ans != 1 {
+		t.Errorf("unexpected record: %+v", rec)
+	}
+	if rec.Difficulty != 1 || rec.Area != 2 {
+		t.Errorf("record must carry difficulty/area, got %+v", rec)
+	}
+}
+
+func TestQuestionSvc_Get_NotFound(t *testing.T) {
+	s, _ := newQuestionSvc(model.RoleStudent)
+
+	_, status, err := s.Get(accessTokenFor(t, "student"), 999)
+	if err == nil {
+		t.Fatal("expected error for missing question")
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", status)
+	}
+}
+
+func TestQuestionSvc_Get_InvalidToken(t *testing.T) {
+	s, _ := newQuestionSvc(model.RoleStudent)
+
+	_, status, err := s.Get("bad.token", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
+}
+
 // --- Answer ---
 
 func TestQuestionSvc_Answer_ItemCorrectGrantsItem(t *testing.T) {

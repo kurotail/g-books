@@ -382,6 +382,13 @@ func main() {
 	st, body = req("POST", "/api/question/generate", access, map[string]any{"difficulty": 9})
 	show("generate item for a difficulty with no type (rejected)", st, 400, body)
 
+	// --- fetch a single question by id (any authenticated user) ---
+	st, body = req("GET", "/api/question/1", access, nil)
+	show("get question 1 by id (record incl. answer)", st, 200, body)
+
+	st, body = req("GET", "/api/question/9999", access, nil)
+	show("get unknown question id (404)", st, 404, body)
+
 	// --- attack/repair flow (QUIZ2) ---
 	st, _ = req("POST", "/api/register", access, map[string]any{"username": "quizzer", "password": "pw", "role": 0, "group_id": 2})
 	show("register attacker quizzer in group 2", st, 201, "")

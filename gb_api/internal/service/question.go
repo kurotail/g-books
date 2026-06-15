@@ -225,6 +225,28 @@ func (s *QuestionSvc) Search(accessToken string, difficulty, area *uint) ([]byte
 	return data, http.StatusOK, nil
 }
 
+// Get returns a single pooled question by id. Any authenticated user may call it; the
+// full record (including the answer) is returned.
+func (s *QuestionSvc) Get(accessToken string, id uint) ([]byte, int, error) {
+	if _, err := validateAccessToken(accessToken); err != nil {
+		return nil, http.StatusUnauthorized, err
+	}
+	q, ok, err := s.repo.GetQuestion(id)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	if !ok {
+		return nil, http.StatusNotFound, fmt.Errorf("question 不存在")
+	}
+	data, err := json.Marshal(model.QuestionRecord{
+		ID: id, Content: q.Content, Answer: q.Answer, Difficulty: q.Difficulty, Area: q.Area,
+	})
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return data, http.StatusOK, nil
+}
+
 func (s *QuestionSvc) Update(accessToken string, id uint, in model.QuestionInput) (int, error) {
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return status, err

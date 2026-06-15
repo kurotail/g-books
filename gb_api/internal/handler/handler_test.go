@@ -881,4 +881,47 @@ func TestQuestionHandler_PoolManagement_StudentForbidden(t *testing.T) {
 	if code := deleteQuestion(t, f, tok, id); code != http.StatusForbidden {
 		t.Errorf("student delete: expected 403, got %d", code)
 	}
+	// Fetching a single question by id is NOT role-gated: the student may read it.
+	idStr := strconv.FormatUint(uint64(id), 10)
+	get := doReq(t, f.question.Get, http.MethodGet, "/api/question/"+idStr, tok, nil,
+		map[string]string{"id": idStr})
+	if get.Code != http.StatusOK {
+		t.Errorf("student get by id: expected 200, got %d", get.Code)
+	}
+}
+
+func TestQuestionHandler_GetByID(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	id := createdIDs(uploadQuestions(t, f, tok, []model.QuestionInput{
+		{Content: model.TextContent("2+2?", "3", "4"), Answer: model.IndexAnswer(1), Difficulty: 1, Area: 2},
+	}))[0]
+	idStr := strconv.FormatUint(uint64(id), 10)
+
+	// Found: the record carries content + answer.
+	rec := doReq(t, f.question.Get, http.MethodGet, "/api/question/"+idStr, tok, nil,
+		map[string]string{"id": idStr})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Get: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got model.QuestionRecord
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Get: invalid JSON: %v", err)
+	}
+	var ans uint
+	json.Unmarshal(got.Answer.Data, &ans)
+	if got.ID != id || got.Content.Description.Data != "2+2?" || ans != 1 {
+		t.Errorf("unexpected record: %+v", got)
+	}
+
+	// Unknown id -> 404; non-numeric id -> 400.
+	if miss := doReq(t, f.question.Get, http.MethodGet, "/api/question/9999", tok, nil,
+		map[string]string{"id": "9999"}); miss.Code != http.StatusNotFound {
+		t.Errorf("Get unknown id: expected 404, got %d", miss.Code)
+	}
+	if bad := doReq(t, f.question.Get, http.MethodGet, "/api/question/abc", tok, nil,
+		map[string]string{"id": "abc"}); bad.Code != http.StatusBadRequest {
+		t.Errorf("Get non-numeric id: expected 400, got %d", bad.Code)
+	}
 }
