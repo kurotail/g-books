@@ -73,22 +73,28 @@ class _LoginScreenState extends State<LoginScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                   decoration: BoxDecoration(
-                    color: const Color(0x14000000),
+                    color: AppColors.pillDark,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0x33000000)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x40000000),
+                        blurRadius: 4,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
                   ),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.admin_panel_settings_outlined,
-                          size: 16, color: AppColors.labelText),
+                          size: 16, color: Colors.white),
                       SizedBox(width: 6),
                       Text(
                         '教師 / 管理者登入',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.labelText,
+                          color: Colors.white,
                         ),
                       ),
                     ],

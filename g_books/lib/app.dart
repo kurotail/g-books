@@ -8,6 +8,7 @@ import 'features/auth/group_naming_screen.dart';
 import 'features/auth/group_overview_screen.dart';
 import 'features/heritage/heritage_selection_screen.dart';
 import 'features/heritage/my_heritage_screen.dart';
+import 'features/heritage/resource_collection_screen.dart';
 import 'features/admin/staff_login_screen.dart';
 import 'features/admin/admin_heritage_picker_screen.dart';
 import 'features/admin/admin_editor_screen.dart';
@@ -87,6 +88,12 @@ class _GBooksAppState extends State<GBooksApp> {
           path: '/my-heritage',
           pageBuilder: (_, state) =>
               _fadePage(state, const MyHeritageScreen()),
+        ),
+        // 資源採集（quiz1）：由我的古蹟面板推入，返回時可回傳 true 代表「前往編輯」。
+        GoRoute(
+          path: '/resource-collection',
+          pageBuilder: (_, state) =>
+              _fadePage(state, const ResourceCollectionScreen()),
         ),
       ],
     );

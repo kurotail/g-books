@@ -19,6 +19,8 @@ dependencies:
   path_provider: ^2.1.5
   fluttertoast: ^9.1.0
   flutter_markdown_plus: ^1.0.7
+  record: ^6.0.0          # 資源採集語音作答：錄音
+  audioplayers: ^6.1.0    # 語音題敘述 / 回放錄音作答
 
 dev_dependencies:
   flutter_test:
@@ -55,5 +57,9 @@ flutter:
     - assets/images/heritages/beigang_chaotian_temple/info/       # 資訊用圖（md ![](檔名) 自動補 info/ 前綴；新增子資料夾須在此登記）
 
     # icons
+    - assets/icons/                    # star.png / times_up.png 等
     - assets/icons/buttons/            # 功能按鈕圖
     - assets/icons/card_frames/        # 原料卡框（綠/黃/紅）
+
+    # 資源採集：副本（難度）區域圖
+    - assets/images/heritages/beigang_chaotian_temple/area/  # easy/mid/hard.png

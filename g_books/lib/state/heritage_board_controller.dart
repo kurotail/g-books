@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
+import '../data/component_data.dart' show componentsByLevel;
 import '../data/models/component_model.dart';
 import '../services/heritage_sync_service.dart';
 
@@ -69,6 +71,23 @@ class HeritageBoardController extends ChangeNotifier {
   Future<bool> removeAt(int slotId) async {
     if (_groupId == null) return false;
     return service.removeItem(groupId: _groupId!, slotId: slotId);
+  }
+
+  /// 發一個指定原料到背包（資源採集獎勵）。成功回 true。
+  Future<bool> grantItem(int itemId) async {
+    if (_groupId == null) return false;
+    return service.grantItem(groupId: _groupId!, itemId: itemId);
+  }
+
+  /// 依等級（1~3）隨機發一個目前古蹟的原料到背包（資源採集獎勵）。
+  /// 回傳實際發出的原料；該等級無原料或尚未綁定組別時回 null。
+  Future<ComponentModel?> grantRandomOfLevel(int level) async {
+    if (_groupId == null) return null;
+    final pool = componentsByLevel(_heritageId, level);
+    if (pool.isEmpty) return null;
+    final comp = pool[Random().nextInt(pool.length)];
+    final ok = await service.grantItem(groupId: _groupId!, itemId: comp.id);
+    return ok ? comp : null;
   }
 
   @override

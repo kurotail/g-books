@@ -50,14 +50,33 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
         children: [
           // Back arrow（往畫面內側收一點，避免太靠近螢幕邊緣）
           Positioned(
-            top: 36,
-            right: 64,
+            top: 32,
+            right: 56,
             child: GestureDetector(
               onTap: () => context.go('/setup/group-avatar'),
-              child: const Icon(
-                Icons.arrow_back_ios_new_rounded,
-                size: 24,
-                color: Color(0xFF6A6A6A),
+              child: Container(
+                width: 44,
+                height: 44,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                  color: AppColors.pillDark,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Color(0x40000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.only(left: 3),
+                  child: Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ),
           ),
