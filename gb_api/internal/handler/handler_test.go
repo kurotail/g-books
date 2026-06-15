@@ -567,7 +567,7 @@ func TestQuestionHandler_GetState_ReflectsTransitions(t *testing.T) {
 	}
 }
 
-func TestQuestionHandler_StudentItemBlockedOutsideNormal(t *testing.T) {
+func TestQuestionHandler_StudentItemBlockedOutsideQuiz1(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	f.forceState(t, tok, model.StateQuiz2)
@@ -575,7 +575,7 @@ func TestQuestionHandler_StudentItemBlockedOutsideNormal(t *testing.T) {
 
 	gen := do(t, f.question.GenerateItem, tok, map[string]any{"difficulty": 1})
 	if gen.Code != http.StatusForbidden {
-		t.Errorf("GenerateItem as student in QUIZ: expected 403, got %d", gen.Code)
+		t.Errorf("GenerateItem as student outside QUIZ1: expected 403, got %d", gen.Code)
 	}
 }
 
@@ -591,12 +591,12 @@ func TestQuestionHandler_StudentTargetBlockedOutsideQuiz(t *testing.T) {
 	}
 }
 
-// Item flow end-to-end at the handler level: a student in NORMAL earns an item by
+// Item flow end-to-end at the handler level: a student in QUIZ1 earns an item by
 // generating and answering correctly.
 func TestQuestionHandler_ItemFlow(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
-	f.forceState(t, tok, model.StateNormal)
+	f.forceState(t, tok, model.StateQuiz1)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
 	gen := do(t, f.question.GenerateItem, tok, map[string]any{"difficulty": 1})

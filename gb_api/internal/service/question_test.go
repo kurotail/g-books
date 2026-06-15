@@ -51,7 +51,7 @@ func useState(t *testing.T, s model.ServerState) {
 	t.Cleanup(func() { setState(model.StateNormal) })
 }
 
-// --- GenerateItem (NORMAL state) ---
+// --- GenerateItem (QUIZ1 state) ---
 
 // area1Q1 is an area-1, difficulty-1 question the item flow can draw.
 var area1Q1 = map[uint]model.Question{
@@ -88,20 +88,34 @@ func TestQuestionSvc_GenerateItem_Succeeds(t *testing.T) {
 	}
 }
 
-func TestQuestionSvc_GenerateItem_StudentForbiddenOutsideNormal(t *testing.T) {
+func TestQuestionSvc_GenerateItem_StudentForbiddenOutsideQuiz1(t *testing.T) {
 	useState(t, model.StateQuiz2)
 	s, _, _ := newQuizSvc(model.RoleStudent, 1, map[uint][]uint{1: {10}}, area1Q1)
 
 	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 1)
 	if err == nil {
-		t.Fatal("expected error for student outside NORMAL state")
+		t.Fatal("expected error for student outside QUIZ1 state")
 	}
 	if status != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", status)
 	}
 }
 
-func TestQuestionSvc_GenerateItem_StudentAllowedInNormal(t *testing.T) {
+func TestQuestionSvc_GenerateItem_StudentForbiddenInNormal(t *testing.T) {
+	// NORMAL is the default state; a student may not generate items there.
+	s, _, _ := newQuizSvc(model.RoleStudent, 1, map[uint][]uint{1: {10}}, area1Q1)
+
+	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 1)
+	if err == nil {
+		t.Fatal("expected error for student in NORMAL state")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestQuestionSvc_GenerateItem_StudentAllowedInQuiz1(t *testing.T) {
+	useState(t, model.StateQuiz1)
 	s, _, _ := newQuizSvc(model.RoleStudent, 1, map[uint][]uint{1: {10}}, area1Q1)
 
 	_, status, err := s.GenerateItem(accessTokenFor(t, "u"), 1)

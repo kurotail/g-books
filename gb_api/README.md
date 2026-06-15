@@ -67,7 +67,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/item` | Bearer | Read all of a group's items (inventory + slots) |
 | `POST /api/item/inv2slot` | Bearer (not Student in QUIZ2) | Move one item from inventory into a slot (swaps out any normal item already there) |
 | `POST /api/item/slot2inv` | Bearer (not Student in QUIZ2) | Return a slotted item to the inventory |
-| `POST /api/question/generate` | Bearer (NORMAL) | Roll a new item + open a session to claim it (students NORMAL-only) |
+| `POST /api/question/generate` | Bearer (QUIZ1) | Roll a new item + open a session to claim it (students QUIZ1-only) |
 | `POST /api/question/target` | Bearer (QUIZ2) | Open an attack/repair session against a group's slot (students QUIZ2-only) |
 | `POST /api/question/answer` | Bearer | Answer the held session: grant item, or break/repair the target |
 | `POST /api/question/upload` | Bearer (> Student) | Bulk-add questions to the pool; returns a `207` per-question result list |
@@ -612,7 +612,7 @@ The quiz drives the game loop. A **generate** endpoint opens a **single-use sess
 (15 min TTL); the shared **answer** endpoint consumes it and acts on the session's kind.
 There are two generate endpoints, gated by the server state:
 
-- **`POST /api/question/generate`** (NORMAL) — *earn an item*. Creates a brand-new item of a
+- **`POST /api/question/generate`** (QUIZ1) — *earn an item*. Creates a brand-new item of a
   random type (drawn from the caller-group's building `difficulty_type` for the requested
   difficulty) tied to a random `area 1` question of that difficulty. Answering **correctly**
   adds the item to the group's inventory.
@@ -629,14 +629,14 @@ Students are restricted by the current state; **Teachers and Admins bypass the s
 
 | Endpoint | Student may call in | Teacher / Admin |
 |----------|---------------------|-----------------|
-| `POST /api/question/generate` (item) | `NORMAL` only | any state |
+| `POST /api/question/generate` (item) | `QUIZ1` only | any state |
 | `POST /api/question/target` (attack/repair) | `QUIZ2` only | any state |
 | `POST /api/question/answer` | any state | any state |
 | `POST /api/item/inv2slot`, `POST /api/item/slot2inv` (move) | any state **except** `QUIZ2` | any state |
 
-In short: `NORMAL` is the item-earning phase, `QUIZ2` is the attack/repair phase (and
-locks students out of moving items), and `QUIZ1` is an intermediate phase in which
-students may move items but can neither generate nor target.
+In short: `QUIZ1` is the item-earning phase in which students may also move items, `QUIZ2`
+is the attack/repair phase (and locks students out of moving items), and `NORMAL` is the
+default idle phase in which students may move items but can neither generate nor target.
 
 Read the state with `GET /api/state`; transition it with `POST /api/state`
 (Teacher / Admin only). All endpoints require a valid access token:
@@ -645,7 +645,7 @@ Read the state with `GET /api/state`; transition it with `POST /api/state`
 Authorization: Bearer <access_token>
 ```
 
-### `POST /api/question/generate` — earn an item (NORMAL)
+### `POST /api/question/generate` — earn an item (QUIZ1)
 
 Roll a new item for the requested `difficulty` and open a session to claim it.
 
@@ -673,7 +673,7 @@ Roll a new item for the requested `difficulty` and open a session to claim it.
 |--------|-----------|
 | `400`  | Malformed JSON body or missing `difficulty`; caller is in no group; the group's building lists no type for the difficulty; or no `area 1` question matches the difficulty |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is a Student and the server is not in `NORMAL` state |
+| `403`  | Caller is a Student and the server is not in `QUIZ1` state |
 
 ---
 

@@ -62,12 +62,12 @@ func studentBlockedNotQuiz2(r repo.UserRepo, accessToken string) (*model.User, i
 	return caller, http.StatusOK, nil
 }
 
-func studentBlockedNotNormal(r repo.UserRepo, accessToken string) (*model.User, int, error) {
+func studentBlockedNotQuiz1(r repo.UserRepo, accessToken string) (*model.User, int, error) {
 	caller, status, err := getCaller(r, accessToken)
 	if err != nil {
 		return nil, status, err
 	}
-	if caller.Role <= model.RoleStudent && getState() != model.StateNormal {
+	if caller.Role <= model.RoleStudent && getState() != model.StateQuiz1 {
 		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
 	}
 	return caller, http.StatusOK, nil

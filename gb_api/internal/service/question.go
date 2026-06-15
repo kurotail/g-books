@@ -27,11 +27,9 @@ func NewQuestionSvc(r repo.QuestionRepo, users repo.UserRepo, groups repo.GroupR
 	return &QuestionSvc{repo: r, users: users, groups: groups, buildings: buildings, items: items, stt: stt}
 }
 
-// GenerateItem (NORMAL state) creates a new item of a random type for the requested
-// difficulty — drawn from the caller-group's building DifficultyType — tied to a random
-// area-1 question of that difficulty. Answering correctly grants the item.
+// GenerateItem (QUIZ1 state) creates a new item of a random type for the requested difficulty
 func (s *QuestionSvc) GenerateItem(accessToken string, difficulty uint) ([]byte, int, error) {
-	caller, status, err := studentBlockedNotNormal(s.users, accessToken)
+	caller, status, err := studentBlockedNotQuiz1(s.users, accessToken)
 	if err != nil {
 		return nil, status, err
 	}
