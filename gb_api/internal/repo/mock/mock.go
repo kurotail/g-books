@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +22,7 @@ var (
 	_ repo.GroupRepo        = (*GroupRepo)(nil)
 	_ repo.BuildingRepo     = (*BuildingRepo)(nil)
 	_ repo.QuestionRepo     = (*QuestionRepo)(nil)
+	_ repo.STTRepo          = (*STTRepo)(nil)
 )
 
 type AuthRepo struct {
@@ -304,13 +304,9 @@ func (m *QuestionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord
 	return records, nil
 }
 
-func (m *QuestionRepo) SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error) {
-	needle := strings.ToLower(query)
+func (m *QuestionRepo) SearchQuestions(difficulty, area *uint) ([]model.QuestionRecord, error) {
 	records := make([]model.QuestionRecord, 0, len(m.Questions))
 	for id, q := range m.Questions {
-		if needle != "" && !strings.Contains(strings.ToLower(q.Description), needle) {
-			continue
-		}
 		if difficulty != nil && q.Difficulty != *difficulty {
 			continue
 		}
@@ -325,12 +321,22 @@ func (m *QuestionRepo) SearchQuestions(query string, difficulty, area *uint) ([]
 
 func mockRecord(id uint, q model.Question) model.QuestionRecord {
 	return model.QuestionRecord{
-		ID:          id,
-		Description: q.Description,
-		Answer:      q.Answer,
-		Difficulty:  q.Difficulty,
-		Area:        q.Area,
+		ID:         id,
+		Content:    q.Content,
+		Answer:     q.Answer,
+		Difficulty: q.Difficulty,
+		Area:       q.Area,
 	}
+}
+
+// STTRepo is a mock speech-to-text backend. Transcript is returned verbatim for any
+// base64 WAV input, letting tests drive the voice_response grading outcome.
+type STTRepo struct {
+	Transcript string
+}
+
+func (m *STTRepo) Transcribe(wavB64 string) (string, error) {
+	return m.Transcript, nil
 }
 
 func (m *QuestionRepo) UpdateQuestion(id uint, q model.Question) (bool, error) {

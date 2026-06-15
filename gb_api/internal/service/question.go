@@ -6,6 +6,7 @@ import (
 	"fmt"
 	mrand "math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	apperr "gb-api/internal/error"
@@ -19,10 +20,11 @@ type QuestionSvc struct {
 	groups    repo.GroupRepo
 	buildings repo.BuildingRepo
 	items     repo.ItemRepo
+	stt       repo.STTRepo
 }
 
-func NewQuestionSvc(r repo.QuestionRepo, users repo.UserRepo, groups repo.GroupRepo, buildings repo.BuildingRepo, items repo.ItemRepo) *QuestionSvc {
-	return &QuestionSvc{repo: r, users: users, groups: groups, buildings: buildings, items: items}
+func NewQuestionSvc(r repo.QuestionRepo, users repo.UserRepo, groups repo.GroupRepo, buildings repo.BuildingRepo, items repo.ItemRepo, stt repo.STTRepo) *QuestionSvc {
+	return &QuestionSvc{repo: r, users: users, groups: groups, buildings: buildings, items: items, stt: stt}
 }
 
 // GenerateItem (NORMAL state) creates a new item of a random type for the requested
@@ -70,7 +72,7 @@ func (s *QuestionSvc) GenerateItem(accessToken string, difficulty uint) ([]byte,
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	return marshalQuestionResponse(id, q.Description)
+	return marshalQuestionResponse(id, q.Content)
 }
 
 func (s *QuestionSvc) randomTypeForDifficulty(buildingID, difficulty uint) (uint, bool, error) {
@@ -152,11 +154,11 @@ func (s *QuestionSvc) GenerateTarget(accessToken string, targetGroupID, targetSl
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	return marshalQuestionResponse(id, q.Description)
+	return marshalQuestionResponse(id, q.Content)
 }
 
-func marshalQuestionResponse(session, description string) ([]byte, int, error) {
-	data, err := json.Marshal(model.QuestionResponse{Session: session, Description: description})
+func marshalQuestionResponse(session string, content model.Content) ([]byte, int, error) {
+	data, err := json.Marshal(model.QuestionResponse{Session: session, Content: content})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -175,15 +177,15 @@ func (s *QuestionSvc) Upload(accessToken string, inputs []model.QuestionInput) (
 	valid := make([]model.Question, 0, len(inputs))
 	validIdx := make([]int, 0, len(inputs))
 	for i, in := range inputs {
-		if in.Description == "" {
+		if err := validateQuestionInput(in); err != nil {
 			results[i] = model.QuestionUploadResult{
 				Index:  i,
 				Status: http.StatusBadRequest,
-				Error:  "description 不可為空",
+				Error:  err.Error(),
 			}
 			continue
 		}
-		valid = append(valid, model.Question{Description: in.Description, Answer: in.Answer, Difficulty: in.Difficulty, Area: in.Area})
+		valid = append(valid, model.Question{Content: in.Content, Answer: in.Answer, Difficulty: in.Difficulty, Area: in.Area})
 		validIdx = append(validIdx, i)
 	}
 
@@ -208,11 +210,11 @@ func (s *QuestionSvc) Upload(accessToken string, inputs []model.QuestionInput) (
 	return data, http.StatusMultiStatus, nil
 }
 
-func (s *QuestionSvc) Search(accessToken, query string, difficulty, area *uint) ([]byte, int, error) {
+func (s *QuestionSvc) Search(accessToken string, difficulty, area *uint) ([]byte, int, error) {
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return nil, status, err
 	}
-	records, err := s.repo.SearchQuestions(query, difficulty, area)
+	records, err := s.repo.SearchQuestions(difficulty, area)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -227,10 +229,10 @@ func (s *QuestionSvc) Update(accessToken string, id uint, in model.QuestionInput
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return status, err
 	}
-	if in.Description == "" {
-		return http.StatusBadRequest, fmt.Errorf("description 不可為空")
+	if err := validateQuestionInput(in); err != nil {
+		return http.StatusBadRequest, err
 	}
-	ok, err := s.repo.UpdateQuestion(id, model.Question{Description: in.Description, Answer: in.Answer, Difficulty: in.Difficulty, Area: in.Area})
+	ok, err := s.repo.UpdateQuestion(id, model.Question{Content: in.Content, Answer: in.Answer, Difficulty: in.Difficulty, Area: in.Area})
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -254,7 +256,7 @@ func (s *QuestionSvc) Delete(accessToken string, id uint) (int, error) {
 	return http.StatusOK, nil
 }
 
-func (s *QuestionSvc) Answer(accessToken, session string, ans uint) ([]byte, int, error) {
+func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) ([]byte, int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
@@ -269,7 +271,10 @@ func (s *QuestionSvc) Answer(accessToken, session string, ans uint) ([]byte, int
 		return nil, http.StatusBadRequest, fmt.Errorf("session 已過期")
 	}
 
-	correct := ans == qs.Answer
+	correct, status, err := s.grade(qs.Answer, raw)
+	if err != nil {
+		return nil, status, err
+	}
 	resp := model.AnswerResponse{Correct: correct}
 
 	switch qs.Kind {
@@ -317,4 +322,60 @@ func (s *QuestionSvc) applyTarget(callerGroupID uint, t model.Target) (bool, err
 		return false, err
 	}
 	return true, nil
+}
+
+// grade evaluates a submitted answer against the question's stored answer.
+func (s *QuestionSvc) grade(answer model.Answer, raw json.RawMessage) (bool, int, error) {
+	switch answer.Type {
+	case model.AnswerIndex:
+		var want uint
+		if err := json.Unmarshal(answer.Data, &want); err != nil {
+			return false, http.StatusInternalServerError, fmt.Errorf("題目答案格式錯誤")
+		}
+		var got uint
+		if err := json.Unmarshal(raw, &got); err != nil {
+			return false, http.StatusBadRequest, fmt.Errorf("不合法的 answer")
+		}
+		return got == want, http.StatusOK, nil
+	case model.AnswerVoice:
+		var want string
+		if err := json.Unmarshal(answer.Data, &want); err != nil {
+			return false, http.StatusInternalServerError, fmt.Errorf("題目答案格式錯誤")
+		}
+		var b64 string
+		if err := json.Unmarshal(raw, &b64); err != nil {
+			return false, http.StatusBadRequest, fmt.Errorf("不合法的 answer")
+		}
+		transcript, err := s.stt.Transcribe(b64)
+		if err != nil {
+			return false, http.StatusInternalServerError, err
+		}
+		return strings.EqualFold(strings.TrimSpace(transcript), strings.TrimSpace(want)), http.StatusOK, nil
+	default:
+		return false, http.StatusInternalServerError, fmt.Errorf("未知的答案類型")
+	}
+}
+
+// allowed type-value sets for question validation.
+var (
+	descTypes   = map[string]struct{}{model.DescText: {}, model.DescAudio: {}, model.DescVoice: {}}
+	answerTypes = map[string]struct{}{model.AnswerIndex: {}, model.AnswerVoice: {}}
+)
+
+// validateQuestionInput enforces that the content/answer carry only known type values
+// and a non-empty description. It does not check choice counts or index bounds.
+func validateQuestionInput(in model.QuestionInput) error {
+	if _, ok := descTypes[in.Content.Description.Type]; !ok {
+		return fmt.Errorf("不合法的 description type")
+	}
+	if in.Content.Description.Data == "" {
+		return fmt.Errorf("description 不可為空")
+	}
+	if in.Content.Choices != nil && in.Content.Choices.Type != model.ChoicesText {
+		return fmt.Errorf("不合法的 choices type")
+	}
+	if _, ok := answerTypes[in.Answer.Type]; !ok {
+		return fmt.Errorf("不合法的 answer type")
+	}
+	return nil
 }

@@ -64,18 +64,18 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `GET /api/building` | Bearer | List all buildings |
 | `GET /api/building/{id}` | Bearer | Read a building by ID |
 | `POST /api/item` | Bearer | Read all of a group's items (inventory + slots) |
-| `POST /api/item/inv2slot` | Bearer (not Student in QUIZ) | Move one item from inventory into a slot (swaps out any normal item already there) |
-| `POST /api/item/slot2inv` | Bearer (not Student in QUIZ) | Return a slotted item to the inventory |
+| `POST /api/item/inv2slot` | Bearer (not Student in QUIZ2) | Move one item from inventory into a slot (swaps out any normal item already there) |
+| `POST /api/item/slot2inv` | Bearer (not Student in QUIZ2) | Return a slotted item to the inventory |
 | `POST /api/question/generate` | Bearer (NORMAL) | Roll a new item + open a session to claim it (students NORMAL-only) |
-| `POST /api/question/target` | Bearer (QUIZ) | Open an attack/repair session against a group's slot (students QUIZ-only) |
+| `POST /api/question/target` | Bearer (QUIZ2) | Open an attack/repair session against a group's slot (students QUIZ2-only) |
 | `POST /api/question/answer` | Bearer | Answer the held session: grant item, or break/repair the target |
 | `POST /api/question/upload` | Bearer (> Student) | Bulk-add questions to the pool; returns a `207` per-question result list |
-| `GET /api/question/search` | Bearer (> Student) | Search the question pool by description substring |
+| `GET /api/question/search` | Bearer (> Student) | List the question pool, optionally filtered by difficulty/area |
 | `PUT /api/question/{id}` | Bearer (> Student) | Update a pooled question by ID |
 | `DELETE /api/question/{id}` | Bearer (> Student) | Delete a pooled question by ID |
-| `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ`) |
+| `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ1` / `QUIZ2`) |
 | `POST /api/state` | Bearer (> Student) | Transition the server state |
-| `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every `NORMAL` ⇄ `QUIZ` transition |
+| `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every state transition |
 
 ---
 
@@ -438,11 +438,11 @@ in a slot, never both. Items move between them:
 **Broken items** — a slot can hold a *broken* item, surfaced as `"broken": true` in the
 slot view. A broken item cannot be returned to the inventory or replaced.
 
-**QUIZ-state restriction** — the two *move* endpoints (`inv2slot` and `slot2inv`)
-are disabled for **students** while the server is in `QUIZ` state (they get
+**QUIZ2-state restriction** — the two *move* endpoints (`inv2slot` and `slot2inv`)
+are disabled for **students** while the server is in `QUIZ2` state (they get
 `403`); Teachers and Admins are unaffected. The read endpoint (`POST /api/item`)
-is always available. (This is the inverse of the question endpoints, which are
-the ones students may use *only* during `QUIZ`.)
+is always available. (This is the inverse of the `target` question endpoint, which
+students may use *only* during `QUIZ2`.)
 
 All inventory endpoints require a valid access token:
 
@@ -528,7 +528,7 @@ placed. A slot holding a **broken** item cannot be replaced.
 | `400`  | `item_id` is not in the group's inventory |
 | `400`  | The item's `type` is not allowed in `slot_id` by the group's building |
 | `400`  | The destination slot holds a **broken** item (已損毀) and cannot be replaced |
-| `403`  | A **student** caller while the server is in `QUIZ` state |
+| `403`  | A **student** caller while the server is in `QUIZ2` state |
 
 ---
 
@@ -550,7 +550,7 @@ Return the item held in `slot_id` to the group's inventory and clear the slot. O
 | Status | Condition |
 |--------|-----------|
 | `400`  | The slot does not exist, is empty, or holds a **broken** item (已損毀) |
-| `403`  | A **student** caller while the server is in `QUIZ` state |
+| `403`  | A **student** caller while the server is in `QUIZ2` state |
 
 ---
 
@@ -573,7 +573,7 @@ There are two generate endpoints, gated by the server state:
   random type (drawn from the caller-group's building `difficulty_type` for the requested
   difficulty) tied to a random `area 1` question of that difficulty. Answering **correctly**
   adds the item to the group's inventory.
-- **`POST /api/question/target`** (QUIZ) — *attack / repair*. Targets a group's slot.
+- **`POST /api/question/target`** (QUIZ2) — *attack / repair*. Targets a group's slot.
   Answering **correctly** breaks an enemy's slotted item or repairs your own broken one.
 
 The caller's own group comes from their token; the caller must be in a group. The graded
@@ -581,14 +581,19 @@ answer is never leaked in the generate response.
 
 ### Server state machine
 
-The server holds a single global state, either `NORMAL` (default) or `QUIZ`. Students are
-restricted to the matching endpoint; **Teachers and Admins bypass the state gate**:
+The server holds a single global state — one of `NORMAL` (default), `QUIZ1`, or `QUIZ2`.
+Students are restricted by the current state; **Teachers and Admins bypass the state gate**:
 
 | Endpoint | Student may call in | Teacher / Admin |
 |----------|---------------------|-----------------|
 | `POST /api/question/generate` (item) | `NORMAL` only | any state |
-| `POST /api/question/target` (attack/repair) | `QUIZ` only | any state |
+| `POST /api/question/target` (attack/repair) | `QUIZ2` only | any state |
 | `POST /api/question/answer` | any state | any state |
+| `POST /api/item/inv2slot`, `POST /api/item/slot2inv` (move) | any state **except** `QUIZ2` | any state |
+
+In short: `NORMAL` is the item-earning phase, `QUIZ2` is the attack/repair phase (and
+locks students out of moving items), and `QUIZ1` is an intermediate phase in which
+students may move items but can neither generate nor target.
 
 Read the state with `GET /api/state`; transition it with `POST /api/state`
 (Teacher / Admin only). All endpoints require a valid access token:
@@ -607,12 +612,15 @@ Roll a new item for the requested `difficulty` and open a session to claim it.
 { "difficulty": 1 }
 ```
 
-**Response `200 OK`** — the question text and its session id (the answer is never returned)
+**Response `200 OK`** — the question `content` and its session id (the answer is never returned). For a multiple-choice question `content.choices` carries the options; for a `voice_response` question `choices` is omitted.
 
 ```json
 {
   "session": "0123456789abcdef0123456789abcdef",
-  "description": "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12"
+  "content": {
+    "description": { "type": "text", "data": "What is six times three?" },
+    "choices": { "type": "text", "data": ["6", "18", "9", "12"] }
+  }
 }
 ```
 
@@ -626,7 +634,7 @@ Roll a new item for the requested `difficulty` and open a session to claim it.
 
 ---
 
-### `POST /api/question/target` — attack / repair (QUIZ)
+### `POST /api/question/target` — attack / repair (QUIZ2)
 
 Open a session against `target_slot_id` in `target_group_id`. **Valid** only when:
 
@@ -641,7 +649,7 @@ Open a session against `target_slot_id` in `target_group_id`. **Valid** only whe
 { "target_group_id": 2, "target_slot_id": 0 }
 ```
 
-**Response `200 OK`** — `{ "session", "description" }`, same shape as above.
+**Response `200 OK`** — `{ "session", "content" }`, same shape as above.
 
 **Error responses**
 
@@ -649,19 +657,31 @@ Open a session against `target_slot_id` in `target_group_id`. **Valid** only whe
 |--------|-----------|
 | `400`  | Malformed JSON body; `target_group_id` missing / not greater than 0; `target_slot_id` missing; the target slot is empty; the target item has no question; or the target is invalid (own non-broken slot, or another group's broken slot) |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is a Student and the server is not in `QUIZ` state |
+| `403`  | Caller is a Student and the server is not in `QUIZ2` state |
 
 ---
 
 ### `POST /api/question/answer`
 
-Answer the held session (the zero-based index of the chosen option). The session is
-**deleted on use** and the action depends on its kind.
+Answer the held session. The session is **deleted on use** and the action depends on
+its kind. The shape of `answer` depends on the question's answer type:
 
-**Request**
+- **index** questions — `answer` is the zero-based index of the chosen option (a number).
+- **voice_response** questions — `answer` is the student's recorded answer: a WAV audio
+  file, base64-encoded into a string. The server transcribes it (via a speech-to-text
+  backend) and compares the transcript, case-insensitively, to the question's expected
+  answer.
+
+**Request** — multiple choice
 
 ```json
 { "session": "0123456789abcdef0123456789abcdef", "answer": 1 }
+```
+
+**Request** — voice response (`answer` is base64-encoded WAV audio)
+
+```json
+{ "session": "0123456789abcdef0123456789abcdef", "answer": "UklGRiQAAABXQVZF..." }
 ```
 
 **Response `200 OK`** — `correct` is always present. `item_id` is set when an **item**
@@ -693,11 +713,22 @@ Teachers and Admins manage this pool: bulk-upload new questions, search existing
 ones, and update or delete them by ID. All four endpoints require a valid access
 token and a role above Student — Students receive `403`.
 
-Each question is `{ description, answer, difficulty, area }`, where `answer` is the
-zero-based index of the correct option and the options are embedded as text inside
-`description`. `difficulty` and `area` are `uint` classifiers (default `0`): they drive
-which question the generate endpoints draw (item → `area 1` + the requested difficulty;
-repair → `area 2`) and also filter [search](#get-apiquestionsearch).
+Each question is `{ content, answer, difficulty, area }`:
+
+- `content.description` is `{ type, data }`, where `type` is one of `text`, `audio`, or
+  `voice_response`. `data` is the prompt text for `text`, or a URL for `audio` /
+  `voice_response`.
+- `content.choices` is `{ type, data }` with `type` `text` and `data` a list of option
+  strings. It is present for multiple-choice questions and omitted for `voice_response`.
+- `answer` is `{ type, data }`, where `type` is `index` (then `data` is the zero-based
+  index of the correct choice, a number) or `voice_response` (then `data` is the expected
+  transcript, a string).
+- `difficulty` and `area` are `uint` classifiers (default `0`): they drive which question
+  the generate endpoints draw (item → `area 1` + the requested difficulty; repair →
+  `area 2`) and also filter [search](#get-apiquestionsearch).
+
+Validation accepts only the type values listed above and requires a non-empty
+`description.data`.
 
 ```
 Authorization: Bearer <access_token>
@@ -705,10 +736,10 @@ Authorization: Bearer <access_token>
 
 ### `POST /api/question/upload`
 
-Add a batch of questions in a single request. Invalid questions (empty
-`description`) are skipped rather than failing the whole batch, so the response is
-a **`207 Multi-Status`** carrying one result per submitted question, in request
-order.
+Add a batch of questions in a single request. Invalid questions (unknown type values
+or an empty `description.data`) are skipped rather than failing the whole batch, so the
+response is a **`207 Multi-Status`** carrying one result per submitted question, in
+request order.
 
 **Request**
 
@@ -717,9 +748,23 @@ order.
 ```json
 {
   "questions": [
-    { "description": "2+2?\n(a)3\n(b)4", "answer": 1, "difficulty": 1, "area": 2 },
-    { "description": "", "answer": 0 },
-    { "description": "Capital of France?\n(a)Paris\n(b)Rome", "answer": 0 }
+    {
+      "content": {
+        "description": { "type": "text", "data": "2+2?" },
+        "choices": { "type": "text", "data": ["3", "4"] }
+      },
+      "answer": { "type": "index", "data": 1 },
+      "difficulty": 1,
+      "area": 2
+    },
+    {
+      "content": { "description": { "type": "text", "data": "" } },
+      "answer": { "type": "index", "data": 0 }
+    },
+    {
+      "content": { "description": { "type": "audio", "data": "https://example.com/audio/q.mp3" } },
+      "answer": { "type": "voice_response", "data": "eighteen" }
+    }
   ]
 }
 ```
@@ -749,22 +794,19 @@ question (with its new `id`) or `400` for a rejected one (with an `error`)
 
 ### `GET /api/question/search`
 
-Search the pool by case-insensitive substring of the question description. Omit
-`q` (or pass it empty) to list every question.
+List the pool. With no parameters it returns every question.
 
 The optional `difficulty` and `area` query parameters filter by **exact match**
-(`uint`); each is applied only when present, and combined with `q` and with each
-other as a logical **AND**.
+(`uint`); each is applied only when present, and combined as a logical **AND**.
 
 **Request** — query parameters
 
 ```
-GET /api/question/search?q=france&difficulty=1&area=2
+GET /api/question/search?difficulty=1&area=2
 ```
 
 | Parameter | Description |
 |-----------|-------------|
-| `q`          | Case-insensitive substring of `description`; omitted/empty matches all |
 | `difficulty` | Exact `difficulty` to match; omitted = not filtered |
 | `area`       | Exact `area` to match; omitted = not filtered |
 
@@ -774,7 +816,16 @@ GET /api/question/search?q=france&difficulty=1&area=2
 ```json
 {
   "questions": [
-    { "id": 4, "description": "Capital of France?\n(a)Paris\n(b)Rome", "answer": 0, "difficulty": 1, "area": 2 }
+    {
+      "id": 4,
+      "content": {
+        "description": { "type": "text", "data": "Capital of France?" },
+        "choices": { "type": "text", "data": ["Paris", "Rome"] }
+      },
+      "answer": { "type": "index", "data": 0 },
+      "difficulty": 1,
+      "area": 2
+    }
   ]
 }
 ```
@@ -797,7 +848,15 @@ optional (default `0`).
 **Request**
 
 ```json
-{ "description": "2+2?\n(a)3\n(b)4", "answer": 1, "difficulty": 1, "area": 2 }
+{
+  "content": {
+    "description": { "type": "text", "data": "2+2?" },
+    "choices": { "type": "text", "data": ["3", "4"] }
+  },
+  "answer": { "type": "index", "data": 1 },
+  "difficulty": 1,
+  "area": 2
+}
 ```
 
 **Response** — `200 OK` with an empty body on success.
@@ -806,7 +865,7 @@ optional (default `0`).
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, a non-numeric `{id}`, or an empty `description` |
+| `400`  | Malformed JSON body, a non-numeric `{id}`, an unknown type value, or an empty `description.data` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
 | `404`  | No question with that `id` |
@@ -844,25 +903,26 @@ Read the current server state.
 
 ### `POST /api/state`
 
-Transition the server state. Only Teachers and Admins may call it.
+Transition the server state to one of `NORMAL`, `QUIZ1`, or `QUIZ2`. Only Teachers and
+Admins may call it.
 
 **Request**
 
 ```json
-{ "state": "QUIZ" }
+{ "state": "QUIZ2" }
 ```
 
 **Response `200 OK`**
 
 ```json
-{ "state": "QUIZ" }
+{ "state": "QUIZ2" }
 ```
 
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, or a state other than `NORMAL` / `QUIZ` |
+| `400`  | Malformed JSON body, a missing `state`, or a state other than `NORMAL` / `QUIZ1` / `QUIZ2` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
 
@@ -872,8 +932,7 @@ Transition the server state. Only Teachers and Admins may call it.
 
 Subscribe to server-state changes over a WebSocket. Any authenticated user may
 subscribe (same access policy as `GET /api/state`). On connect the server sends
-the current state immediately, then pushes a message on every transition into or
-out of `QUIZ`.
+the current state immediately, then pushes a message on every state transition.
 
 Because browsers cannot set headers on a WebSocket handshake, the access token
 may be supplied either way:
@@ -884,7 +943,7 @@ may be supplied either way:
 **Messages** — each frame is JSON, identical in shape to `GET /api/state`:
 
 ```json
-{ "state": "QUIZ" }
+{ "state": "QUIZ2" }
 ```
 
 **Lifecycle**

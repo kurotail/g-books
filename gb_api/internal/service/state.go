@@ -28,7 +28,7 @@ func setState(s model.ServerState) {
 	changed := state != s
 	state = s
 	stateMu.Unlock()
-	// Only a real transition (NORMAL<->QUIZ) is worth notifying about.
+	// Only a real transition (between NORMAL / QUIZ1 / QUIZ2) is worth notifying about.
 	if changed {
 		stateHub.broadcast(s)
 	}
@@ -96,7 +96,7 @@ func (s *StateSvc) SetState(accessToken string, state model.ServerState) ([]byte
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return nil, status, err
 	}
-	if state != model.StateNormal && state != model.StateQuiz2 {
+	if _, ok := model.States[state]; !ok {
 		return nil, http.StatusBadRequest, fmt.Errorf("不合法的狀態: %q", state)
 	}
 	setState(state)

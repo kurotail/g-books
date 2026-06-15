@@ -93,7 +93,7 @@ func readEvent(conn *websocket.Conn) (stateEvent, error) {
 }
 
 // wsChecks exercises the /api/state/ws endpoint: header auth, the on-connect
-// snapshot, live QUIZ/NORMAL transitions, query-param auth, and rejection of
+// snapshot, live QUIZ2/NORMAL transitions, query-param auth, and rejection of
 // unauthenticated dials.
 func wsChecks(access, sAccess string) {
 	// Unauthenticated dial must be rejected before the upgrade (HTTP 401).
@@ -130,11 +130,11 @@ func wsChecks(access, sAccess string) {
 	ev, err := readEvent(conn)
 	showWS("ws snapshot on connect (NORMAL)", ev, err, "NORMAL")
 
-	// Flip to QUIZ via REST and expect a pushed event.
-	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ"})
-	show("set state QUIZ (to trigger ws)", st, 200, "")
+	// Flip to QUIZ2 via REST and expect a pushed event.
+	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
+	show("set state QUIZ2 (to trigger ws)", st, 200, "")
 	ev, err = readEvent(conn)
-	showWS("ws receives QUIZ transition", ev, err, "QUIZ")
+	showWS("ws receives QUIZ2 transition", ev, err, "QUIZ2")
 
 	// Flip back to NORMAL and expect another event.
 	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
@@ -193,7 +193,7 @@ func wsFanout(access, sAccess string) {
 	const n = 10
 
 	// Establish a known NORMAL baseline before anyone subscribes, so every
-	// snapshot is NORMAL and the later flip to QUIZ is a real transition.
+	// snapshot is NORMAL and the later flip to QUIZ2 is a real transition.
 	req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
 
 	conns := make([]*websocket.Conn, 0, n)
@@ -227,14 +227,14 @@ func wsFanout(access, sAccess string) {
 	}
 
 	// One teacher transition must reach every subscriber.
-	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ"})
-	show("fanout: teacher sets QUIZ", st, 200, "")
+	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
+	show("fanout: teacher sets QUIZ2", st, 200, "")
 	checks++
-	if allReceived(conns, "QUIZ") {
-		fmt.Printf("[OK] %-46s -> all %d received QUIZ\n", "fanout: every subscriber notified", len(conns))
+	if allReceived(conns, "QUIZ2") {
+		fmt.Printf("[OK] %-46s -> all %d received QUIZ2\n", "fanout: every subscriber notified", len(conns))
 	} else {
 		fails++
-		fmt.Printf("[XX] %-46s -> not all %d received QUIZ\n", "fanout: every subscriber notified", len(conns))
+		fmt.Printf("[XX] %-46s -> not all %d received QUIZ2\n", "fanout: every subscriber notified", len(conns))
 	}
 
 	// And again on the way back to NORMAL.
@@ -298,8 +298,8 @@ func main() {
 	st, _ = req("POST", "/api/group/set", access, map[string]any{"username": "stud1", "group_id": 1})
 	show("teacher adds stud1 to group 1", st, 200, "")
 
-	st, body = req("POST", "/api/group/members", access, map[string]any{"group_id": 1})
-	show("query members of group 1", st, 200, body)
+	st, body = req("GET", "/api/group", access, nil)
+	show("query own group (members now include stud1)", st, 200, body)
 
 	st, _ = req("POST", "/api/group/set", access, map[string]any{"username": "stud1", "group_id": 0})
 	show("teacher removes stud1 from group (group_id 0)", st, 200, "")
@@ -349,8 +349,8 @@ func main() {
 	st, body = req("GET", "/api/state", access, nil)
 	show("get state (default)", st, 200, body)
 
-	st, body = req("POST", "/api/state", access, map[string]any{"state": "QUIZ"})
-	show("teacher sets state QUIZ", st, 200, body)
+	st, body = req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
+	show("teacher sets state QUIZ2", st, 200, body)
 
 	st, body = req("POST", "/api/state", sAccess, map[string]any{"state": "NORMAL"})
 	show("student tries to set state (forbidden)", st, 403, body)
@@ -382,14 +382,14 @@ func main() {
 	st, body = req("POST", "/api/question/generate", access, map[string]any{"difficulty": 9})
 	show("generate item for a difficulty with no type (rejected)", st, 400, body)
 
-	// --- attack/repair flow (QUIZ) ---
+	// --- attack/repair flow (QUIZ2) ---
 	st, _ = req("POST", "/api/register", access, map[string]any{"username": "quizzer", "password": "pw", "role": 0, "group_id": 2})
 	show("register attacker quizzer in group 2", st, 201, "")
 	_, body = req("POST", "/api/login", "", map[string]any{"username": "quizzer", "password": "pw"})
 	qAccess, _ := tokens(body)
 
-	st, _ = req("POST", "/api/state", access, map[string]any{"state": "QUIZ"})
-	show("teacher sets state QUIZ", st, 200, "")
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
+	show("teacher sets state QUIZ2", st, 200, "")
 
 	// group-2 student attacks group-1 slot 0 (item 3, normal, carries a question)
 	st, body = req("POST", "/api/question/target", qAccess, map[string]any{"target_group_id": 1, "target_slot_id": 0})
@@ -412,7 +412,7 @@ func main() {
 	show("target own non-broken slot (invalid)", st, 400, body)
 
 	st, body = req("POST", "/api/question/generate", qAccess, map[string]any{"difficulty": 1})
-	show("student generates item in QUIZ (blocked)", st, 403, body)
+	show("student generates item in QUIZ2 (blocked)", st, 403, body)
 
 	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
 	show("teacher sets state NORMAL", st, 200, "")

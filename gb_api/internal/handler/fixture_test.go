@@ -62,14 +62,14 @@ func newFixture() *fixture {
 	questionRepo := &mock.QuestionRepo{
 		Sessions: map[string]model.QuestionSession{},
 		Questions: map[uint]model.Question{
-			1: {Description: "2+2?\n(a)3\n(b)4", Answer: 1, Difficulty: 1, Area: 1},
+			1: {Content: model.TextContent("2+2?", "3", "4"), Answer: model.IndexAnswer(1), Difficulty: 1, Area: 1},
 		},
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
 		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, authRepo, groupRepo, buildingRepo)),
 		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo, authRepo)),
-		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, groupRepo, buildingRepo, itemRepo)),
+		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, groupRepo, buildingRepo, itemRepo, &mock.STTRepo{})),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
 		authRepo:     authRepo,
 		groupRepo:    groupRepo,

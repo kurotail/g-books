@@ -124,8 +124,8 @@ func parseSearchFilters(q url.Values) (difficulty, area *uint, err error) {
 	return difficulty, area, nil
 }
 
-// Search returns pool questions matching the ?q= substring, optionally filtered by
-// the exact-match ?difficulty= and ?area= parameters.
+// Search returns pool questions, optionally filtered by the exact-match ?difficulty=
+// and ?area= parameters.
 func (h *QuestionHandler) Search(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
@@ -138,7 +138,7 @@ func (h *QuestionHandler) Search(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Search(token, q.Get("q"), difficulty, area)
+	data, status, err := h.svc.Search(token, difficulty, area)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -160,10 +160,6 @@ func (h *QuestionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req model.QuestionInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	if req.Description == "" {
-		http.Error(w, "description 不可為空", http.StatusBadRequest)
 		return
 	}
 	status, err := h.svc.Update(token, uint(id), req)
@@ -208,11 +204,11 @@ func (h *QuestionHandler) Answer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 session", http.StatusBadRequest)
 		return
 	}
-	if req.Answer == nil {
+	if len(req.Answer) == 0 {
 		http.Error(w, "缺少 answer", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Answer(token, req.Session, *req.Answer)
+	data, status, err := h.svc.Answer(token, req.Session, req.Answer)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

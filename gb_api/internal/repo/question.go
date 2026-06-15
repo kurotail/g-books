@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	mrand "math/rand"
 	"sort"
-	"strings"
 	"time"
 
 	"gb-api/internal/model"
@@ -19,7 +18,7 @@ type QuestionRepo interface {
 	RandomQuestion(area uint, difficulty *uint) (uint, model.Question, bool, error)
 	GetQuestion(id uint) (model.Question, bool, error)
 	AddQuestions(qs []model.Question) ([]model.QuestionRecord, error)
-	SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error)
+	SearchQuestions(difficulty, area *uint) ([]model.QuestionRecord, error)
 	UpdateQuestion(id uint, q model.Question) (bool, error)
 	DeleteQuestion(id uint) (bool, error)
 }
@@ -93,18 +92,13 @@ func (_ *questionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord
 	return records, nil
 }
 
-// SearchQuestions returns pool questions matching the description substring (empty
-// matches all). The difficulty and area filters are applied only when non-nil, each
-// as an exact match, AND-combined with the substring.
-func (_ *questionRepo) SearchQuestions(query string, difficulty, area *uint) ([]model.QuestionRecord, error) {
-	needle := strings.ToLower(query)
+// SearchQuestions returns pool questions, optionally filtered by difficulty and area
+// (each applied only when non-nil, as an exact match, AND-combined).
+func (_ *questionRepo) SearchQuestions(difficulty, area *uint) ([]model.QuestionRecord, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	records := make([]model.QuestionRecord, 0, len(db.questions))
 	for id, q := range db.questions {
-		if needle != "" && !strings.Contains(strings.ToLower(q.Description), needle) {
-			continue
-		}
 		if difficulty != nil && q.Difficulty != *difficulty {
 			continue
 		}
@@ -120,11 +114,11 @@ func (_ *questionRepo) SearchQuestions(query string, difficulty, area *uint) ([]
 // toRecord maps a stored question to its teacher-facing record.
 func toRecord(id uint, q model.Question) model.QuestionRecord {
 	return model.QuestionRecord{
-		ID:          id,
-		Description: q.Description,
-		Answer:      q.Answer,
-		Difficulty:  q.Difficulty,
-		Area:        q.Area,
+		ID:         id,
+		Content:    q.Content,
+		Answer:     q.Answer,
+		Difficulty: q.Difficulty,
+		Area:       q.Area,
 	}
 }
 

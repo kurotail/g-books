@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -15,7 +16,7 @@ import (
 // session-only tests. Returns the service and its question repo mock.
 func newQuestionSvc(role uint) (*QuestionSvc, *mock.QuestionRepo) {
 	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}}
-	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}, &mock.GroupRepo{}, &mock.BuildingRepo{}, &mock.ItemRepo{}), r
+	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}, &mock.GroupRepo{}, &mock.BuildingRepo{}, &mock.ItemRepo{}, &mock.STTRepo{}), r
 }
 
 // newQuizSvc builds a QuestionSvc for caller "u" (role + group), a building (id 1)
@@ -27,8 +28,11 @@ func newQuizSvc(role, group uint, difficultyType map[uint][]uint, questions map[
 	groups := &mock.GroupRepo{BuildingIDs: map[uint]uint{group: 1}}
 	buildings := &mock.BuildingRepo{Buildings: map[uint]model.Building{1: {ID: 1, DifficultyType: difficultyType}}}
 	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
-	return NewQuestionSvc(r, users, groups, buildings, items), r, items
+	return NewQuestionSvc(r, users, groups, buildings, items, &mock.STTRepo{}), r, items
 }
+
+// idx is the wire form of an index answer the student submits to Answer.
+func idx(i uint) json.RawMessage { return model.IndexAnswer(i).Data }
 
 func accessTokenFor(t *testing.T, username string) string {
 	t.Helper()
@@ -51,7 +55,7 @@ func useState(t *testing.T, s model.ServerState) {
 
 // area1Q1 is an area-1, difficulty-1 question the item flow can draw.
 var area1Q1 = map[uint]model.Question{
-	1: {Description: "2+2?", Answer: 1, Difficulty: 1, Area: 1},
+	1: {Content: model.TextContent("2+2?", "3", "4"), Answer: model.IndexAnswer(1), Difficulty: 1, Area: 1},
 }
 
 func TestQuestionSvc_GenerateItem_Succeeds(t *testing.T) {
@@ -68,8 +72,8 @@ func TestQuestionSvc_GenerateItem_Succeeds(t *testing.T) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if raw["session"] == nil || raw["description"] == nil {
-		t.Error("expected session + description")
+	if raw["session"] == nil || raw["content"] == nil {
+		t.Error("expected session + content")
 	}
 	if _, leaked := raw["answer"]; leaked {
 		t.Error("response must not leak the answer")
@@ -161,7 +165,7 @@ func TestQuestionSvc_GenerateItem_InvalidToken(t *testing.T) {
 
 // area2Q is an area-2 question the repair flow can draw.
 var area2Q = map[uint]model.Question{
-	5: {Description: "repair?", Answer: 0, Difficulty: 1, Area: 2},
+	5: {Content: model.TextContent("repair?", "yes", "no"), Answer: model.IndexAnswer(0), Difficulty: 1, Area: 2},
 }
 
 func TestQuestionSvc_GenerateTarget_AttackValid(t *testing.T) {
@@ -244,8 +248,8 @@ func TestQuestionSvc_Upload_TeacherSucceeds(t *testing.T) {
 	s, r := newQuestionSvc(model.RoleTeacher)
 
 	inputs := []model.QuestionInput{
-		{Description: "2+2?\n(a)3\n(b)4", Answer: 1},
-		{Description: "Capital of France?\n(a)Paris\n(b)Rome", Answer: 0},
+		{Content: model.TextContent("2+2?", "3", "4"), Answer: model.IndexAnswer(1)},
+		{Content: model.TextContent("Capital of France?", "Paris", "Rome"), Answer: model.IndexAnswer(0)},
 	}
 	data, status, err := s.Upload(accessTokenFor(t, "teacher"), inputs)
 	if err != nil {
@@ -284,9 +288,9 @@ func TestQuestionSvc_Upload_PartialInvalidContinues(t *testing.T) {
 	s, r := newQuestionSvc(model.RoleTeacher)
 
 	inputs := []model.QuestionInput{
-		{Description: "valid one", Answer: 1},
-		{Description: "", Answer: 0}, // invalid: empty description
-		{Description: "valid two", Answer: 2},
+		{Content: model.TextContent("valid one", "a", "b"), Answer: model.IndexAnswer(1)},
+		{Content: model.TextContent(""), Answer: model.IndexAnswer(0)}, // invalid: empty description
+		{Content: model.TextContent("valid two", "a", "b", "c"), Answer: model.IndexAnswer(2)},
 	}
 	data, status, err := s.Upload(accessTokenFor(t, "teacher"), inputs)
 	if err != nil {
@@ -325,7 +329,7 @@ func TestQuestionSvc_Upload_StudentForbidden(t *testing.T) {
 	s, _ := newQuestionSvc(model.RoleStudent)
 
 	_, status, err := s.Upload(accessTokenFor(t, "student"),
-		[]model.QuestionInput{{Description: "x", Answer: 0}})
+		[]model.QuestionInput{{Content: model.TextContent("x", "a", "b"), Answer: model.IndexAnswer(0)}})
 	if err == nil {
 		t.Fatal("expected error for student upload")
 	}
@@ -350,7 +354,7 @@ func TestQuestionSvc_Upload_InvalidToken(t *testing.T) {
 	s, _ := newQuestionSvc(model.RoleTeacher)
 
 	_, status, err := s.Upload("bad.token",
-		[]model.QuestionInput{{Description: "x", Answer: 0}})
+		[]model.QuestionInput{{Content: model.TextContent("x", "a", "b"), Answer: model.IndexAnswer(0)}})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -359,14 +363,14 @@ func TestQuestionSvc_Upload_InvalidToken(t *testing.T) {
 	}
 }
 
-func TestQuestionSvc_Search_FindsMatch(t *testing.T) {
+func TestQuestionSvc_Search_ReturnsAllAndCarriesContent(t *testing.T) {
 	s, r := newQuestionSvc(model.RoleTeacher)
 	r.AddQuestions([]model.Question{
-		{Description: "What is six times three?", Answer: 1},
-		{Description: "Capital of France?", Answer: 0},
+		{Content: model.TextContent("What is six times three?", "6", "18"), Answer: model.IndexAnswer(1)},
+		{Content: model.TextContent("Capital of France?", "Paris", "Rome"), Answer: model.IndexAnswer(0)},
 	})
 
-	data, status, err := s.Search(accessTokenFor(t, "teacher"), "france", nil, nil)
+	data, status, err := s.Search(accessTokenFor(t, "teacher"), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -377,24 +381,28 @@ func TestQuestionSvc_Search_FindsMatch(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if len(resp.Questions) != 1 || resp.Questions[0].Description != "Capital of France?" {
-		t.Errorf("expected the France question, got %+v", resp.Questions)
+	if len(resp.Questions) != 2 {
+		t.Fatalf("expected 2 questions, got %d", len(resp.Questions))
+	}
+	// Records carry the structured content (in ascending id order).
+	if resp.Questions[0].Content.Description.Data != "What is six times three?" {
+		t.Errorf("expected the first question's content, got %+v", resp.Questions[0].Content)
 	}
 }
 
 func TestQuestionSvc_Search_FiltersByDifficultyAndArea(t *testing.T) {
 	s, r := newQuestionSvc(model.RoleTeacher)
 	r.AddQuestions([]model.Question{
-		{Description: "easy algebra", Answer: 0, Difficulty: 1, Area: 7},
-		{Description: "hard algebra", Answer: 0, Difficulty: 3, Area: 7},
-		{Description: "hard geometry", Answer: 0, Difficulty: 3, Area: 9},
+		{Content: model.TextContent("easy algebra", "a", "b"), Answer: model.IndexAnswer(0), Difficulty: 1, Area: 7},
+		{Content: model.TextContent("hard algebra", "a", "b"), Answer: model.IndexAnswer(0), Difficulty: 3, Area: 7},
+		{Content: model.TextContent("hard geometry", "a", "b"), Answer: model.IndexAnswer(0), Difficulty: 3, Area: 9},
 	})
 
 	u := func(v uint) *uint { return &v }
 
-	search := func(query string, difficulty, area *uint) []model.QuestionRecord {
+	search := func(difficulty, area *uint) []model.QuestionRecord {
 		t.Helper()
-		data, status, err := s.Search(accessTokenFor(t, "teacher"), query, difficulty, area)
+		data, status, err := s.Search(accessTokenFor(t, "teacher"), difficulty, area)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -409,44 +417,40 @@ func TestQuestionSvc_Search_FiltersByDifficultyAndArea(t *testing.T) {
 	}
 
 	// difficulty only: the two hard questions.
-	if got := search("", u(3), nil); len(got) != 2 {
+	if got := search(u(3), nil); len(got) != 2 {
 		t.Errorf("difficulty=3: expected 2, got %d (%+v)", len(got), got)
 	}
 	// area only: the two area-7 questions.
-	if got := search("", nil, u(7)); len(got) != 2 {
+	if got := search(nil, u(7)); len(got) != 2 {
 		t.Errorf("area=7: expected 2, got %d (%+v)", len(got), got)
 	}
 	// both: exact match on one question.
-	got := search("", u(3), u(7))
-	if len(got) != 1 || got[0].Description != "hard algebra" {
+	got := search(u(3), u(7))
+	if len(got) != 1 || got[0].Content.Description.Data != "hard algebra" {
 		t.Errorf("difficulty=3&area=7: expected only 'hard algebra', got %+v", got)
 	}
 	if got[0].Difficulty != 3 || got[0].Area != 7 {
 		t.Errorf("record must carry difficulty/area, got %+v", got[0])
 	}
-	// q AND-combines with the filters: substring excludes the geometry question.
-	if got := search("geometry", u(3), nil); len(got) != 1 || got[0].Description != "hard geometry" {
-		t.Errorf("q=geometry&difficulty=3: expected only 'hard geometry', got %+v", got)
-	}
-	if got := search("geometry", nil, u(7)); len(got) != 0 {
-		t.Errorf("q=geometry&area=7: expected no match, got %+v", got)
-	}
 }
 
 func TestQuestionSvc_Update_Succeeds(t *testing.T) {
 	s, r := newQuestionSvc(model.RoleTeacher)
-	created, _ := s.repo.AddQuestions([]model.Question{{Description: "old", Answer: 0}})
+	created, _ := s.repo.AddQuestions([]model.Question{{Content: model.TextContent("old", "a", "b"), Answer: model.IndexAnswer(0)}})
 	id := created[0].ID
 
 	status, err := s.Update(accessTokenFor(t, "teacher"), id,
-		model.QuestionInput{Description: "new", Answer: 2})
+		model.QuestionInput{Content: model.TextContent("new", "a", "b", "c"), Answer: model.IndexAnswer(2)})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	if got := r.Questions[id]; got.Description != "new" || got.Answer != 2 {
+	got := r.Questions[id]
+	var ans uint
+	json.Unmarshal(got.Answer.Data, &ans)
+	if got.Content.Description.Data != "new" || ans != 2 {
 		t.Errorf("expected question to be updated, got %+v", got)
 	}
 }
@@ -455,7 +459,7 @@ func TestQuestionSvc_Update_NotFound(t *testing.T) {
 	s, _ := newQuestionSvc(model.RoleTeacher)
 
 	status, err := s.Update(accessTokenFor(t, "teacher"), 999,
-		model.QuestionInput{Description: "x", Answer: 0})
+		model.QuestionInput{Content: model.TextContent("x", "a", "b"), Answer: model.IndexAnswer(0)})
 	if err == nil {
 		t.Fatal("expected error for missing question")
 	}
@@ -466,7 +470,7 @@ func TestQuestionSvc_Update_NotFound(t *testing.T) {
 
 func TestQuestionSvc_Delete_Succeeds(t *testing.T) {
 	s, r := newQuestionSvc(model.RoleTeacher)
-	created, _ := s.repo.AddQuestions([]model.Question{{Description: "doomed", Answer: 0}})
+	created, _ := s.repo.AddQuestions([]model.Question{{Content: model.TextContent("doomed", "a", "b"), Answer: model.IndexAnswer(0)}})
 	id := created[0].ID
 
 	status, err := s.Delete(accessTokenFor(t, "teacher"), id)
@@ -502,10 +506,10 @@ func TestQuestionSvc_Answer_ItemCorrectGrantsItem(t *testing.T) {
 		GroupID:   1,
 		Kind:      model.KindItem,
 		ItemID:    42,
-		Question:  model.Question{Answer: 1},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
-	data, status, err := s.Answer(accessTokenFor(t, "u"), "sid", 1)
+	data, status, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -534,10 +538,10 @@ func TestQuestionSvc_Answer_ItemWrongGrantsNothing(t *testing.T) {
 		GroupID:   1,
 		Kind:      model.KindItem,
 		ItemID:    42,
-		Question:  model.Question{Answer: 1},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
-	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 3)
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(3))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -559,10 +563,10 @@ func TestQuestionSvc_Answer_TargetAttackBreaks(t *testing.T) {
 		GroupID:   1,
 		Kind:      model.KindTarget,
 		Target:    &model.Target{GroupID: 2, SlotID: 0},
-		Question:  model.Question{Answer: 1},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
-	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 1)
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -584,10 +588,10 @@ func TestQuestionSvc_Answer_TargetAttackAlreadyBrokenFails(t *testing.T) {
 		GroupID:   1,
 		Kind:      model.KindTarget,
 		Target:    &model.Target{GroupID: 2, SlotID: 0},
-		Question:  model.Question{Answer: 1},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
-	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 1)
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -609,10 +613,10 @@ func TestQuestionSvc_Answer_TargetRepairFixes(t *testing.T) {
 		GroupID:   1,
 		Kind:      model.KindTarget,
 		Target:    &model.Target{GroupID: 1, SlotID: 0},
-		Question:  model.Question{Answer: 1},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
-	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 1)
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -634,10 +638,10 @@ func TestQuestionSvc_Answer_TargetWrongNoAction(t *testing.T) {
 		GroupID:   1,
 		Kind:      model.KindTarget,
 		Target:    &model.Target{GroupID: 2, SlotID: 0},
-		Question:  model.Question{Answer: 1},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
-	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", 9) // wrong
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(9)) // wrong
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -654,7 +658,7 @@ func TestQuestionSvc_Answer_TargetWrongNoAction(t *testing.T) {
 func TestQuestionSvc_Answer_UnknownSession(t *testing.T) {
 	s, _, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
 
-	_, status, err := s.Answer(accessTokenFor(t, "u"), "nope", 1)
+	_, status, err := s.Answer(accessTokenFor(t, "u"), "nope", idx(1))
 	if err == nil {
 		t.Fatal("expected error for unknown session")
 	}
@@ -667,10 +671,10 @@ func TestQuestionSvc_Answer_Expired(t *testing.T) {
 	s, r, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
 	r.Sessions["expired"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(-time.Minute),
-		Question:  model.Question{Answer: 1},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
-	_, status, err := s.Answer(accessTokenFor(t, "u"), "expired", 1)
+	_, status, err := s.Answer(accessTokenFor(t, "u"), "expired", idx(1))
 	if err == nil {
 		t.Fatal("expected error for expired session")
 	}
@@ -682,11 +686,67 @@ func TestQuestionSvc_Answer_Expired(t *testing.T) {
 func TestQuestionSvc_Answer_InvalidToken(t *testing.T) {
 	s, _, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
 
-	_, status, err := s.Answer("bad.token", "session-id", 1)
+	_, status, err := s.Answer("bad.token", "session-id", idx(1))
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if status != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", status)
+	}
+}
+
+// A voice_response answer is graded by transcribing the submitted audio URL (via the
+// mock STT) and comparing case-insensitively to the question's expected transcript.
+func TestQuestionSvc_Answer_VoiceResponseGradesViaSTT(t *testing.T) {
+	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}}
+	users := &mock.AuthRepo{Roles: map[string]uint{"u": model.RoleStudent}, Groups: map[string]uint{"u": 1}}
+	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
+	stt := &mock.STTRepo{Transcript: "Eighteen"} // returned regardless of the WAV bytes
+	s := NewQuestionSvc(r, users, &mock.GroupRepo{}, &mock.BuildingRepo{}, items, stt)
+
+	// The student's answer is a base64-encoded WAV recording.
+	wavB64 := base64.StdEncoding.EncodeToString([]byte("RIFF....WAVE fake audio"))
+	audio, _ := json.Marshal(wavB64)
+
+	// Transcript "Eighteen" matches the expected "eighteen" case-insensitively.
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		GroupID:   1,
+		Kind:      model.KindItem,
+		ItemID:    42,
+		Question:  model.Question{Answer: model.VoiceAnswer("eighteen")},
+	}
+	data, status, err := s.Answer(accessTokenFor(t, "u"), "sid", audio)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	var resp model.AnswerResponse
+	json.Unmarshal(data, &resp)
+	if !resp.Correct || resp.ItemID != 42 {
+		t.Errorf("expected correct transcript match granting item, got %+v", resp)
+	}
+	if _, ok := items.Inv[42]; !ok {
+		t.Error("expected item 42 added to inventory on a correct voice answer")
+	}
+
+	// A non-matching transcript grades incorrect.
+	stt.Transcript = "nineteen"
+	r.Sessions["sid2"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		GroupID:   1,
+		Kind:      model.KindItem,
+		ItemID:    43,
+		Question:  model.Question{Answer: model.VoiceAnswer("eighteen")},
+	}
+	data, _, err = s.Answer(accessTokenFor(t, "u"), "sid2", audio)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	json.Unmarshal(data, &resp)
+	if resp.Correct {
+		t.Error("expected incorrect when the transcript does not match")
 	}
 }

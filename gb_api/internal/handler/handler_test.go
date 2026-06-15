@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"testing"
 
@@ -665,19 +664,16 @@ func createdIDs(results []model.QuestionUploadResult) []uint {
 	return ids
 }
 
-func searchQuestions(t *testing.T, f *fixture, tok, q string) []model.QuestionRecord {
+// searchQuestions lists the pool via the search endpoint (no filters).
+func searchQuestions(t *testing.T, f *fixture, tok string) []model.QuestionRecord {
 	t.Helper()
-	target := "/api/question/search"
-	if q != "" {
-		target += "?q=" + url.QueryEscape(q)
-	}
-	rec := doReq(t, f.question.Search, http.MethodGet, target, tok, nil, nil)
+	rec := doReq(t, f.question.Search, http.MethodGet, "/api/question/search", tok, nil, nil)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("Search(%q): expected 200, got %d: %s", q, rec.Code, rec.Body.String())
+		t.Fatalf("Search: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var resp model.QuestionListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Search(%q): invalid JSON: %v", q, err)
+		t.Fatalf("Search: invalid JSON: %v", err)
 	}
 	return resp.Questions
 }
@@ -705,8 +701,8 @@ func TestQuestionHandler_UploadAppendsRepeatedly(t *testing.T) {
 	total := 0
 	for round := 1; round <= 3; round++ {
 		inputs := []model.QuestionInput{
-			{Description: fmt.Sprintf("round %d q1\n(a)x\n(b)y", round), Answer: 0},
-			{Description: fmt.Sprintf("round %d q2\n(a)x\n(b)y", round), Answer: 1},
+			{Content: model.TextContent(fmt.Sprintf("round %d q1", round), "x", "y"), Answer: model.IndexAnswer(0)},
+			{Content: model.TextContent(fmt.Sprintf("round %d q2", round), "x", "y"), Answer: model.IndexAnswer(1)},
 		}
 		for i, r := range uploadQuestions(t, f, tok, inputs) {
 			if r.Status != http.StatusCreated || r.ID == 0 {
@@ -716,7 +712,7 @@ func TestQuestionHandler_UploadAppendsRepeatedly(t *testing.T) {
 		total += len(inputs)
 	}
 
-	all := searchQuestions(t, f, tok, "")
+	all := searchQuestions(t, f, tok)
 	if len(all) != total {
 		t.Errorf("expected %d questions in pool, got %d", total, len(all))
 	}
@@ -735,9 +731,9 @@ func TestQuestionHandler_UploadPartialInvalid(t *testing.T) {
 	tok := f.login(t)
 
 	results := uploadQuestions(t, f, tok, []model.QuestionInput{
-		{Description: "valid one", Answer: 0},
-		{Description: "", Answer: 0}, // invalid: empty description
-		{Description: "valid two", Answer: 1},
+		{Content: model.TextContent("valid one", "a", "b"), Answer: model.IndexAnswer(0)},
+		{Content: model.TextContent(""), Answer: model.IndexAnswer(0)}, // invalid: empty description
+		{Content: model.TextContent("valid two", "a", "b"), Answer: model.IndexAnswer(1)},
 	})
 	if results[0].Status != http.StatusCreated || results[0].ID == 0 {
 		t.Errorf("result 0: expected created with id, got %+v", results[0])
@@ -748,35 +744,47 @@ func TestQuestionHandler_UploadPartialInvalid(t *testing.T) {
 	if results[2].Status != http.StatusCreated || results[2].ID == 0 {
 		t.Errorf("result 2: expected created with id, got %+v", results[2])
 	}
-	if got := searchQuestions(t, f, tok, ""); len(got) != 2 {
+	if got := searchQuestions(t, f, tok); len(got) != 2 {
 		t.Errorf("expected pool to hold 2 questions, got %d", len(got))
 	}
 }
 
-func TestQuestionHandler_SearchSeveralTimes(t *testing.T) {
+func TestQuestionHandler_SearchFiltersByDifficultyAndArea(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
 	uploadQuestions(t, f, tok, []model.QuestionInput{
-		{Description: "What is six times three?", Answer: 1},
-		{Description: "Capital of France?", Answer: 0},
-		{Description: "Capital of Italy?", Answer: 2},
-		{Description: "Largest planet?", Answer: 3},
+		{Content: model.TextContent("easy area7", "a", "b"), Answer: model.IndexAnswer(0), Difficulty: 1, Area: 7},
+		{Content: model.TextContent("hard area7", "a", "b"), Answer: model.IndexAnswer(0), Difficulty: 3, Area: 7},
+		{Content: model.TextContent("hard area9", "a", "b"), Answer: model.IndexAnswer(0), Difficulty: 3, Area: 9},
 	})
+
+	search := func(query string) []model.QuestionRecord {
+		t.Helper()
+		rec := doReq(t, f.question.Search, http.MethodGet, "/api/question/search"+query, tok, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Search(%q): expected 200, got %d: %s", query, rec.Code, rec.Body.String())
+		}
+		var resp model.QuestionListResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("Search(%q): invalid JSON: %v", query, err)
+		}
+		return resp.Questions
+	}
 
 	cases := []struct {
 		query string
 		want  int
 	}{
-		{"capital", 2}, // case-insensitive substring
-		{"France", 1},
-		{"planet", 1},
-		{"six", 1},
-		{"nomatch", 0},
-		{"", 4}, // empty query lists all
+		{"", 3}, // the 3 uploaded (ids 1-3 overwrite the fixture seed at id 1)
+		{"?difficulty=3", 2},
+		{"?area=7", 2},
+		{"?difficulty=3&area=7", 1},
+		{"?difficulty=3&area=9", 1},
+		{"?area=99", 0},
 	}
 	for _, c := range cases {
-		if got := searchQuestions(t, f, tok, c.query); len(got) != c.want {
+		if got := search(c.query); len(got) != c.want {
 			t.Errorf("search %q: expected %d matches, got %d (%+v)", c.query, c.want, len(got), got)
 		}
 	}
@@ -787,9 +795,9 @@ func TestQuestionHandler_UpdateSeveralTimes(t *testing.T) {
 	tok := f.login(t)
 
 	ids := createdIDs(uploadQuestions(t, f, tok, []model.QuestionInput{
-		{Description: "old one", Answer: 0},
-		{Description: "old two", Answer: 0},
-		{Description: "old three", Answer: 0},
+		{Content: model.TextContent("old one", "a", "b"), Answer: model.IndexAnswer(0)},
+		{Content: model.TextContent("old two", "a", "b"), Answer: model.IndexAnswer(0)},
+		{Content: model.TextContent("old three", "a", "b"), Answer: model.IndexAnswer(0)},
 	}))
 	if len(ids) != 3 {
 		t.Fatalf("expected 3 created ids, got %d", len(ids))
@@ -797,22 +805,22 @@ func TestQuestionHandler_UpdateSeveralTimes(t *testing.T) {
 
 	for i, id := range ids {
 		if code := updateQuestion(t, f, tok, id,
-			model.QuestionInput{Description: fmt.Sprintf("updated %d", i), Answer: uint(i)}); code != http.StatusOK {
+			model.QuestionInput{Content: model.TextContent(fmt.Sprintf("updated %d", i), "a", "b"), Answer: model.IndexAnswer(uint(i))}); code != http.StatusOK {
 			t.Fatalf("Update id %d: expected 200, got %d", id, code)
 		}
 	}
 
-	// Every question now carries its updated description.
-	if got := searchQuestions(t, f, tok, "updated"); len(got) != 3 {
-		t.Errorf("expected 3 updated questions, got %d", len(got))
+	// The 3 uploaded questions (ids 1-3 overwrite the fixture seed) are all updated.
+	if got := searchQuestions(t, f, tok); len(got) != 3 {
+		t.Errorf("expected 3 questions, got %d", len(got))
 	}
 
 	// Updating a missing id returns 404; a non-numeric id returns 400.
-	if code := updateQuestion(t, f, tok, 9999, model.QuestionInput{Description: "nope", Answer: 0}); code != http.StatusNotFound {
+	if code := updateQuestion(t, f, tok, 9999, model.QuestionInput{Content: model.TextContent("nope", "a", "b"), Answer: model.IndexAnswer(0)}); code != http.StatusNotFound {
 		t.Errorf("Update missing id: expected 404, got %d", code)
 	}
 	bad := doReq(t, f.question.Update, http.MethodPut, "/api/question/abc", tok,
-		model.QuestionInput{Description: "nope", Answer: 0}, map[string]string{"id": "abc"})
+		model.QuestionInput{Content: model.TextContent("nope", "a", "b"), Answer: model.IndexAnswer(0)}, map[string]string{"id": "abc"})
 	if bad.Code != http.StatusBadRequest {
 		t.Errorf("Update non-numeric id: expected 400, got %d", bad.Code)
 	}
@@ -823,9 +831,9 @@ func TestQuestionHandler_DeleteSeveralTimes(t *testing.T) {
 	tok := f.login(t)
 
 	ids := createdIDs(uploadQuestions(t, f, tok, []model.QuestionInput{
-		{Description: "doomed one", Answer: 0},
-		{Description: "doomed two", Answer: 0},
-		{Description: "doomed three", Answer: 0},
+		{Content: model.TextContent("doomed one", "a", "b"), Answer: model.IndexAnswer(0)},
+		{Content: model.TextContent("doomed two", "a", "b"), Answer: model.IndexAnswer(0)},
+		{Content: model.TextContent("doomed three", "a", "b"), Answer: model.IndexAnswer(0)},
 	}))
 	if len(ids) != 3 {
 		t.Fatalf("expected 3 created ids, got %d", len(ids))
@@ -841,7 +849,8 @@ func TestQuestionHandler_DeleteSeveralTimes(t *testing.T) {
 		}
 	}
 
-	if remaining := searchQuestions(t, f, tok, ""); len(remaining) != 0 {
+	// The uploads (ids 1-3) overwrote the fixture seed, so the pool is now empty.
+	if remaining := searchQuestions(t, f, tok); len(remaining) != 0 {
 		t.Errorf("expected empty pool after deletes, got %d", len(remaining))
 	}
 }
@@ -850,7 +859,7 @@ func TestQuestionHandler_PoolManagement_StudentForbidden(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 	// Seed one question as a teacher, then demote the caller to Student.
-	ids := createdIDs(uploadQuestions(t, f, tok, []model.QuestionInput{{Description: "seed", Answer: 0}}))
+	ids := createdIDs(uploadQuestions(t, f, tok, []model.QuestionInput{{Content: model.TextContent("seed", "a", "b"), Answer: model.IndexAnswer(0)}}))
 	if len(ids) != 1 {
 		t.Fatalf("expected 1 created id, got %d", len(ids))
 	}
@@ -858,7 +867,7 @@ func TestQuestionHandler_PoolManagement_StudentForbidden(t *testing.T) {
 	f.authRepo.Roles["user"] = model.RoleStudent
 
 	upload := doReq(t, f.question.Upload, http.MethodPost, "/api/question/upload", tok,
-		model.UploadQuestionsRequest{Questions: []model.QuestionInput{{Description: "x", Answer: 0}}}, nil)
+		model.UploadQuestionsRequest{Questions: []model.QuestionInput{{Content: model.TextContent("x", "a", "b"), Answer: model.IndexAnswer(0)}}}, nil)
 	if upload.Code != http.StatusForbidden {
 		t.Errorf("student upload: expected 403, got %d", upload.Code)
 	}
@@ -866,7 +875,7 @@ func TestQuestionHandler_PoolManagement_StudentForbidden(t *testing.T) {
 	if search.Code != http.StatusForbidden {
 		t.Errorf("student search: expected 403, got %d", search.Code)
 	}
-	if code := updateQuestion(t, f, tok, id, model.QuestionInput{Description: "x", Answer: 0}); code != http.StatusForbidden {
+	if code := updateQuestion(t, f, tok, id, model.QuestionInput{Content: model.TextContent("x", "a", "b"), Answer: model.IndexAnswer(0)}); code != http.StatusForbidden {
 		t.Errorf("student update: expected 403, got %d", code)
 	}
 	if code := deleteQuestion(t, f, tok, id); code != http.StatusForbidden {

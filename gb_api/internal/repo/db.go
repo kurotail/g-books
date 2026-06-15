@@ -91,27 +91,40 @@ func newDatabase() *Database {
 				Kind:      model.KindItem,
 				ItemID:    4,
 				Question: model.Question{
-					Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
-					Answer:      1,
+					Content: model.TextContent("What is six times three?", "6", "18", "9", "12"),
+					Answer:  model.IndexAnswer(1),
 				},
 			},
 		},
 		refreshTokens: map[string]struct{}{},
 		questions: map[uint]model.Question{
 			1: {
-				Description: "What is six times three?\n(a)6\n(b)18\n(c)9\n(d)12",
-				Answer:      1,
-				Difficulty:  1,
-				Area:        1,
+				Content:    model.TextContent("What is six times three?", "6", "18", "9", "12"),
+				Answer:     model.IndexAnswer(1),
+				Difficulty: 1,
+				Area:       1,
 			},
 			2: {
-				Description: "Who is F\n(a)HRM\n(b)M's child\n(c)White cat\n(d)O's Big sis",
-				Answer:      0,
-				Difficulty:  2,
-				Area:        2,
+				Content:    model.TextContent("Who is F", "HRM", "M's child", "White cat", "O's Big sis"),
+				Answer:     model.IndexAnswer(0),
+				Difficulty: 2,
+				Area:       2,
+			},
+			3: {
+				// A voice_response question: the prompt is an audio clip and the
+				// answer is graded by transcribing the student's spoken reply.
+				// Difficulty 3 keeps it out of the seed item-generate flow (the seed
+				// building only generates difficulties 1 and 2) while leaving it in
+				// the pool for search and manual use.
+				Content: model.Content{
+					Description: model.Description{Type: model.DescVoice, Data: "https://example.com/audio/q3.mp3"},
+				},
+				Answer:     model.VoiceAnswer("eighteen"),
+				Difficulty: 3,
+				Area:       1,
 			},
 		},
-		nextQuestionID: 3,
+		nextQuestionID: 4,
 		nextBuildingID: 2,
 		nextItemID:     5,
 	}
