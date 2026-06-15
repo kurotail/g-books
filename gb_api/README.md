@@ -63,6 +63,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/building` | Bearer (> Student) | Create a building |
 | `GET /api/building` | Bearer | List all buildings |
 | `GET /api/building/{id}` | Bearer | Read a building by ID |
+| `PUT /api/building/{id}` | Bearer (> Student) | Replace a building by ID |
 | `POST /api/item` | Bearer | Read all of a group's items (inventory + slots) |
 | `POST /api/item/inv2slot` | Bearer (not Student in QUIZ2) | Move one item from inventory into a slot (swaps out any normal item already there) |
 | `POST /api/item/slot2inv` | Bearer (not Student in QUIZ2) | Return a slotted item to the inventory |
@@ -412,6 +413,47 @@ Read a single building by ID. Any authenticated user may call it.
 |--------|-----------|
 | `400`  | A non-numeric `{id}` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `404`  | No building with that `id` |
+
+---
+
+### `PUT /api/building/{id}`
+
+Replace an existing building. **Teachers and Admins only.** The request body has the
+same shape as [`POST /api/building`](#post-apibuilding) and is a **full replace**: every
+field is overwritten, so omitted `layout`, `item_allowed_slot`, and `difficulty_type`
+values are cleared (read back as empty). `name` is required.
+
+**Request**
+
+```json
+{
+  "name": "Library",
+  "layout": "{\"w\":4,\"h\":2}",
+  "item_allowed_slot": { "10": [0, 2], "20": [1] },
+  "difficulty_type": { "1": [10, 30], "2": [20] }
+}
+```
+
+**Response `200 OK`** — the updated building
+
+```json
+{
+  "building_id": 1,
+  "name": "Library",
+  "layout": "{\"w\":4,\"h\":2}",
+  "item_allowed_slot": { "10": [0, 2], "20": [1] },
+  "difficulty_type": { "1": [10, 30], "2": [20] }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}`, malformed JSON body, or a missing `name` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
 | `404`  | No building with that `id` |
 
 ---

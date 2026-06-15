@@ -9,6 +9,7 @@ import (
 
 type BuildingRepo interface {
 	CreateBuilding(name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) (uint, error)
+	UpdateBuilding(id uint, name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) error
 	GetBuilding(id uint) (model.Building, error)
 	GetAllBuildings() ([]model.Building, error)
 }
@@ -54,6 +55,20 @@ func (_ *buildingRepo) CreateBuilding(name, layout string, typeAllowedSlot map[u
 		DifficultyType:  copyUintSliceMap(difficultyType),
 	}
 	return id, nil
+}
+
+func (_ *buildingRepo) UpdateBuilding(id uint, name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	b := db.buildings[id]
+	if b == nil {
+		return apperr.ErrBuildingNotFound
+	}
+	b.Name = name
+	b.Layout = layout
+	b.TypeAllowedSlot = copyUintSliceMap(typeAllowedSlot)
+	b.DifficultyType = copyUintSliceMap(difficultyType)
+	return nil
 }
 
 func (_ *buildingRepo) GetBuilding(id uint) (model.Building, error) {

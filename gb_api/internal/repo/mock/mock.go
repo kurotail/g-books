@@ -220,6 +220,14 @@ func (m *BuildingRepo) CreateBuilding(name, layout string, typeAllowedSlot map[u
 	return id, nil
 }
 
+func (m *BuildingRepo) UpdateBuilding(id uint, name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) error {
+	if _, ok := m.Buildings[id]; !ok {
+		return apperr.ErrBuildingNotFound
+	}
+	m.Buildings[id] = model.Building{ID: id, Name: name, Layout: layout, TypeAllowedSlot: typeAllowedSlot, DifficultyType: difficultyType}
+	return nil
+}
+
 func (m *BuildingRepo) GetBuilding(id uint) (model.Building, error) {
 	b, ok := m.Buildings[id]
 	if !ok {

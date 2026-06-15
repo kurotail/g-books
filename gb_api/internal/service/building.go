@@ -47,6 +47,36 @@ func (s *BuildingSvc) Create(accessToken, name, layout string, typeAllowedSlot m
 	return data, http.StatusOK, nil
 }
 
+// Update replaces every field of the building identified by id. Only teachers/admins may update.
+func (s *BuildingSvc) Update(accessToken string, id uint, name, layout string, typeAllowedSlot map[uint][]uint, difficultyType map[uint][]uint) ([]byte, int, error) {
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
+		return nil, status, err
+	}
+	if err := s.repo.UpdateBuilding(id, name, layout, typeAllowedSlot, difficultyType); err != nil {
+		if errors.Is(err, apperr.ErrBuildingNotFound) {
+			return nil, http.StatusNotFound, err
+		}
+		return nil, http.StatusInternalServerError, err
+	}
+	b, err := s.repo.GetBuilding(id)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	data, err := json.Marshal(
+		model.Building{
+			ID:              b.ID,
+			Name:            b.Name,
+			Layout:          b.Layout,
+			TypeAllowedSlot: b.TypeAllowedSlot,
+			DifficultyType:  b.DifficultyType,
+		},
+	)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return data, http.StatusOK, nil
+}
+
 func (s *BuildingSvc) Get(accessToken string, id uint) ([]byte, int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return nil, http.StatusUnauthorized, err
