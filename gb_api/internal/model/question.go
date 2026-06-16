@@ -193,4 +193,5 @@ var States = map[ServerState]struct{}{
 type StateResponse struct {
 	State     ServerState `json:"state"`
 	UpdatedAt time.Time   `json:"updated_at"`
+	EndTime   *time.Time  `json:"end_time,omitempty"` // when state auto-reverts to NORMAL; nil = no schedule
 }

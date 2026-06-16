@@ -1038,7 +1038,9 @@ Remove the pooled question with the given `id`.
 ### `GET /api/state`
 
 Read the current server state. `updated_at` is the RFC 3339 timestamp of the last
-state change (the server start time for the initial `NORMAL`).
+state change (the server start time for the initial `NORMAL`). `end_time`, when
+present, is the RFC 3339 time at which the state will automatically revert to
+`NORMAL`; it is omitted when no auto-revert is scheduled.
 
 **Response `200 OK`**
 
@@ -1053,23 +1055,30 @@ state change (the server start time for the initial `NORMAL`).
 Transition the server state to one of `NORMAL`, `QUIZ1`, or `QUIZ2`. Only Teachers and
 Admins may call it.
 
+An optional `end_time` (RFC 3339) schedules an **automatic revert to `NORMAL`** once
+that time passes — a background poller checks it about once a second. The end time
+must be in the future, and is ignored when the target state is `NORMAL`. Each
+request **overwrites** any previous schedule: omitting `end_time` (or setting
+`NORMAL`) clears it.
+
 **Request**
 
 ```json
-{ "state": "QUIZ2" }
+{ "state": "QUIZ2", "end_time": "2026-06-15T10:00:00Z" }
 ```
 
-**Response `200 OK`** — echoes the new state and the `updated_at` it was set at
+**Response `200 OK`** — echoes the new state, the `updated_at` it was set at, and the
+scheduled `end_time` (omitted when none)
 
 ```json
-{ "state": "QUIZ2", "updated_at": "2026-06-15T09:30:00Z" }
+{ "state": "QUIZ2", "updated_at": "2026-06-15T09:30:00Z", "end_time": "2026-06-15T10:00:00Z" }
 ```
 
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, a missing `state`, or a state other than `NORMAL` / `QUIZ1` / `QUIZ2` |
+| `400`  | Malformed JSON body, a missing `state`, a state other than `NORMAL` / `QUIZ1` / `QUIZ2`, or an `end_time` that is not in the future |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
 

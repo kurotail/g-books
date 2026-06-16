@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,7 +17,8 @@ import (
 var (
 	stateMu   sync.RWMutex
 	state     = model.StateNormal
-	updatedAt = time.Now() // when state last changed (server start for the initial NORMAL)
+	updatedAt = time.Now()  // when state last changed (server start for the initial NORMAL)
+	endTime   = time.Time{} // when the state auto-reverts to NORMAL; zero = no schedule
 )
 
 func getState() model.ServerState {
@@ -25,27 +27,73 @@ func getState() model.ServerState {
 	return state
 }
 
-// stateSnapshot returns the current state and the time it last changed, read together
-// under the lock so the pair is always consistent.
+// snapshotLocked builds the current state response. Callers must hold stateMu.
+func snapshotLocked() model.StateResponse {
+	resp := model.StateResponse{State: state, UpdatedAt: updatedAt}
+	if !endTime.IsZero() {
+		e := endTime
+		resp.EndTime = &e
+	}
+	return resp
+}
+
+// stateSnapshot returns the current state, the time it last changed, and any
+// scheduled end time, read together under the lock so they are always consistent.
 func stateSnapshot() model.StateResponse {
 	stateMu.RLock()
 	defer stateMu.RUnlock()
-	return model.StateResponse{State: state, UpdatedAt: updatedAt}
+	return snapshotLocked()
 }
 
-func setState(s model.ServerState) {
+func setStateUntil(s model.ServerState, end time.Time) {
 	stateMu.Lock()
 	changed := state != s
+	endChanged := !endTime.Equal(end)
 	if changed {
 		state = s
 		updatedAt = time.Now()
 	}
-	snap := model.StateResponse{State: state, UpdatedAt: updatedAt}
+	endTime = end
+	snap := snapshotLocked()
 	stateMu.Unlock()
-	// Only a real transition (between NORMAL / QUIZ1 / QUIZ2) is worth notifying about.
-	if changed {
+	// Notify on a real transition or a (re)scheduled end time.
+	if changed || endChanged {
 		stateHub.broadcast(snap)
 	}
+}
+
+// revertIfDue transitions to NORMAL and clears the schedule when the end time
+func revertIfDue(now time.Time) {
+	stateMu.Lock()
+	if endTime.IsZero() || now.Before(endTime) {
+		stateMu.Unlock()
+		return
+	}
+	if state != model.StateNormal {
+		state = model.StateNormal
+		updatedAt = time.Now()
+	}
+	endTime = time.Time{}
+	snap := snapshotLocked()
+	stateMu.Unlock()
+	stateHub.broadcast(snap)
+}
+
+// StartStateScheduler launches a goroutine that polls the scheduled end time and
+// reverts the state to NORMAL once it passes. It runs until ctx is cancelled.
+func StartStateScheduler(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case t := <-ticker.C:
+				revertIfDue(t)
+			}
+		}
+	}()
 }
 
 // --- broadcast hub ---
@@ -106,14 +154,22 @@ func (s *StateSvc) GetState(accessToken string) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
-func (s *StateSvc) SetState(accessToken string, state model.ServerState) ([]byte, int, error) {
+// SetState transitions the global state. Teachers/admins only.
+func (s *StateSvc) SetState(accessToken string, st model.ServerState, endTime *time.Time) ([]byte, int, error) {
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return nil, status, err
 	}
-	if _, ok := model.States[state]; !ok {
-		return nil, http.StatusBadRequest, fmt.Errorf("不合法的狀態: %q", state)
+	if _, ok := model.States[st]; !ok {
+		return nil, http.StatusBadRequest, fmt.Errorf("不合法的狀態: %q", st)
 	}
-	setState(state)
+	var end time.Time
+	if endTime != nil && st != model.StateNormal {
+		if !endTime.After(time.Now()) {
+			return nil, http.StatusBadRequest, fmt.Errorf("end_time 必須是未來時間")
+		}
+		end = *endTime
+	}
+	setStateUntil(st, end)
 	data, err := json.Marshal(stateSnapshot())
 	if err != nil {
 		return nil, http.StatusInternalServerError, err

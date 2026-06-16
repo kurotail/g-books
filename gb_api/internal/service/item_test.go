@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"gb-api/internal/model"
 	"gb-api/internal/repo/mock"
@@ -264,8 +265,8 @@ func TestItemSvc_TranInv2Slot_BrokenSlotRejected(t *testing.T) {
 func TestItemSvc_TranInv2Slot_StudentBlockedInQuiz(t *testing.T) {
 	s, _ := newItemSvcAs(model.RoleStudent, 0)
 
-	setState(model.StateQuiz2)
-	defer setState(model.StateNormal)
+	setStateUntil(model.StateQuiz2, time.Time{})
+	defer setStateUntil(model.StateNormal, time.Time{})
 
 	status, err := s.TranInv2Slot(validAccessToken(t), 0, 1, 5)
 	if err == nil {
@@ -404,8 +405,8 @@ func TestItemSvc_TranSlot2Inv_StudentOtherGroupForbidden(t *testing.T) {
 func TestItemSvc_TranSlot2Inv_StudentBlockedInQuiz(t *testing.T) {
 	s, _ := newItemSvcAs(model.RoleStudent, 0)
 
-	setState(model.StateQuiz2)
-	defer setState(model.StateNormal)
+	setStateUntil(model.StateQuiz2, time.Time{})
+	defer setStateUntil(model.StateNormal, time.Time{})
 
 	status, err := s.TranSlot2Inv(validAccessToken(t), 0, 0)
 	if err == nil {

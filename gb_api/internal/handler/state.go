@@ -104,11 +104,11 @@ func (h *StateHandler) SetState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 state", http.StatusBadRequest)
 		return
 	}
-	if _, exist := model.States[req.State]; !exist{
+	if _, exist := model.States[req.State]; !exist {
 		http.Error(w, "不合法的狀態", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.SetState(token, req.State)
+	data, status, err := h.svc.SetState(token, req.State, req.EndTime)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

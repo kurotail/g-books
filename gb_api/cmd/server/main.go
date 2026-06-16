@@ -75,6 +75,11 @@ func main() {
 		Handler: mux,
 	}
 
+	// Poll the scheduled state end time and auto-revert to NORMAL; stops on shutdown.
+	rootCtx, stopScheduler := context.WithCancel(context.Background())
+	defer stopScheduler()
+	service.StartStateScheduler(rootCtx, time.Second)
+
 	go func() {
 		logger.L.Info("server started, port " + strings.TrimPrefix(server.Addr, ":"))
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

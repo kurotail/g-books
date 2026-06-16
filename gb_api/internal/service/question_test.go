@@ -47,8 +47,8 @@ func accessTokenFor(t *testing.T, username string) string {
 // restores StateNormal afterwards.
 func useState(t *testing.T, s model.ServerState) {
 	t.Helper()
-	setState(s)
-	t.Cleanup(func() { setState(model.StateNormal) })
+	setStateUntil(s, time.Time{})
+	t.Cleanup(func() { setStateUntil(model.StateNormal, time.Time{}) })
 }
 
 // --- GenerateItem (QUIZ1 state) ---
