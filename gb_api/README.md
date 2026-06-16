@@ -3,22 +3,32 @@
 REST API server for g-books, built with Go's standard `net/http` library and JWT-based authentication.
 
 - **Runtime:** Go 1.26+
-- **Port:** `8080`
+- **Edge:** nginx reverse proxy terminating HTTPS on `443` (HTTP on `80` redirects to it)
 - **Auth scheme:** JWT (HS256) — short-lived access tokens + single-use rotating refresh tokens
-- **Real-time:** server-state changes are pushed to subscribers over a WebSocket (`GET /api/state/ws`)
+- **Real-time:** server-state changes are pushed to subscribers over a WebSocket (`GET /api/state/ws`, reached at `wss://localhost/api/state/ws`)
 
 ---
 
 ## Run
 
-Build the image and start a container:
+The stack runs as two containers via Docker Compose: the Go API (`api`, internal only) and an nginx reverse proxy (`nginx`) that terminates HTTPS and serves uploaded media.
+
+**1. Generate a self-signed TLS certificate** (one time; written to `nginx/certs/`):
 
 ```bash
-docker build -t gb-api .
-docker run --rm --env-file .env -p 8080:8080 gb-api
+sh nginx/gen-certs.sh          # or, on Windows PowerShell:
+# powershell -ExecutionPolicy Bypass -File .\nginx\gen-certs.ps1
 ```
 
-The server listens on `8080` inside the container; `-p 8080:8080` publishes it to the host.
+**2. Start the stack:**
+
+```bash
+docker compose up --build
+```
+
+The API is reached through nginx at **`https://localhost`** (e.g. `https://localhost/api/login`). Plain `http://localhost` 301-redirects to HTTPS. The API container's `8080` is not published to the host — only nginx talks to it over the internal network.
+
+> The certificate is self-signed, so clients will warn about an untrusted cert. Use `curl -k`, or trust `nginx/certs/server.crt` locally.
 
 ---
 
@@ -75,6 +85,8 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `GET /api/question/{id}` | Bearer | Fetch a single pooled question by ID |
 | `PUT /api/question/{id}` | Bearer (> Student) | Update a pooled question by ID |
 | `DELETE /api/question/{id}` | Bearer (> Student) | Delete a pooled question by ID |
+| `POST /api/image` | Bearer | Upload an image; returns the URL it is served at |
+| `POST /api/audio` | Bearer | Upload an audio file; returns the URL it is served at |
 | `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ1` / `QUIZ2`) |
 | `POST /api/state` | Bearer (> Student) | Transition the server state |
 | `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every state transition |
@@ -1040,6 +1052,80 @@ may be supplied either way:
 | Status | Condition |
 |--------|-----------|
 | `401`  | Missing or invalid access token — the handshake is rejected before the upgrade |
+
+---
+
+## Media uploads
+
+Authenticated users can upload **images** and **audio files**. Each upload is stored
+on disk under a random name and the response carries the URL it can be fetched from.
+Uploaded files are served as **static files** — `/images/<filename>` for images and
+`/audio/<filename>` for audio — and do not pass back through the API on read (in the
+Docker Compose stack, nginx serves them directly off a volume shared with the API).
+
+Both endpoints take a `multipart/form-data` body with a single **`file`** field and
+require a valid access token:
+
+```
+Authorization: Bearer <access_token>
+```
+
+The stored file's type is determined by **sniffing its content**, not by trusting the
+client-supplied name. For audio — where content sniffing is unreliable (e.g. a tag-less
+MP3) — the original filename extension is used as a fallback only when the content is
+otherwise unrecognized.
+
+| Category | Endpoint | Accepted formats | Default size cap | Served at |
+|----------|----------|------------------|------------------|-----------|
+| Image | `POST /api/image` | JPEG, PNG, GIF, WebP | 10 MiB | `/images/<filename>` |
+| Audio | `POST /api/audio` | MP3, WAV, OGG, AIFF, M4A, AAC, FLAC | 25 MiB | `/audio/<filename>` |
+
+### `POST /api/image` · `POST /api/audio`
+
+Upload a single file. The request is `multipart/form-data` with the file in the `file`
+field; everything else (storage path, generated name, served URL) is handled by the server.
+
+**Request**
+
+```
+POST /api/image
+Authorization: Bearer <access_token>
+Content-Type: multipart/form-data; boundary=...
+
+file=<binary file data>
+```
+
+**Response `201 Created`** — `url` is the path the file is served at
+
+```json
+{
+  "filename": "9f86d081884c7d659a2feaa0c55ad015.jpg",
+  "url": "/images/9f86d081884c7d659a2feaa0c55ad015.jpg"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Missing `file` field, or the upload could not be read (including a body far exceeding the cap) |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `413`  | The file exceeds the category's size cap |
+| `415`  | The file is not an accepted image / audio format |
+
+### Configuration
+
+The upload directory and per-category size caps are configurable via environment variables:
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `UPLOAD_DIR` | `/srv/uploads` | Directory uploads are written to (under `images/` and `audio/` subdirs); in Compose this is a volume shared with nginx |
+| `MAX_IMAGE_MB` | `10` | Maximum image upload size, in MiB |
+| `MAX_AUDIO_MB` | `25` | Maximum audio upload size, in MiB |
+
+> When raising `MAX_AUDIO_MB`, also bump `client_max_body_size` in
+> `nginx/conf.d/default.conf` so nginx does not reject the larger body before it
+> reaches the API.
 
 ---
 

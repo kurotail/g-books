@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    image: gb-api:latest
+    env_file:
+      - .env
+    environment:
+      - UPLOAD_DIR=/srv/uploads
+      # Per-category upload caps (MiB). If you raise MAX_AUDIO_MB, also bump
+      # client_max_body_size in nginx/conf.d/default.conf to match.
+      - MAX_IMAGE_MB=10
+      - MAX_AUDIO_MB=25
+    # Not published to the host: only nginx talks to it over the internal network.
+    expose:
+      - "8080"
+    volumes:
+      - uploads:/srv/uploads
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      # Read-only access to the same volume the API writes uploads to.
+      - uploads:/srv/uploads:ro
+    restart: unless-stopped
+
+volumes:
+  uploads:

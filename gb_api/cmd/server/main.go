@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"gb-api/internal/config"
 	"gb-api/internal/handler"
 	"gb-api/internal/logger"
 	"gb-api/internal/repo"
@@ -23,6 +24,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
 	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo(), repo.InitUserRepo()))
 	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
+	mediaHandler := handler.NewMediaHandler(service.NewMediaSvc(config.UploadDir, config.MaxImageMB, config.MaxAudioMB))
 
 	mux := http.NewServeMux()
 
@@ -53,6 +55,9 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("GET /api/question/{id}", questionHandler.Get)
 	mux.HandleFunc("PUT /api/question/{id}", questionHandler.Update)
 	mux.HandleFunc("DELETE /api/question/{id}", questionHandler.Delete)
+
+	mux.HandleFunc("POST /api/image", mediaHandler.UploadImage)
+	mux.HandleFunc("POST /api/audio", mediaHandler.UploadAudio)
 
 	mux.HandleFunc("GET /api/state", stateHandler.GetState)
 	mux.HandleFunc("POST /api/state", stateHandler.SetState)
