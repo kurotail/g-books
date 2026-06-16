@@ -67,10 +67,12 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/refresh` | — | Rotate a refresh token into a new token pair |
 | `GET /api/users` | Bearer | List all users (username, role, group, profile picture) |
 | `POST /api/users/pfp` | Bearer (self or > Student) | Set a user's profile-picture link (empty `profile_pic_url` clears it) |
+| `DELETE /api/users/{username}` | Bearer (> Student) | Delete a user (cannot delete yourself) |
 | `POST /api/group/set` | Bearer (> Student) | Assign a user to a group (`group_id` `0` removes them) |
 | `POST /api/group/name` | Bearer (member or > Student) | Rename a group |
 | `POST /api/group/building` | Bearer (member or > Student) | Set a group's building (`building_id` `0` clears it) |
 | `POST /api/group/pfp` | Bearer (member or > Student) | Set a group's profile-picture link (empty `profile_pic_url` clears it) |
+| `DELETE /api/group/{id}` | Bearer (> Student) | Delete a group (former members are reset to no group) |
 | `GET /api/group` | Bearer | Read the caller's own group (includes members list) |
 | `POST /api/building` | Bearer (> Student) | Create a building |
 | `GET /api/building` | Bearer | List all buildings |
@@ -259,6 +261,24 @@ is stored and returned verbatim (typically a URL returned by `POST /api/image`).
 
 ---
 
+### `DELETE /api/users/{username}`
+
+Delete a user account. **Teachers and Admins only.** A caller cannot delete the
+account they are authenticated as.
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Missing `username` in the path |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower, or the caller is deleting their own account |
+| `404`  | The target `username` does not exist |
+
+---
+
 ### `POST /api/group/set`
 
 Assign `username` to a group. **Teachers and Admins only.** A `group_id` of `0`
@@ -353,6 +373,25 @@ group**, or a **Teacher / Admin** (who may set any group's picture). An empty
 | `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller is neither a member of the group nor a Teacher/Admin |
+
+---
+
+### `DELETE /api/group/{id}`
+
+Delete a group. **Teachers and Admins only.** Any users that belonged to the
+group have their membership cleared (their `group_id` is reset to `0`). The
+group's name, building assignment, and profile picture are removed with it.
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `id` is not a valid number, or is `0` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | No such group (no stored group and no user references it) |
 
 ---
 

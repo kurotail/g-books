@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"gb-api/internal/model"
 	"gb-api/internal/service"
@@ -125,6 +126,29 @@ func (h *GroupHandler) SetProfilePic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status, err := h.svc.SetProfilePic(token, *req.GroupID, req.ProfilePicURL)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(status)
+}
+
+func (h *GroupHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "不合法的 group id", http.StatusBadRequest)
+		return
+	}
+	if id == 0 {
+		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.DeleteGroup(token, uint(id))
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

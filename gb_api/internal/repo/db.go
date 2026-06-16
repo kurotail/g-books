@@ -19,11 +19,12 @@ type User struct {
 // Group is a row in the groups table. Primary key: ID.
 type Group struct {
 	ID            uint
-	Name          string            // empty = use the default "Group <id>"
-	BuildingID    uint              // FK -> buildings; 0 = no building assigned
-	Inventory     map[uint]struct{} // set of owned (unslotted) item_ids
-	Slots         map[uint]int      // slot_id -> signed item_id (negative = broken)
-	ProfilePicURL string            // image link; empty = no picture
+	Name          string              // empty = use the default "Group <id>"
+	BuildingID    uint                // FK -> buildings; 0 = no building assigned
+	Inventory     map[uint]struct{}   // set of owned (unslotted) item_ids
+	Slots         map[uint]int        // slot_id -> signed item_id (negative = broken)
+	ProfilePicURL string              // image link; empty = no picture
+	Members       map[string]struct{} // set of member usernames; kept in sync with User.GroupID
 }
 
 // Building is a row in the buildings table. Primary key: ID.
@@ -69,6 +70,7 @@ func newDatabase() *Database {
 				ID:        1,
 				Inventory: map[uint]struct{}{1: {}, 2: {}, 4: {}},
 				Slots:     map[uint]int{0: 3},
+				Members:   map[string]struct{}{"user": {}},
 			},
 		},
 		buildings: map[uint]*Building{

@@ -166,6 +166,29 @@ func (s *AuthSvc) SetProfilePic(accessToken, username, url string) (int, error) 
 	return http.StatusOK, nil
 }
 
+// DeleteUser removes a user account. Teachers/admins only; a caller cannot
+// delete the account they are authenticated as.
+func (s *AuthSvc) DeleteUser(accessToken, username string) (int, error) {
+	caller, status, err := getCaller(s.users, accessToken)
+	if err != nil {
+		return status, err
+	}
+	if caller.Role < model.RoleTeacher {
+		return http.StatusForbidden, fmt.Errorf("權限不足")
+	}
+	if username == caller.Username {
+		return http.StatusForbidden, fmt.Errorf("無法刪除自己的帳號")
+	}
+	ok, err := s.users.DeleteUser(username)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if !ok {
+		return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
+	}
+	return http.StatusOK, nil
+}
+
 func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 	claims := &model.Claims{}
 	token, err := jwt.ParseWithClaims(refreshTokenStr, claims, func(t *jwt.Token) (any, error) {

@@ -69,6 +69,22 @@ func (s *GroupSvc) SetProfilePic(accessToken string, groupID uint, url string) (
 	return http.StatusOK, nil
 }
 
+// DeleteGroup removes a group. Teachers/admins only. Former members are reset to
+// no group (group_id 0).
+func (s *GroupSvc) DeleteGroup(accessToken string, groupID uint) (int, error) {
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
+		return status, err
+	}
+	ok, err := s.repo.DeleteGroup(groupID)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if !ok {
+		return http.StatusNotFound, fmt.Errorf("群組不存在")
+	}
+	return http.StatusOK, nil
+}
+
 // QueryGroup reports the calling user's group, including its members list.
 func (s *GroupSvc) QueryGroup(accessToken string) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
@@ -84,6 +100,9 @@ func (s *GroupSvc) QueryGroup(accessToken string) ([]byte, int, error) {
 	}
 	g, err := s.repo.GetGroup(u.GroupID)
 	if err != nil {
+		if errors.Is(err, apperr.ErrGroupNotFound) {
+			return nil, http.StatusNotFound, err
+		}
 		return nil, http.StatusInternalServerError, err
 	}
 	data, err := json.Marshal(g)

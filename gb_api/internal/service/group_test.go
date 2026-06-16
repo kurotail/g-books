@@ -261,6 +261,64 @@ func TestGroupSvc_SetProfilePic_InvalidToken(t *testing.T) {
 	}
 }
 
+// --- DeleteGroup ---
+
+func TestGroupSvc_DeleteGroup_TeacherSucceeds(t *testing.T) {
+	s, r := newGroupSvc()
+
+	status, err := s.DeleteGroup(tokenFor(t, "teacher"), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	// Former members (alice, bob) are reset to no group.
+	if r.UserGroups["alice"] != 0 || r.UserGroups["bob"] != 0 {
+		t.Errorf("expected alice/bob reset to group 0, got %d/%d", r.UserGroups["alice"], r.UserGroups["bob"])
+	}
+	// carol (group 2) is untouched.
+	if r.UserGroups["carol"] != 2 {
+		t.Errorf("expected carol to remain in group 2, got %d", r.UserGroups["carol"])
+	}
+}
+
+func TestGroupSvc_DeleteGroup_NotFound(t *testing.T) {
+	s, _ := newGroupSvc()
+
+	status, err := s.DeleteGroup(tokenFor(t, "teacher"), 99)
+	if err == nil {
+		t.Fatal("expected error for group nobody references")
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", status)
+	}
+}
+
+func TestGroupSvc_DeleteGroup_StudentForbidden(t *testing.T) {
+	s, _ := newGroupSvc()
+
+	// alice is a member of group 1 but only a student.
+	status, err := s.DeleteGroup(tokenFor(t, "alice"), 1)
+	if err == nil {
+		t.Fatal("expected error for student caller")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestGroupSvc_DeleteGroup_InvalidToken(t *testing.T) {
+	s, _ := newGroupSvc()
+	status, err := s.DeleteGroup("bad.token", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
+}
+
 // --- QueryGroup ---
 
 func TestGroupSvc_QueryGroup_Member(t *testing.T) {
@@ -364,6 +422,25 @@ func TestGroupSvc_QueryGroup_NonMember(t *testing.T) {
 	_, status, err := s.QueryGroup(tokenFor(t, "teacher"))
 	if err == nil {
 		t.Fatal("expected error for user without a group")
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", status)
+	}
+}
+
+// A caller whose group_id points to a group that has no stored data and no
+// members gets a 404 rather than a fabricated empty group.
+func TestGroupSvc_QueryGroup_GroupNotFound(t *testing.T) {
+	r := &mock.GroupRepo{UserGroups: map[string]uint{}}
+	users := &mock.AuthRepo{
+		Roles:  map[string]uint{"ghost": model.RoleStudent},
+		Groups: map[string]uint{"ghost": 7},
+	}
+	s := NewGroupSvc(r, users)
+
+	_, status, err := s.QueryGroup(tokenFor(t, "ghost"))
+	if err == nil {
+		t.Fatal("expected error for nonexistent group")
 	}
 	if status != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", status)

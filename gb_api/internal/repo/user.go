@@ -13,6 +13,7 @@ type UserRepo interface {
 	GetUser(username string) (model.User, error)
 	CreateUser(username, password string, role, groupID uint) error
 	SetUserProfilePic(username, url string) error
+	DeleteUser(username string) (bool, error)
 }
 
 type userRepo struct{}
@@ -72,7 +73,32 @@ func (_ *userRepo) CreateUser(username, password string, role, groupID uint) err
 		Role:     role,
 		GroupID:  groupID,
 	}
+	if groupID != 0 {
+		g := db.groups[groupID]
+		if g == nil {
+			g = newGroup(groupID)
+			db.groups[groupID] = g
+		}
+		g.Members[username] = struct{}{}
+	}
 	return nil
+}
+
+// DeleteUser removes a user. The bool reports whether the user existed.
+func (_ *userRepo) DeleteUser(username string) (bool, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	u := db.users[username]
+	if u == nil {
+		return false, nil
+	}
+	if u.GroupID != 0 {
+		if g := db.groups[u.GroupID]; g != nil {
+			delete(g.Members, username)
+		}
+	}
+	delete(db.users, username)
+	return true, nil
 }
 
 func InitUserRepo() UserRepo {

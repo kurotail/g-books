@@ -261,6 +261,72 @@ func TestAuthSvc_SetProfilePic_InvalidToken(t *testing.T) {
 	}
 }
 
+func TestAuthSvc_DeleteUser_TeacherDeletesStudent(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), "alice")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if _, err := s.users.GetUser("alice"); err == nil {
+		t.Error("expected alice to be deleted")
+	}
+}
+
+func TestAuthSvc_DeleteUser_UnknownTarget(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), "nobody")
+	if err == nil {
+		t.Fatal("expected error for unknown user")
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", status)
+	}
+}
+
+func TestAuthSvc_DeleteUser_StudentForbidden(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.DeleteUser(accessTokenFor(t, "alice"), "bob")
+	if err == nil {
+		t.Fatal("expected error for student caller")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestAuthSvc_DeleteUser_SelfForbidden(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), "teacher")
+	if err == nil {
+		t.Fatal("expected error for self-deletion")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+	if _, err := s.users.GetUser("teacher"); err != nil {
+		t.Error("expected teacher to still exist after blocked self-deletion")
+	}
+}
+
+func TestAuthSvc_DeleteUser_InvalidToken(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.DeleteUser("bad.token", "alice")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
+}
+
 func TestRefreshTokens_ValidToken(t *testing.T) {
 	s := newTestAuthSvc()
 	pair := loginTokenPair(t, s)

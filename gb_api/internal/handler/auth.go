@@ -115,6 +115,25 @@ func (h *AuthHandler) SetProfilePic(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
+func (h *AuthHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	username := r.PathValue("username")
+	if username == "" {
+		http.Error(w, "缺少 username", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.DeleteUser(token, username)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(status)
+}
+
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req model.RefreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RefreshToken == "" {

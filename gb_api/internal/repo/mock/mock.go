@@ -97,6 +97,17 @@ func (m *AuthRepo) CreateUser(username, password string, role, groupID uint) err
 	return nil
 }
 
+func (m *AuthRepo) DeleteUser(username string) (bool, error) {
+	if _, ok := m.Roles[username]; !ok {
+		return false, nil
+	}
+	delete(m.Users, username)
+	delete(m.Roles, username)
+	delete(m.Groups, username)
+	delete(m.Pics, username)
+	return true, nil
+}
+
 type RoleRepo struct {
 	Role uint
 }
@@ -106,8 +117,9 @@ func (m *RoleRepo) GetAllUsers() ([]model.User, error)            { return nil, 
 func (m *RoleRepo) GetUser(username string) (model.User, error) {
 	return model.User{Username: username, Role: m.Role}, nil
 }
-func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error  { return nil }
-func (m *RoleRepo) SetUserProfilePic(_, _ string) error      { return nil }
+func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error { return nil }
+func (m *RoleRepo) SetUserProfilePic(_, _ string) error     { return nil }
+func (m *RoleRepo) DeleteUser(_ string) (bool, error)       { return true, nil }
 
 type ItemRepo struct {
 	Inv        map[uint]struct{}   // owned (unslotted) item ids
@@ -193,6 +205,12 @@ func (m *GroupRepo) GetGroup(groupID uint) (model.Group, error) {
 			members = append(members, username)
 		}
 	}
+	_, hasName := m.Names[groupID]
+	_, hasBuilding := m.BuildingIDs[groupID]
+	_, hasPic := m.Pics[groupID]
+	if !hasName && !hasBuilding && !hasPic && len(members) == 0 {
+		return model.Group{}, apperr.ErrGroupNotFound
+	}
 	name := fmt.Sprintf("Group %d", groupID)
 	if n, ok := m.Names[groupID]; ok && n != "" {
 		name = n
@@ -222,6 +240,32 @@ func (m *GroupRepo) SetGroupProfilePic(groupID uint, url string) error {
 	}
 	m.Pics[groupID] = url
 	return nil
+}
+
+func (m *GroupRepo) DeleteGroup(groupID uint) (bool, error) {
+	found := false
+	if _, ok := m.Names[groupID]; ok {
+		found = true
+	}
+	if _, ok := m.BuildingIDs[groupID]; ok {
+		found = true
+	}
+	if _, ok := m.Pics[groupID]; ok {
+		found = true
+	}
+	for username, gid := range m.UserGroups {
+		if gid == groupID {
+			m.UserGroups[username] = 0
+			found = true
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	delete(m.Names, groupID)
+	delete(m.BuildingIDs, groupID)
+	delete(m.Pics, groupID)
+	return true, nil
 }
 
 type BuildingRepo struct {
