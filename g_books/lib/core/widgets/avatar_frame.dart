@@ -1,7 +1,7 @@
-import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import 'avatar_image.dart';
 
 class AvatarFrame extends StatelessWidget {
   final double size;
@@ -26,13 +26,10 @@ class AvatarFrame extends StatelessWidget {
     );
   }
 
-  Widget _buildImage() {
-    if (imageUrl != null) {
-      final isRemote = imageUrl!.startsWith('http://') || imageUrl!.startsWith('https://');
-      return isRemote
-          ? Image.network(imageUrl!, fit: BoxFit.cover, gaplessPlayback: true)
-          : Image.file(File(imageUrl!), fit: BoxFit.cover, gaplessPlayback: true);
-    }
+  Widget _buildImage() =>
+      AvatarImage(url: imageUrl, placeholder: _placeholder());
+
+  Widget _placeholder() {
     return Container(
       color: const Color(0xFFDDD0BA),
       child: Center(

@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:provider/provider.dart';
+import '../../core/format.dart';
+import '../../core/widgets/avatar_image.dart';
 import '../../data/heritage_data.dart';
 import '../../data/models/heritage_model.dart';
 import '../../services/game_state_service.dart';
@@ -520,12 +521,6 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
         GamePhase.normal => '平時',
       };
 
-  static String _fmt(Duration d) {
-    final m = d.inMinutes.toString().padLeft(2, '0');
-    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
   // ── build ───────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -751,7 +746,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
               children: [
                 const Text('剩餘時間',
                     style: TextStyle(color: Colors.white54, fontSize: 13)),
-                Text(_fmt(_remaining),
+                Text(formatMmSs(_remaining),
                     style: const TextStyle(
                         color: _gold,
                         fontSize: 26,
@@ -1386,25 +1381,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   }
 
   // ── 共用元件 ─────────────────────────────────────────────────────────────────
-  Widget _avatar(String? url, {double size = 34}) {
-    Widget inner;
-    if (url == null || url.isEmpty) {
-      inner = Icon(Icons.person, size: size * 0.62, color: Colors.white38);
-    } else if (url.startsWith('http')) {
-      inner = Image.network(url,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) =>
-              Icon(Icons.person, size: size * 0.62, color: Colors.white38));
-    } else {
-      inner = Image.file(File(url),
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) =>
-              Icon(Icons.person, size: size * 0.62, color: Colors.white38));
-    }
+  Widget _avatar(String? rawUrl, {double size = 34}) {
     return Container(
       width: size,
       height: size,
@@ -1414,7 +1391,15 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
         color: _field,
         border: Border.all(color: Colors.white24),
       ),
-      child: ClipOval(child: inner),
+      child: ClipOval(
+        child: AvatarImage(
+          url: rawUrl,
+          width: size,
+          height: size,
+          placeholder:
+              Icon(Icons.person, size: size * 0.62, color: Colors.white38),
+        ),
+      ),
     );
   }
 

@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 
+import '../../core/format.dart';
 import '../../data/component_data.dart';
 import '../../data/heritage_data.dart';
 import '../../data/models/component_model.dart';
@@ -353,12 +354,6 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         gravity: ToastGravity.CENTER,
       );
 
-  String _fmt(Duration d) {
-    final m = d.inMinutes.toString().padLeft(2, '0');
-    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
   // ── build ───────────────────────────────────────────────────────────────────
 
   /// 取題作答中（loadingQ / answering / result）不可離開——必須作答完成；
@@ -468,7 +463,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         border: Border.all(color: const Color(0x55D4A843)),
       ),
       child: Text(
-        _fmt(_remaining),
+        formatMmSs(_remaining),
         style: TextStyle(
           color: low ? const Color(0xFFFF6B5E) : const Color(0xFFE8DCC0),
           fontSize: 22,

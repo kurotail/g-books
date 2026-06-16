@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../core/account_id.dart';
 import '../data/models/user_model.dart';
 import '../data/models/group_model.dart';
 import '../data/models/staff_account.dart';
@@ -41,16 +42,23 @@ class AppState extends ChangeNotifier {
   bool get isLoggedIn => _currentUser != null;
   bool get isSetupComplete => _currentUser?.hasCompletedSetup ?? false;
 
-  /// 後端模式下、該組被指派的 building id（0 = 未指派）。對應古蹟由 building 解析。
-  int get buildingId => _backendBuildingId;
-
   /// 後端模式下、登入後依指派 building 解析出的古蹟 id（heritageId = building.name）。
+  /// 目前畫面仍以 mock 的 assigned 古蹟為準，此值保留供日後多古蹟接線。
   String? get assignedHeritageId => _assignedHeritageId;
 
   // ── 後台（教師 / 管理者）session ───────────────────────────────────────────
   StaffAccount? get currentStaff => _currentStaff;
   bool get isStaffLoggedIn => _currentStaff != null;
   StaffRole? get staffRole => _currentStaff?.role;
+
+  /// 把登入請求的例外轉成顯示用訊息：401 用 [on401]、其餘 [ApiException] 帶狀態碼、
+  /// 連線失敗給通用訊息。
+  static String _loginErrorMessage(Object e, {required String on401}) {
+    if (e is ApiException) {
+      return e.statusCode == 401 ? on401 : '登入失敗（${e.statusCode}）';
+    }
+    return '無法連線到伺服器，請確認網路與後端位址';
+  }
 
   /// 以教師 / 管理者帳密登入。成功回 null、失敗回錯誤訊息。
   /// - 後端模式：打 `/api/login` 取 JWT，再 `GET /api/users` 找自己讀 role
@@ -62,10 +70,8 @@ class AppState extends ChangeNotifier {
     if (_useBackend && _api != null) {
       try {
         await _api.login(u, password);
-      } on ApiException catch (e) {
-        return e.statusCode == 401 ? '帳號或密碼錯誤' : '登入失敗（${e.statusCode}）';
-      } catch (_) {
-        return '無法連線到伺服器，請確認網路與後端位址';
+      } catch (e) {
+        return _loginErrorMessage(e, on401: '帳號或密碼錯誤');
       }
       // 讀自己的 role 決定後台。GET /api/users 任何登入者皆可呼叫。
       int role = 0;
@@ -161,11 +167,9 @@ class AppState extends ChangeNotifier {
 
     if (_useBackend && _api != null) {
       try {
-        await _api.login('${n}_$s', s); // username=姓名_座號, password=座號
-      } on ApiException catch (e) {
-        return e.statusCode == 401 ? '姓名或座號錯誤' : '登入失敗（${e.statusCode}）';
-      } catch (_) {
-        return '無法連線到伺服器，請確認網路與後端位址';
+        await _api.login(usernameOf(n, s), s); // username=姓名_座號, password=座號
+      } catch (e) {
+        return _loginErrorMessage(e, on401: '姓名或座號錯誤');
       }
       try {
         final g = await _api.getJson('/api/group') as Map<String, dynamic>;
@@ -178,6 +182,8 @@ class AppState extends ChangeNotifier {
       // 依該組 building_id 取後端古蹟設定（slot/原料名稱/等級/可放對應）並套用；
       // 失敗不擋登入（板面退回本機快取或現有資料）。
       await _loadAssignedConfig();
+      // 取各組員 / 本人頭像（GET /api/group 只給 username，頭像在 GET /api/users）。
+      await _loadMemberAvatars();
       notifyListeners();
       return null;
     }
@@ -214,8 +220,13 @@ class AppState extends ChangeNotifier {
     ]..sort((a, b) => (int.tryParse(a.seatNumber) ?? 0)
         .compareTo(int.tryParse(b.seatNumber) ?? 0));
 
+    final groupPic = (g['profile_pic_url'] as String?) ?? '';
     _backendMembers = members;
-    _backendGroup = GroupModel(id: gid, name: named ? rawName : '');
+    _backendGroup = GroupModel(
+      id: gid,
+      name: named ? rawName : '',
+      avatarUrl: groupPic.isEmpty ? null : groupPic,
+    );
     _currentUser = UserModel(
       name: selfName,
       seatNumber: selfSeat,
@@ -242,10 +253,36 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 取小組成員（含本人）的頭像。`GET /api/group` 只給 username，頭像存在 `GET /api/users`
+  /// 的 `profile_pic_url`，故另取一次以 username 對應填回。失敗不擋登入。
+  Future<void> _loadMemberAvatars() async {
+    final api = _api;
+    if (api == null) return;
+    try {
+      final m = await api.getJson('/api/users') as Map<String, dynamic>;
+      final users = (m['users'] as List?) ?? const [];
+      final pics = <String, String>{};
+      for (final u in users.cast<Map<String, dynamic>>()) {
+        final un = (u['username'] as String?) ?? '';
+        final p = (u['profile_pic_url'] as String?) ?? '';
+        if (un.isNotEmpty && p.isNotEmpty) pics[un] = p;
+      }
+      for (final mem in _backendMembers) {
+        final p = pics[usernameOf(mem.name, mem.seatNumber)];
+        if (p != null) mem.personalAvatarUrl = p;
+      }
+      final cu = _currentUser;
+      if (cu != null) {
+        final p = pics[usernameOf(cu.name, cu.seatNumber)];
+        if (p != null) cu.personalAvatarUrl = p;
+      }
+    } catch (_) {
+      // 頭像載入失敗不擋登入。
+    }
+  }
+
   UserModel _userFromUsername(String username, int gid) {
-    final i = username.lastIndexOf('_');
-    final name = i >= 0 ? username.substring(0, i) : username;
-    final seat = i >= 0 ? username.substring(i + 1) : '';
+    final (:name, :seat) = splitUsername(username);
     return UserModel(
       name: name,
       seatNumber: seat,
@@ -255,18 +292,36 @@ class AppState extends ChangeNotifier {
     );
   }
 
-  /// 設定某位組員（含本人）的個人頭像，於小組總攬編輯後呼叫。
-  /// （後端頭像端口尚未提供，目前僅本機；之後接上再同步。）
+  /// 設定某位組員（含本人）的個人頭像，於小組總攬編輯後呼叫。後端模式同步
+  /// `POST /api/users/pfp`。注意：後端僅允許「本人或教師」改頭像，學生在共用平板上改
+  /// 「其他組員」會被後端擋（403）→ 僅本機預覽、不會持久化（已知限制）。
   void setMemberAvatarUrl(String seatNumber, String? url) {
     final member = memberBySeat(seatNumber);
     if (member == null) return;
     member.personalAvatarUrl = url;
+    if (_useBackend && _api != null) {
+      _api
+          .sendJson('POST', '/api/users/pfp', body: {
+            'username': usernameOf(member.name, member.seatNumber),
+            'profile_pic_url': url ?? '', // 空字串＝清除
+          })
+          .catchError((_) => null); // 非本人遭 403 等失敗：保留本機預覽
+    }
     notifyListeners();
   }
 
   void setGroupAvatarUrl(String? url) {
-    // 後端尚無小組頭像端口，先存本機。
     currentGroup?.avatarUrl = url;
+    // 後端模式同步小組頭像 `POST /api/group/pfp`（組員即可設自己這組）。
+    if (_useBackend && _api != null) {
+      final gid = _backendGroup?.id;
+      if (gid != null && gid > 0) {
+        _api
+            .sendJson('POST', '/api/group/pfp',
+                body: {'group_id': gid, 'profile_pic_url': url ?? ''})
+            .catchError((_) => null);
+      }
+    }
     notifyListeners();
   }
 

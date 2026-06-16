@@ -1,6 +1,8 @@
+import '../core/account_id.dart';
 import '../data/mock_data.dart';
 import 'api_client.dart';
 import 'game_state_service.dart';
+import 'heritage_config_service.dart' show buildingIdOf, buildingNameOf;
 
 /// 教師控制台看到的一位學生（帳號 = 姓名_座號）。
 class TeacherStudent {
@@ -46,8 +48,9 @@ class TeacherBuilding {
 /// Mock 版操作本機資料（並透過 [MockGameStateService] 切換階段，方便單機 demo）；
 /// 換真後端只要在 `main.dart` 改用 [ApiTeacherService]，UI 不需更動。
 abstract class TeacherService {
-  /// 切換遊戲階段。[duration] 為該階段時長（用於倒數 / 時間到自動結束）；
-  /// mock 會帶給共用的 GameStateService，後端目前 `/api/state` 尚無時長欄位（暫忽略）。
+  /// 切換遊戲階段。[duration] 為該階段時長（用於倒數 / 時間到自動結束）；mock 會帶給
+  /// 共用的 GameStateService，後端則換算成 `/api/state` 的 end_time（到時自動回 NORMAL、
+  /// 學生端以同一結束時間同步倒數）。
   Future<void> setPhase(GamePhase phase, {Duration? duration});
   Future<List<TeacherStudent>> listStudents();
 
@@ -84,7 +87,7 @@ class MockTeacherService implements TeacherService {
   MockTeacherService(this._gameState) {
     for (final u in mockUsers) {
       _students.add(TeacherStudent(
-        username: '${u.name}_${u.seatNumber}',
+        username: usernameOf(u.name, u.seatNumber),
         name: u.name,
         seat: u.seatNumber,
         groupId: u.groupId,
@@ -116,7 +119,7 @@ class MockTeacherService implements TeacherService {
     required String seat,
     int groupId = 0,
   }) async {
-    final username = '${name}_$seat';
+    final username = usernameOf(name, seat);
     if (_students.any((s) => s.username == username)) {
       throw Exception('帳號 $username 已存在');
     }
@@ -168,9 +171,16 @@ class ApiTeacherService implements TeacherService {
 
   @override
   Future<void> setPhase(GamePhase phase, {Duration? duration}) async {
-    // 後端 /api/state 目前只吃 state、沒有時長欄位；duration 暫忽略（待後端支援）。
-    await _client.sendJson('POST', '/api/state',
-        body: {'state': gamePhaseToState(phase)});
+    // 後端 `/api/state` 的 end_time：排程到時自動回 NORMAL，並讓學生端倒數以同一個
+    // 結束時間同步（跨裝置一致）。NORMAL 不排程；無時長時不帶（後端視為不自動回復）。
+    final body = <String, dynamic>{'state': gamePhaseToState(phase)};
+    if (phase != GamePhase.normal &&
+        duration != null &&
+        duration > Duration.zero) {
+      body['end_time'] =
+          DateTime.now().toUtc().add(duration).toIso8601String();
+    }
+    await _client.sendJson('POST', '/api/state', body: body);
   }
 
   @override
@@ -182,12 +192,14 @@ class ApiTeacherService implements TeacherService {
       final mm = u as Map<String, dynamic>;
       if (((mm['role'] as num?)?.toInt() ?? 0) != 0) continue; // 只取學生
       final username = mm['username'] as String? ?? '';
-      final i = username.lastIndexOf('_');
+      final (:name, :seat) = splitUsername(username);
+      final pic = (mm['profile_pic_url'] as String?) ?? '';
       out.add(TeacherStudent(
         username: username,
-        name: i >= 0 ? username.substring(0, i) : username,
-        seat: i >= 0 ? username.substring(i + 1) : '',
+        name: name,
+        seat: seat,
         groupId: (mm['group_id'] as num?)?.toInt() ?? 0,
+        avatarUrl: pic.isEmpty ? null : pic,
       ));
     }
     out.sort((a, b) {
@@ -204,7 +216,7 @@ class ApiTeacherService implements TeacherService {
     int groupId = 0,
   }) async {
     await _client.sendJson('POST', '/api/register', body: {
-      'username': '${name}_$seat',
+      'username': usernameOf(name, seat),
       'password': seat,
       'role': 0,
       if (groupId > 0) 'group_id': groupId,
@@ -213,8 +225,10 @@ class ApiTeacherService implements TeacherService {
 
   @override
   Future<void> deleteStudent({required String username}) async {
-    await _client.sendJson('POST', '/api/users/delete',
-        body: {'username': username});
+    // 後端改為 RESTful：DELETE /api/users/{username}（帳號走路徑、無 body）。
+    // username 為「姓名_座號」含中文與底線，需 URL-encode 後放進路徑。
+    await _client.sendJson(
+        'DELETE', '/api/users/${Uri.encodeComponent(username)}');
   }
 
   @override
@@ -239,8 +253,8 @@ class ApiTeacherService implements TeacherService {
     return [
       for (final b in list)
         TeacherBuilding(
-          id: ((b as Map)['building_id'] as num).toInt(),
-          name: (b['name'] as String?) ?? '',
+          id: buildingIdOf((b as Map).cast<String, dynamic>()),
+          name: buildingNameOf(b.cast<String, dynamic>()),
         ),
     ];
   }

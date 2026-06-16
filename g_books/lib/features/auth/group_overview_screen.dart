@@ -1,10 +1,10 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/parchment_scaffold.dart';
 import '../../core/widgets/step_indicator.dart';
+import '../../core/widgets/avatar_image.dart';
 import '../../data/models/user_model.dart';
 import '../../state/app_state.dart';
 import 'upload_avatar_screen.dart';
@@ -459,18 +459,16 @@ class _AvatarCircle extends StatelessWidget {
     );
   }
 
-  Widget _image() {
-    final u = url;
-    if (u == null) {
-      return Icon(
+  Widget _image() => AvatarImage(
+        url: url,
+        width: size,
+        height: size,
+        placeholder: _placeholder(),
+      );
+
+  Widget _placeholder() => Icon(
         Icons.person,
         size: size * 0.5,
         color: const Color(0xFFAA9A88),
       );
-    }
-    final remote = u.startsWith('http://') || u.startsWith('https://');
-    return remote
-        ? Image.network(u, fit: BoxFit.cover, width: size, height: size)
-        : Image.file(File(u), fit: BoxFit.cover, width: size, height: size);
-  }
 }

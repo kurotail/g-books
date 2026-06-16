@@ -9,15 +9,16 @@ import 'game_state_service.dart';
 ///   - [fetch] ↔ `GET /api/state` → `{ "state": "...", "updated_at": "..." }`
 ///   - [watch] ↔ `GET /api/state/ws`（連線即收一份當前狀態，之後每次老師端切換即推播）
 ///
-/// 後端只提供「目前階段 + 該階段開始時間（updated_at）」，**沒有持續長度**；倒數長度
-/// 由前端依階段給固定值（[_phaseDuration]），倒數 = updated_at + duration − now。
+/// 後端提供「目前階段 + 開始時間（updated_at）+ 排程結束時間（end_time，可選）」。
+/// 有 end_time 時倒數以它為準（= 老師設定的結束時刻，跨裝置同步、到時後端自動回
+/// NORMAL）；沒有 end_time（如老師未設時長）時退回前端各階段固定長度 [_phaseDuration]。
 /// 階段對應：NORMAL=平時、QUIZ1=資源採集、QUIZ2=攻防戰。
 class ApiGameStateService implements GameStateService {
   ApiGameStateService(this._client);
 
   final ApiClient _client;
 
-  /// 各階段倒數長度（後端只給開始時間，這裡補上長度）。
+  /// 後端未帶 end_time 時的後備倒數長度（依階段）。
   static const Map<GamePhase, Duration> _phaseDuration = {
     GamePhase.normal: Duration.zero,
     GamePhase.quiz1: Duration(minutes: 3), // 資源採集
@@ -46,10 +47,21 @@ class ApiGameStateService implements GameStateService {
     final raw = m['updated_at'] as String?;
     final started =
         (raw != null ? DateTime.tryParse(raw) : null)?.toLocal() ?? DateTime.now();
+    // 後端排程的結束時刻（RFC3339）→ 以「結束 − 開始」當倒數長度（snapshot.endTime 即等於
+    // end_time，跨裝置同步）；無 end_time 則用各階段固定後備長度。
+    final endRaw = m['end_time'] as String?;
+    final end = endRaw != null ? DateTime.tryParse(endRaw)?.toLocal() : null;
+    Duration duration;
+    if (end != null) {
+      duration = end.difference(started);
+      if (duration.isNegative) duration = Duration.zero;
+    } else {
+      duration = _phaseDuration[phase] ?? Duration.zero;
+    }
     return GameStateSnapshot(
       phase: phase,
       startTime: started,
-      duration: _phaseDuration[phase] ?? Duration.zero,
+      duration: duration,
     );
   }
 
@@ -70,7 +82,8 @@ class ApiGameStateService implements GameStateService {
         '${_client.baseUrl.replaceFirst('http', 'ws')}/api/state/ws'
         '?access_token=${Uri.encodeQueryComponent(token)}';
     try {
-      final ws = await WebSocket.connect(wsUrl);
+      // 共用 ApiClient 的 HttpClient，沿用其自簽憑證放行，wss:// 自簽後端才連得上。
+      final ws = await WebSocket.connect(wsUrl, customClient: _client.httpClient);
       _connecting = false;
       if (_closed) {
         await ws.close();

@@ -60,6 +60,13 @@ Map<int, ComponentMeta> _componentsFromJson(dynamic raw) {
   };
 }
 
+/// 後端 building 的 `building_id`（缺值回 0）。
+int buildingIdOf(Map<String, dynamic> b) =>
+    (b['building_id'] as num?)?.toInt() ?? 0;
+
+/// 後端 building 的 `name`（= heritageId；缺值回空字串）。
+String buildingNameOf(Map<String, dynamic> b) => (b['name'] as String?) ?? '';
+
 /// 把後端 building（`{name, layout, item_allowed_slot, difficulty_type}`）解析成
 /// [HeritageConfig]。Layout 內帶 `slots` / `components`；component 名稱/等級優先取
 /// layout.components，缺則由 difficulty_type 還原等級、名稱用預設。
@@ -187,8 +194,8 @@ class ApiHeritageConfigService implements HeritageConfigService {
     if (list is! List) return null;
     for (final b in list) {
       final m = (b as Map).cast<String, dynamic>();
-      if (m['name'] == hid) {
-        _idCache[hid] = (m['building_id'] as num).toInt();
+      if (buildingNameOf(m) == hid) {
+        _idCache[hid] = buildingIdOf(m);
         return m;
       }
     }
@@ -212,7 +219,7 @@ class ApiHeritageConfigService implements HeritageConfigService {
         ? await _client.sendJson('POST', '/api/building', body: body)
         : await _client.sendJson('PUT', '/api/building/$id', body: body);
     if (res is Map && res['building_id'] != null) {
-      _idCache[hid] = (res['building_id'] as num).toInt();
+      _idCache[hid] = buildingIdOf(res.cast<String, dynamic>());
     }
   }
 
@@ -263,7 +270,7 @@ class StudentConfigLoader {
       try {
         final b = await client.getJson('/api/building/$buildingId')
             as Map<String, dynamic>;
-        final hid = (b['name'] as String?) ?? '';
+        final hid = buildingNameOf(b);
         final cfg = heritageConfigFromBuilding(b);
         await _writeCache(buildingId, hid, cfg);
         return (heritageId: hid, config: cfg);
