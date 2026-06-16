@@ -96,6 +96,25 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
+func (h *AuthHandler) SetProfilePic(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.SetUserPicRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.SetProfilePic(token, req.Username, req.ProfilePicURL)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(status)
+}
+
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req model.RefreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RefreshToken == "" {

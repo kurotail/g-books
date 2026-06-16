@@ -179,6 +179,88 @@ func TestRegisterUser_InvalidToken(t *testing.T) {
 	}
 }
 
+// newProfilePicAuthSvc returns an AuthSvc backed by a teacher and a couple of
+// students, for exercising SetProfilePic authorization.
+func newProfilePicAuthSvc() *AuthSvc {
+	r := &mock.AuthRepo{
+		Users: map[string]string{"teacher": "pw", "alice": "pw", "bob": "pw"},
+		Roles: map[string]uint{
+			"teacher": model.RoleTeacher,
+			"alice":   model.RoleStudent,
+			"bob":     model.RoleStudent,
+		},
+	}
+	return NewAuthSvc(r, r)
+}
+
+func TestAuthSvc_SetProfilePic_SelfSucceeds(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.SetProfilePic(tokenFor(t, "alice"), "", "/images/alice.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	u, _ := s.users.GetUser("alice")
+	if u.ProfilePicURL != "/images/alice.png" {
+		t.Errorf("expected alice pic %q, got %q", "/images/alice.png", u.ProfilePicURL)
+	}
+}
+
+func TestAuthSvc_SetProfilePic_StudentCannotSetOther(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.SetProfilePic(tokenFor(t, "alice"), "bob", "/images/x.png")
+	if err == nil {
+		t.Fatal("expected error for student targeting another user")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestAuthSvc_SetProfilePic_TeacherSetsOther(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.SetProfilePic(tokenFor(t, "teacher"), "bob", "/images/bob.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	u, _ := s.users.GetUser("bob")
+	if u.ProfilePicURL != "/images/bob.png" {
+		t.Errorf("expected bob pic %q, got %q", "/images/bob.png", u.ProfilePicURL)
+	}
+}
+
+func TestAuthSvc_SetProfilePic_UnknownTarget(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.SetProfilePic(tokenFor(t, "teacher"), "nobody", "/images/x.png")
+	if err == nil {
+		t.Fatal("expected error for unknown target user")
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", status)
+	}
+}
+
+func TestAuthSvc_SetProfilePic_InvalidToken(t *testing.T) {
+	s := newProfilePicAuthSvc()
+
+	status, err := s.SetProfilePic("bad.token", "", "/images/x.png")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
+}
+
 func TestRefreshTokens_ValidToken(t *testing.T) {
 	s := newTestAuthSvc()
 	pair := loginTokenPair(t, s)

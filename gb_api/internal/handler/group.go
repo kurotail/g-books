@@ -105,6 +105,33 @@ func (h *GroupHandler) SetBuilding(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
+func (h *GroupHandler) SetProfilePic(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.SetGroupPicRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if req.GroupID == nil {
+		http.Error(w, "缺少 group_id", http.StatusBadRequest)
+		return
+	}
+	if *req.GroupID == 0 {
+		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.SetProfilePic(token, *req.GroupID, req.ProfilePicURL)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(status)
+}
+
 func (h *GroupHandler) QueryGroup(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {

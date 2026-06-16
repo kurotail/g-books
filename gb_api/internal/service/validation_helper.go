@@ -40,6 +40,17 @@ func getCaller(r repo.UserRepo, accessToken string) (*model.User, int, error) {
 	return &caller, http.StatusOK, nil
 }
 
+func authorizeGroupEdit(r repo.UserRepo, accessToken string, groupID uint) (int, error) {
+	caller, status, err := getCaller(r, accessToken)
+	if err != nil {
+		return status, err
+	}
+	if caller.GroupID != groupID && caller.Role < model.RoleTeacher {
+		return http.StatusForbidden, fmt.Errorf("權限不足")
+	}
+	return http.StatusOK, nil
+}
+
 func requireTeacher(r repo.UserRepo, accessToken string) (int, error) {
 	caller, status, err := getCaller(r, accessToken)
 	if err != nil {

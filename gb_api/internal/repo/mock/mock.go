@@ -29,6 +29,7 @@ type AuthRepo struct {
 	Users         map[string]string
 	Roles         map[string]uint
 	Groups        map[string]uint // username -> group; absent = no group
+	Pics          map[string]string
 	RefreshTokens sync.Map
 }
 
@@ -63,7 +64,18 @@ func (m *AuthRepo) GetUser(username string) (model.User, error) {
 }
 
 func (m *AuthRepo) buildUser(username string) model.User {
-	return model.User{Username: username, Role: m.Roles[username], GroupID: m.Groups[username]}
+	return model.User{Username: username, Role: m.Roles[username], GroupID: m.Groups[username], ProfilePicURL: m.Pics[username]}
+}
+
+func (m *AuthRepo) SetUserProfilePic(username, url string) error {
+	if _, ok := m.Roles[username]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	if m.Pics == nil {
+		m.Pics = map[string]string{}
+	}
+	m.Pics[username] = url
+	return nil
 }
 
 func (m *AuthRepo) CreateUser(username, password string, role, groupID uint) error {
@@ -94,7 +106,8 @@ func (m *RoleRepo) GetAllUsers() ([]model.User, error)            { return nil, 
 func (m *RoleRepo) GetUser(username string) (model.User, error) {
 	return model.User{Username: username, Role: m.Role}, nil
 }
-func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error { return nil }
+func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error  { return nil }
+func (m *RoleRepo) SetUserProfilePic(_, _ string) error      { return nil }
 
 type ItemRepo struct {
 	Inv        map[uint]struct{}   // owned (unslotted) item ids
@@ -165,6 +178,7 @@ type GroupRepo struct {
 	UserGroups  map[string]uint
 	Names       map[uint]string
 	BuildingIDs map[uint]uint
+	Pics        map[uint]string
 }
 
 func (m *GroupRepo) SetUserGroup(username string, groupID uint) error {
@@ -183,7 +197,7 @@ func (m *GroupRepo) GetGroup(groupID uint) (model.Group, error) {
 	if n, ok := m.Names[groupID]; ok && n != "" {
 		name = n
 	}
-	return model.Group{ID: groupID, Name: name, BuildingID: m.BuildingIDs[groupID], Members: members}, nil
+	return model.Group{ID: groupID, Name: name, BuildingID: m.BuildingIDs[groupID], Members: members, ProfilePicURL: m.Pics[groupID]}, nil
 }
 
 func (m *GroupRepo) SetGroupName(groupID uint, name string) error {
@@ -199,6 +213,14 @@ func (m *GroupRepo) SetBuildingID(groupID uint, buildingID uint) error {
 		m.BuildingIDs = map[uint]uint{}
 	}
 	m.BuildingIDs[groupID] = buildingID
+	return nil
+}
+
+func (m *GroupRepo) SetGroupProfilePic(groupID uint, url string) error {
+	if m.Pics == nil {
+		m.Pics = map[uint]string{}
+	}
+	m.Pics[groupID] = url
 	return nil
 }
 

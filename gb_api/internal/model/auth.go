@@ -25,9 +25,15 @@ type RegisterRequest struct {
 }
 
 type User struct {
-	Username string `json:"username"`
-	Role     uint   `json:"role"`
-	GroupID  uint   `json:"group_id"` // 0 = not in any group
+	Username      string `json:"username"`
+	Role          uint   `json:"role"`
+	GroupID       uint   `json:"group_id"`        // 0 = not in any group
+	ProfilePicURL string `json:"profile_pic_url"` // image link; empty = no picture
+}
+
+type SetUserPicRequest struct {
+	Username      string `json:"username"`        // optional; empty = caller's own
+	ProfilePicURL string `json:"profile_pic_url"`
 }
 
 type UsersResponse struct {

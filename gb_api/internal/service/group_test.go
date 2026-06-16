@@ -205,6 +205,62 @@ func TestGroupSvc_SetBuilding_InvalidToken(t *testing.T) {
 	}
 }
 
+// --- SetProfilePic ---
+
+func TestGroupSvc_SetProfilePic_MemberSucceeds(t *testing.T) {
+	s, r := newGroupSvc()
+
+	status, err := s.SetProfilePic(tokenFor(t, "alice"), 1, "/images/g1.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if r.Pics[1] != "/images/g1.png" {
+		t.Errorf("expected group 1 pic %q, got %q", "/images/g1.png", r.Pics[1])
+	}
+}
+
+func TestGroupSvc_SetProfilePic_TeacherBypassesMembership(t *testing.T) {
+	s, r := newGroupSvc()
+
+	status, err := s.SetProfilePic(tokenFor(t, "teacher"), 2, "/images/g2.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if r.Pics[2] != "/images/g2.png" {
+		t.Errorf("expected group 2 pic %q, got %q", "/images/g2.png", r.Pics[2])
+	}
+}
+
+func TestGroupSvc_SetProfilePic_NonMemberForbidden(t *testing.T) {
+	s, _ := newGroupSvc()
+
+	// carol (student) belongs to group 2, not group 1.
+	status, err := s.SetProfilePic(tokenFor(t, "carol"), 1, "/images/x.png")
+	if err == nil {
+		t.Fatal("expected error for non-member, non-teacher caller")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestGroupSvc_SetProfilePic_InvalidToken(t *testing.T) {
+	s, _ := newGroupSvc()
+	status, err := s.SetProfilePic("bad.token", 1, "/images/x.png")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
+}
+
 // --- QueryGroup ---
 
 func TestGroupSvc_QueryGroup_Member(t *testing.T) {
@@ -280,6 +336,25 @@ func TestGroupSvc_QueryGroup_BuildingID(t *testing.T) {
 	}
 	if resp.BuildingID != 7 {
 		t.Errorf("expected building_id 7, got %d", resp.BuildingID)
+	}
+}
+
+func TestGroupSvc_QueryGroup_ProfilePic(t *testing.T) {
+	s, _ := newGroupSvc()
+
+	if _, err := s.SetProfilePic(tokenFor(t, "carol"), 2, "/images/wolves.png"); err != nil {
+		t.Fatalf("SetProfilePic: %v", err)
+	}
+	data, _, err := s.QueryGroup(tokenFor(t, "carol"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var resp model.Group
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp.ProfilePicURL != "/images/wolves.png" {
+		t.Errorf("expected pic %q, got %q", "/images/wolves.png", resp.ProfilePicURL)
 	}
 }
 

@@ -65,10 +65,12 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/login` | — | Exchange credentials for a token pair |
 | `POST /api/register` | Bearer (> Student) | Register a new user (Student or Teacher; Admins cannot be created) |
 | `POST /api/refresh` | — | Rotate a refresh token into a new token pair |
-| `GET /api/users` | Bearer | List all users (username, role, group) |
+| `GET /api/users` | Bearer | List all users (username, role, group, profile picture) |
+| `POST /api/users/pfp` | Bearer (self or > Student) | Set a user's profile-picture link (empty `profile_pic_url` clears it) |
 | `POST /api/group/set` | Bearer (> Student) | Assign a user to a group (`group_id` `0` removes them) |
 | `POST /api/group/name` | Bearer (member or > Student) | Rename a group |
 | `POST /api/group/building` | Bearer (member or > Student) | Set a group's building (`building_id` `0` clears it) |
+| `POST /api/group/pfp` | Bearer (member or > Student) | Set a group's profile-picture link (empty `profile_pic_url` clears it) |
 | `GET /api/group` | Bearer | Read the caller's own group (includes members list) |
 | `POST /api/building` | Bearer (> Student) | Create a building |
 | `GET /api/building` | Bearer | List all buildings |
@@ -211,13 +213,14 @@ Authorization: Bearer <access_token>
 
 List all users. Any authenticated user may call it.
 
-**Response `200 OK`** — `group_id` is `0` for users not in any group
+**Response `200 OK`** — `group_id` is `0` for users not in any group;
+`profile_pic_url` is empty when no picture is set
 
 ```json
 {
   "users": [
-    { "username": "user",  "role": 1, "group_id": 1 },
-    { "username": "alice", "role": 0, "group_id": 0 }
+    { "username": "user",  "role": 1, "group_id": 1, "profile_pic_url": "/images/abc.jpg" },
+    { "username": "alice", "role": 0, "group_id": 0, "profile_pic_url": "" }
   ]
 }
 ```
@@ -227,6 +230,32 @@ List all users. Any authenticated user may call it.
 | Status | Condition |
 |--------|-----------|
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+### `POST /api/users/pfp`
+
+Set a user's profile-picture link. A user may set **their own** picture; a
+**Teacher / Admin** may set **any** user's. `username` is optional — when empty,
+it targets the caller. An empty `profile_pic_url` clears the picture. The link
+is stored and returned verbatim (typically a URL returned by `POST /api/image`).
+
+**Request**
+
+```json
+{ "username": "alice", "profile_pic_url": "/images/abc.jpg" }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller targets another user but is not a Teacher/Admin |
+| `404`  | The target `username` does not exist |
 
 ---
 
@@ -302,16 +331,41 @@ clears the assignment.
 
 ---
 
+### `POST /api/group/pfp`
+
+Set a group's profile-picture link. The caller must be a **member of the
+group**, or a **Teacher / Admin** (who may set any group's picture). An empty
+`profile_pic_url` clears the picture. The link is stored and returned verbatim
+(typically a URL returned by `POST /api/image`).
+
+**Request** — `group_id` must be greater than 0
+
+```json
+{ "group_id": 1, "profile_pic_url": "/images/g1.png" }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller is neither a member of the group nor a Teacher/Admin |
+
+---
+
 ### `GET /api/group`
 
 Return the calling user's own group, including the full members list. `name`
 defaults to `"Group <id>"` when unset; `building_id` is `0` when no building
-is assigned.
+is assigned; `profile_pic_url` is empty when no picture is set.
 
 **Response `200 OK`**
 
 ```json
-{ "group_id": 1, "name": "Group 1", "building_id": 0, "members": ["user", "alice"] }
+{ "group_id": 1, "name": "Group 1", "building_id": 0, "members": ["user", "alice"], "profile_pic_url": "" }
 ```
 
 **Error responses**

@@ -32,6 +32,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/register", authHandler.Register)
 	mux.HandleFunc("POST /api/refresh", authHandler.Refresh)
 	mux.HandleFunc("GET /api/users", authHandler.QueryUser)
+	mux.HandleFunc("POST /api/users/pfp", authHandler.SetProfilePic)
 
 	mux.HandleFunc("POST /api/item", itemHandler.QueryItems)
 	mux.HandleFunc("POST /api/item/inv2slot", itemHandler.TranInv2Slot)
@@ -41,6 +42,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/group/name", groupHandler.SetName)
 	mux.HandleFunc("POST /api/group/building", groupHandler.SetBuilding)
 	mux.HandleFunc("GET /api/group", groupHandler.QueryGroup)
+	mux.HandleFunc("POST /api/group/pfp", groupHandler.SetProfilePic)
 
 	mux.HandleFunc("POST /api/building", buildingHandler.Create)
 	mux.HandleFunc("GET /api/building", buildingHandler.List)

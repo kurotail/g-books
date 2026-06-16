@@ -11,6 +11,7 @@ type GroupRepo interface {
 	GetGroup(groupID uint) (model.Group, error)
 	SetGroupName(groupID uint, name string) error
 	SetBuildingID(groupID uint, buildingID uint) error
+	SetGroupProfilePic(groupID uint, url string) error
 }
 
 type groupRepo struct{}
@@ -40,13 +41,15 @@ func (_ *groupRepo) GetGroup(groupID uint) (model.Group, error) {
 	}
 	name := defaultGroupName(groupID)
 	var buildingID uint
+	var profilePicURL string
 	if g := db.groups[groupID]; g != nil {
 		if g.Name != "" {
 			name = g.Name
 		}
 		buildingID = g.BuildingID
+		profilePicURL = g.ProfilePicURL
 	}
-	return model.Group{ID: groupID, Name: name, BuildingID: buildingID, Members: members}, nil
+	return model.Group{ID: groupID, Name: name, BuildingID: buildingID, Members: members, ProfilePicURL: profilePicURL}, nil
 }
 
 func (_ *groupRepo) SetGroupName(groupID uint, name string) error {
@@ -70,6 +73,18 @@ func (_ *groupRepo) SetBuildingID(groupID uint, buildingID uint) error {
 		db.groups[groupID] = g
 	}
 	g.BuildingID = buildingID
+	return nil
+}
+
+func (_ *groupRepo) SetGroupProfilePic(groupID uint, url string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	g := db.groups[groupID]
+	if g == nil {
+		g = &Group{ID: groupID, Inventory: map[uint]struct{}{}, Slots: map[uint]int{}}
+		db.groups[groupID] = g
+	}
+	g.ProfilePicURL = url
 	return nil
 }
 

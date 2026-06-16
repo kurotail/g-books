@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	apperr "gb-api/internal/error"
-	"gb-api/internal/model"
 	"gb-api/internal/repo"
 )
 
@@ -36,25 +35,10 @@ func (s *GroupSvc) SetGroup(accessToken, username string, groupID uint) (int, er
 	return http.StatusOK, nil
 }
 
-func (s *GroupSvc) authorizeGroupEdit(accessToken string, groupID uint) (int, error) {
-	claims, err := validateAccessToken(accessToken)
-	if err != nil {
-		return http.StatusUnauthorized, err
-	}
-	caller, err := s.users.GetUser(claims.Username)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	if caller.GroupID != groupID && caller.Role < model.RoleTeacher {
-		return http.StatusForbidden, fmt.Errorf("權限不足")
-	}
-	return http.StatusOK, nil
-}
-
 // SetName renames a group. The caller must be a member of the group, or a
 // teacher/admin (who may rename any group).
 func (s *GroupSvc) SetName(accessToken string, groupID uint, name string) (int, error) {
-	if status, err := s.authorizeGroupEdit(accessToken, groupID); err != nil {
+	if status, err := authorizeGroupEdit(s.users, accessToken, groupID); err != nil {
 		return status, err
 	}
 	if err := s.repo.SetGroupName(groupID, name); err != nil {
@@ -66,10 +50,20 @@ func (s *GroupSvc) SetName(accessToken string, groupID uint, name string) (int, 
 // SetBuilding assigns a group's building. The caller must be a member of the
 // group, or a teacher/admin. A buildingID of 0 clears the assignment.
 func (s *GroupSvc) SetBuilding(accessToken string, groupID uint, buildingID uint) (int, error) {
-	if status, err := s.authorizeGroupEdit(accessToken, groupID); err != nil {
+	if status, err := authorizeGroupEdit(s.users, accessToken, groupID); err != nil {
 		return status, err
 	}
 	if err := s.repo.SetBuildingID(groupID, buildingID); err != nil {
+		return http.StatusInternalServerError, err
+	}
+	return http.StatusOK, nil
+}
+
+func (s *GroupSvc) SetProfilePic(accessToken string, groupID uint, url string) (int, error) {
+	if status, err := authorizeGroupEdit(s.users, accessToken, groupID); err != nil {
+		return status, err
+	}
+	if err := s.repo.SetGroupProfilePic(groupID, url); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil

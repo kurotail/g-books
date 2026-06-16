@@ -9,19 +9,21 @@ import (
 
 // User is a row in the users table. Primary key: Username.
 type User struct {
-	Username string
-	Password string
-	Role     uint
-	GroupID  uint // FK -> groups; 0 = not a member of any group
+	Username      string
+	Password      string
+	Role          uint
+	GroupID       uint   // FK -> groups; 0 = not a member of any group
+	ProfilePicURL string // image link; empty = no picture
 }
 
 // Group is a row in the groups table. Primary key: ID.
 type Group struct {
-	ID         uint
-	Name       string            // empty = use the default "Group <id>"
-	BuildingID uint              // FK -> buildings; 0 = no building assigned
-	Inventory  map[uint]struct{} // set of owned (unslotted) item_ids
-	Slots      map[uint]int      // slot_id -> signed item_id (negative = broken)
+	ID            uint
+	Name          string            // empty = use the default "Group <id>"
+	BuildingID    uint              // FK -> buildings; 0 = no building assigned
+	Inventory     map[uint]struct{} // set of owned (unslotted) item_ids
+	Slots         map[uint]int      // slot_id -> signed item_id (negative = broken)
+	ProfilePicURL string            // image link; empty = no picture
 }
 
 // Building is a row in the buildings table. Primary key: ID.

@@ -12,6 +12,7 @@ type UserRepo interface {
 	GetAllUsers() ([]model.User, error)
 	GetUser(username string) (model.User, error)
 	CreateUser(username, password string, role, groupID uint) error
+	SetUserProfilePic(username, url string) error
 }
 
 type userRepo struct{}
@@ -45,7 +46,18 @@ func (_ *userRepo) GetUser(username string) (model.User, error) {
 
 // toModelUser maps a users-table row to the model exposed to the service layer.
 func toModelUser(u *User) model.User {
-	return model.User{Username: u.Username, Role: u.Role, GroupID: u.GroupID}
+	return model.User{Username: u.Username, Role: u.Role, GroupID: u.GroupID, ProfilePicURL: u.ProfilePicURL}
+}
+
+func (_ *userRepo) SetUserProfilePic(username, url string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	u := db.users[username]
+	if u == nil {
+		return apperr.ErrUserNotFound
+	}
+	u.ProfilePicURL = url
+	return nil
 }
 
 func (_ *userRepo) CreateUser(username, password string, role, groupID uint) error {

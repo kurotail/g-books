@@ -145,6 +145,27 @@ func (s *AuthSvc) RegisterUser(accessToken, username, password string, role, gro
 	return http.StatusCreated, nil
 }
 
+func (s *AuthSvc) SetProfilePic(accessToken, username, url string) (int, error) {
+	caller, status, err := getCaller(s.users, accessToken)
+	if err != nil {
+		return status, err
+	}
+	target := username
+	if target == "" {
+		target = caller.Username
+	}
+	if target != caller.Username && caller.Role < model.RoleTeacher {
+		return http.StatusForbidden, fmt.Errorf("權限不足")
+	}
+	if err := s.users.SetUserProfilePic(target, url); err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
+		}
+		return http.StatusInternalServerError, err
+	}
+	return http.StatusOK, nil
+}
+
 func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 	claims := &model.Claims{}
 	token, err := jwt.ParseWithClaims(refreshTokenStr, claims, func(t *jwt.Token) (any, error) {
