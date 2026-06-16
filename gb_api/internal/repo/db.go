@@ -61,14 +61,6 @@ func newDatabase() *Database {
 				Role:     model.RoleTeacher,
 				GroupID:  1,
 			},
-			// Seeded admin (role cannot be created via the register API). Used by
-			// the app's staff login to reach the admin heritage editor.
-			"admin": {
-				Username: "admin",
-				Password: "admin123",
-				Role:     model.RoleAdmin,
-				GroupID:  0,
-			},
 		},
 		groups: map[uint]*Group{
 			1: {

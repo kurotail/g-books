@@ -24,10 +24,6 @@ type RegisterRequest struct {
 	GroupID  uint   `json:"group_id"` // optional; 0 = no group
 }
 
-type DeleteUserRequest struct {
-	Username string `json:"username"`
-}
-
 type User struct {
 	Username string `json:"username"`
 	Role     uint   `json:"role"`
