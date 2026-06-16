@@ -146,7 +146,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
       );
 
   String _componentImage(int id) =>
-      'assets/images/heritages/${widget.heritageId}/components/$id.png';
+      'assets/heritages/${widget.heritageId}/components/$id.png';
 
   String _displayName(int id) {
     final t = _nameCtrls[id]?.text.trim() ?? '';
@@ -537,7 +537,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
                           Positioned.fromRect(
                             rect: main,
                             child: Image.asset(
-                              'assets/images/heritages/${widget.heritageId}/main.png',
+                              'assets/heritages/${widget.heritageId}/main.png',
                               fit: BoxFit.fill,
                               filterQuality: FilterQuality.low,
                               errorBuilder: (_, _, _) => Container(

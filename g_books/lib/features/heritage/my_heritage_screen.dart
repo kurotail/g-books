@@ -160,7 +160,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
       'assets/images/bg_view.png',
       'assets/images/edit_grid.png',
       'assets/icons/buttons/supply_station_btn.png',
-      'assets/images/heritages/${_heritage.id}/main.png',
+      'assets/heritages/${_heritage.id}/main.png',
       for (final lv in const [1, 2, 3]) levelFrameImagePath(lv),
       for (final c in componentsOf(_heritage.id)) c.imagePath,
     ];
@@ -625,7 +625,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
                 Positioned.fromRect(
                   rect: main,
                   child: Image.asset(
-                    'assets/images/heritages/${_heritage.id}/main.png',
+                    'assets/heritages/${_heritage.id}/main.png',
                     fit: BoxFit.fill,
                     gaplessPlayback: true,
                     errorBuilder: (_, _, _) => const SizedBox.shrink(),

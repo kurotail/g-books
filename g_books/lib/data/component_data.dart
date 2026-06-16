@@ -41,7 +41,7 @@ Future<void> loadComponentImageIds(Iterable<String> heritageIds) async {
   final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
   final assets = manifest.listAssets();
   for (final hid in heritageIds) {
-    final prefix = 'assets/images/heritages/$hid/components/';
+    final prefix = 'assets/heritages/$hid/components/';
     final ids = <int>[];
     for (final a in assets) {
       if (a.startsWith(prefix) && a.endsWith('.png')) {
@@ -78,31 +78,3 @@ void _rebuild(String heritageId) {
       ),
   ];
 }
-
-// ── 假後端種子值 ─────────────────────────────────────────────────────────────
-/// 各古蹟原料中繼資料的初始值，供假後端首次種子化使用（之後由後端取代）。
-Map<int, ComponentMeta> seedComponentMetaOf(String heritageId) {
-  final table = _seedMeta[heritageId];
-  if (table == null) return {};
-  return {
-    for (final e in table.entries)
-      e.key: ComponentMeta(name: e.value.$1, level: e.value.$2),
-  };
-}
-
-const Map<String, Map<int, (String, int)>> _seedMeta = {
-  'beigang_chaotian_temple': {
-    1: ('門釘廟門', 1),
-    2: ('華麗獅', 1),
-    3: ('燈籠', 1),
-    4: ('石燈', 1),
-    5: ('戲檯', 2),
-    6: ('晨鐘樓', 2),
-    7: ('香爐', 2),
-    8: ('暮鼓樓', 2),
-    9: ('交趾陶_1', 3),
-    10: ('火珠雕塑', 3),
-    11: ('福祿壽', 3),
-    12: ('交趾陶_2', 3),
-  },
-};

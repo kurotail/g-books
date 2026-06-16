@@ -2,7 +2,7 @@
 ///
 /// 由設定（[componentsOf] 組裝）產生：圖片(由 [heritageId]+[id] 推導) - id -
 /// 名稱/等級([level]，可由管理者編輯) - 可放置 slot([allowedSlotIds])。
-/// 原料的詳細圖文介紹改由 `assets/data/heritages/<hid>/components/<id>.md` 提供。
+/// 原料的詳細圖文介紹改由 `assets/heritages/<hid>/components/<id>.md` 提供。
 class ComponentModel {
   /// 對應 `components/<id>.png`。
   final int id;
@@ -28,7 +28,7 @@ class ComponentModel {
 
   /// 原料圖片路徑。
   String get imagePath =>
-      'assets/images/heritages/$heritageId/components/$id.png';
+      'assets/heritages/$heritageId/components/$id.png';
 
   /// 依等級取得卡框圖。
   String get frameImagePath => levelFrameImagePath(level);

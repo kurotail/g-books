@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
-import '../data/component_data.dart' show seedComponentMetaOf;
 import '../data/models/heritage_config.dart';
 import '../data/models/heritage_slot.dart';
 import 'api_client.dart';
@@ -13,21 +11,15 @@ import 'api_client.dart';
 /// slots = 陣列、component_slots = `{cid:[slotId]}`、components = `{cid:{name,level}}`，
 /// 空設定即 `[]` / `{}`。後端實作見 [ApiHeritageConfigService]、離線開發見
 /// [LocalHeritageConfigService]，在 `main.dart` 切換實作即可，UI 不需更動。
+///
+/// 古蹟設定的單一真相在後端 building；assets 不再保存設定 json。學生端執行設定由
+/// [StudentConfigLoader] 於登入後依 building_id 取得並快取本機（離線回退）。
 abstract class HeritageConfigService {
   Future<HeritageConfig> fetch(String heritageId);
   Future<void> save(String heritageId, HeritageConfig config);
 }
 
-// ── 共用：種子化 + 解析（被 Local / Api / 啟動顯示種子共用）──────────────────────
-Future<String?> _tryAsset(String path) async {
-  try {
-    return await rootBundle.loadString(path);
-  } catch (_) {
-    return null;
-  }
-}
-
-/// 解析 slots：接受 JSON 字串或已解碼的 List；空 / null → 空。
+// ── 共用解析（字串或已解碼皆可；空 / null → 空）─────────────────────────────────
 List<HeritageSlot> _slotsFromJson(dynamic raw) {
   if (raw == null) return [];
   final list = raw is String
@@ -68,19 +60,71 @@ Map<int, ComponentMeta> _componentsFromJson(dynamic raw) {
   };
 }
 
-/// 首次無資料時，從現有 assets / dart 取古蹟設定初值（純讀取、不寫任何持久層）。
-/// 供啟動時的學生端顯示種子、以及兩種服務「後端 / 本機尚無資料」時的回退。
-Future<HeritageConfig> seedHeritageConfigFromAssets(String hid) async {
+/// 把後端 building（`{name, layout, item_allowed_slot, difficulty_type}`）解析成
+/// [HeritageConfig]。Layout 內帶 `slots` / `components`；component 名稱/等級優先取
+/// layout.components，缺則由 difficulty_type 還原等級、名稱用預設。
+HeritageConfig heritageConfigFromBuilding(Map<String, dynamic> b) {
+  Map<String, dynamic> layout = const {};
+  final raw = b['layout'];
+  if (raw is String && raw.trim().isNotEmpty) {
+    try {
+      final d = jsonDecode(raw);
+      if (d is Map) layout = d.cast<String, dynamic>();
+    } catch (_) {}
+  }
+  var components = _componentsFromJson(layout['components']);
+  if (components.isEmpty) {
+    components = _componentsFromDifficulty(b['difficulty_type']);
+  }
   return HeritageConfig(
-    slots: _slotsFromJson(await _tryAsset('assets/data/slots/$hid.json')),
-    componentSlots:
-        _componentSlotsFromJson(await _tryAsset('assets/data/component_slots/$hid.json')),
-    components: seedComponentMetaOf(hid),
+    slots: _slotsFromJson(layout['slots']),
+    componentSlots: _componentSlotsFromJson(b['item_allowed_slot']),
+    components: components,
   );
 }
 
-/// 假後端：以 App 文件區的本機檔案保存。首次（無本機檔）時以 assets / dart 種子化並
-/// 寫回，之後即以本機檔為準 —— 讓「請求 → 編輯 → 儲存」整個迴圈在離線開發時可運作。
+Map<int, ComponentMeta> _componentsFromDifficulty(dynamic raw) {
+  if (raw is! Map) return {};
+  final out = <int, ComponentMeta>{};
+  for (final e in raw.entries) {
+    final level = int.tryParse(e.key.toString()) ?? 1;
+    for (final t in (e.value as List)) {
+      final cid = (t as num).toInt();
+      out[cid] = ComponentMeta(name: '原料$cid', level: level);
+    }
+  }
+  return out;
+}
+
+/// 把 [HeritageConfig] 序列化成三段 JSON 字串（縮排、key 排序），鍵為
+/// `slots` / `component_slots` / `components`。本機保存（admin 假後端、學生快取）共用。
+Map<String, String> serializeHeritageConfig(HeritageConfig c) {
+  const enc = JsonEncoder.withIndent('  ');
+  final slots = enc.convert(c.slots.map((s) => s.toJson()).toList());
+
+  final cs = <String, List<int>>{};
+  for (final e in c.componentSlots.entries.toList()
+    ..sort((a, b) => a.key.compareTo(b.key))) {
+    cs['${e.key}'] = e.value.toList()..sort();
+  }
+  final componentSlots = enc.convert(cs);
+
+  final cm = <String, dynamic>{};
+  for (final e in c.components.entries.toList()
+    ..sort((a, b) => a.key.compareTo(b.key))) {
+    cm['${e.key}'] = e.value.toJson();
+  }
+  final components = enc.convert(cm);
+
+  return {
+    'slots': slots,
+    'component_slots': componentSlots,
+    'components': components,
+  };
+}
+
+/// 假後端：以 App 文件區的本機檔案保存。供離線開發時管理者「請求 → 編輯 → 儲存」整個
+/// 迴圈可運作。assets 已不再保存設定 json，故首次（無本機檔）回空白設定讓管理者建立。
 class LocalHeritageConfigService implements HeritageConfigService {
   static const _netDelay = Duration(milliseconds: 250); // 模擬網路往返
 
@@ -99,11 +143,11 @@ class LocalHeritageConfigService implements HeritageConfigService {
     final compSlotsFile = File('${dir.path}/component_slots.json');
     final compFile = File('${dir.path}/components.json');
 
-    // 任一檔不存在 → 視為首次，種子化並寫回。
+    // 任一檔不存在 → 視為首次：給空白設定並寫回（assets 已無種子）。
     if (!await slotsFile.exists() ||
         !await compSlotsFile.exists() ||
         !await compFile.exists()) {
-      final seeded = await seedHeritageConfigFromAssets(hid);
+      final seeded = HeritageConfig();
       await save(hid, seeded);
       return seeded;
     }
@@ -118,24 +162,11 @@ class LocalHeritageConfigService implements HeritageConfigService {
   Future<void> save(String hid, HeritageConfig c) async {
     await Future<void>.delayed(_netDelay);
     final dir = await _dir(hid);
-    const enc = JsonEncoder.withIndent('  ');
-
-    await File('${dir.path}/slots.json')
-        .writeAsString(enc.convert(c.slots.map((s) => s.toJson()).toList()));
-
-    final cs = <String, List<int>>{};
-    for (final e in c.componentSlots.entries.toList()
-      ..sort((a, b) => a.key.compareTo(b.key))) {
-      cs['${e.key}'] = e.value.toList()..sort();
-    }
-    await File('${dir.path}/component_slots.json').writeAsString(enc.convert(cs));
-
-    final cm = <String, dynamic>{};
-    for (final e in c.components.entries.toList()
-      ..sort((a, b) => a.key.compareTo(b.key))) {
-      cm['${e.key}'] = e.value.toJson();
-    }
-    await File('${dir.path}/components.json').writeAsString(enc.convert(cm));
+    final j = serializeHeritageConfig(c);
+    await File('${dir.path}/slots.json').writeAsString(j['slots']!);
+    await File('${dir.path}/component_slots.json')
+        .writeAsString(j['component_slots']!);
+    await File('${dir.path}/components.json').writeAsString(j['components']!);
   }
 }
 
@@ -167,9 +198,9 @@ class ApiHeritageConfigService implements HeritageConfigService {
   @override
   Future<HeritageConfig> fetch(String hid) async {
     final b = await _findBuilding(hid);
-    // 後端尚無此古蹟 building → 用 assets 初值，管理者編輯後 save 會建立。
-    if (b == null) return seedHeritageConfigFromAssets(hid);
-    return _toConfig(b);
+    // 後端尚無此古蹟 building → 回空白設定，管理者編輯後 save 會建立。
+    if (b == null) return HeritageConfig();
+    return heritageConfigFromBuilding(b);
   }
 
   @override
@@ -183,41 +214,6 @@ class ApiHeritageConfigService implements HeritageConfigService {
     if (res is Map && res['building_id'] != null) {
       _idCache[hid] = (res['building_id'] as num).toInt();
     }
-  }
-
-  HeritageConfig _toConfig(Map<String, dynamic> b) {
-    Map<String, dynamic> layout = const {};
-    final raw = b['layout'];
-    if (raw is String && raw.trim().isNotEmpty) {
-      try {
-        final d = jsonDecode(raw);
-        if (d is Map) layout = d.cast<String, dynamic>();
-      } catch (_) {}
-    }
-    var components = _componentsFromJson(layout['components']);
-    // Layout 沒帶 components 時（例如其他工具建的 building），至少用
-    // difficulty_type 還原等級，名稱用預設。
-    if (components.isEmpty) {
-      components = _componentsFromDifficulty(b['difficulty_type']);
-    }
-    return HeritageConfig(
-      slots: _slotsFromJson(layout['slots']),
-      componentSlots: _componentSlotsFromJson(b['item_allowed_slot']),
-      components: components,
-    );
-  }
-
-  Map<int, ComponentMeta> _componentsFromDifficulty(dynamic raw) {
-    if (raw is! Map) return {};
-    final out = <int, ComponentMeta>{};
-    for (final e in raw.entries) {
-      final level = int.tryParse(e.key.toString()) ?? 1;
-      for (final t in (e.value as List)) {
-        final cid = (t as num).toInt();
-        out[cid] = ComponentMeta(name: '原料$cid', level: level);
-      }
-    }
-    return out;
   }
 
   Map<String, dynamic> _toRequest(String hid, HeritageConfig c) {
@@ -245,5 +241,83 @@ class ApiHeritageConfigService implements HeritageConfigService {
       'item_allowed_slot': allowed,
       'difficulty_type': diff,
     };
+  }
+}
+
+/// 學生端執行設定的載入：登入後依該組 `building_id` 取後端 building 設定。
+///
+/// 線上成功 → 套用並寫入本機快取（`gb_cache/building_<id>/`）；離線 / 失敗 → 回退讀
+/// 該 building 的本機快取（上次成功的設定）。古蹟設定單一真相在後端，本機快取只供離線
+/// 沿用、不供編輯。[load] 回 null 表示線上取不到且無快取（例如首次就離線、或尚未指派
+/// building）。mock 模式（[_client] 為 null）只走快取。
+class StudentConfigLoader {
+  StudentConfigLoader(this._client);
+
+  final ApiClient? _client; // mock 模式為 null
+
+  Future<({String heritageId, HeritageConfig config})?> load(
+      int buildingId) async {
+    if (buildingId <= 0) return null;
+    final client = _client;
+    if (client != null) {
+      try {
+        final b = await client.getJson('/api/building/$buildingId')
+            as Map<String, dynamic>;
+        final hid = (b['name'] as String?) ?? '';
+        final cfg = heritageConfigFromBuilding(b);
+        await _writeCache(buildingId, hid, cfg);
+        return (heritageId: hid, config: cfg);
+      } catch (_) {
+        // 線上取設定失敗 → 落到本機快取。
+      }
+    }
+    return _readCache(buildingId);
+  }
+
+  Future<Directory> _cacheDir(int buildingId) async {
+    final base = await getApplicationDocumentsDirectory();
+    final dir = Directory('${base.path}/gb_cache/building_$buildingId');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  Future<void> _writeCache(int buildingId, String hid, HeritageConfig c) async {
+    try {
+      final dir = await _cacheDir(buildingId);
+      final j = serializeHeritageConfig(c);
+      await File('${dir.path}/heritage_id').writeAsString(hid);
+      await File('${dir.path}/slots.json').writeAsString(j['slots']!);
+      await File('${dir.path}/component_slots.json')
+          .writeAsString(j['component_slots']!);
+      await File('${dir.path}/components.json').writeAsString(j['components']!);
+    } catch (_) {
+      // 快取寫入失敗不影響本次顯示。
+    }
+  }
+
+  Future<({String heritageId, HeritageConfig config})?> _readCache(
+      int buildingId) async {
+    try {
+      final base = await getApplicationDocumentsDirectory();
+      final dir = Directory('${base.path}/gb_cache/building_$buildingId');
+      final idFile = File('${dir.path}/heritage_id');
+      if (!await idFile.exists()) return null;
+      final hid = (await idFile.readAsString()).trim();
+      if (hid.isEmpty) return null;
+      final cfg = HeritageConfig(
+        slots: _slotsFromJson(await _readOrNull(dir, 'slots.json')),
+        componentSlots:
+            _componentSlotsFromJson(await _readOrNull(dir, 'component_slots.json')),
+        components: _componentsFromJson(await _readOrNull(dir, 'components.json')),
+      );
+      return (heritageId: hid, config: cfg);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _readOrNull(Directory dir, String name) async {
+    final f = File('${dir.path}/$name');
+    return await f.exists() ? f.readAsString() : null;
   }
 }

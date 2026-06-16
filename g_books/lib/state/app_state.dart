@@ -3,8 +3,10 @@ import '../data/models/user_model.dart';
 import '../data/models/group_model.dart';
 import '../data/models/staff_account.dart';
 import '../data/mock_data.dart';
+import '../data/component_data.dart' show applyHeritageConfig;
 import '../services/avatar_service.dart';
 import '../services/api_client.dart';
+import '../services/heritage_config_service.dart' show StudentConfigLoader;
 
 class AppState extends ChangeNotifier {
   UserModel? _currentUser;
@@ -16,18 +18,24 @@ class AppState extends ChangeNotifier {
   final ApiClient? _api;
   final bool _useBackend;
 
+  /// 學生端執行設定載入器：登入後依 building_id 取後端設定並快取本機（離線回退）。
+  final StudentConfigLoader? _configLoader;
+
   // 後端模式下登入後從 `GET /api/group` 取得的小組與成員（mock 模式不使用）。
   GroupModel? _backendGroup;
   List<UserModel> _backendMembers = const [];
   int _backendBuildingId = 0;
+  String? _assignedHeritageId;
 
   AppState({
     AvatarService? avatarService,
     ApiClient? apiClient,
     bool useBackend = false,
+    StudentConfigLoader? configLoader,
   })  : avatarService = avatarService ?? MockAvatarService(),
         _api = apiClient,
-        _useBackend = useBackend;
+        _useBackend = useBackend,
+        _configLoader = configLoader;
 
   UserModel? get currentUser => _currentUser;
   bool get isLoggedIn => _currentUser != null;
@@ -35,6 +43,9 @@ class AppState extends ChangeNotifier {
 
   /// 後端模式下、該組被指派的 building id（0 = 未指派）。對應古蹟由 building 解析。
   int get buildingId => _backendBuildingId;
+
+  /// 後端模式下、登入後依指派 building 解析出的古蹟 id（heritageId = building.name）。
+  String? get assignedHeritageId => _assignedHeritageId;
 
   // ── 後台（教師 / 管理者）session ───────────────────────────────────────────
   StaffAccount? get currentStaff => _currentStaff;
@@ -164,6 +175,9 @@ class AppState extends ChangeNotifier {
       } catch (_) {
         return '無法取得小組資料';
       }
+      // 依該組 building_id 取後端古蹟設定（slot/原料名稱/等級/可放對應）並套用；
+      // 失敗不擋登入（板面退回本機快取或現有資料）。
+      await _loadAssignedConfig();
       notifyListeners();
       return null;
     }
@@ -209,6 +223,23 @@ class AppState extends ChangeNotifier {
       isLeader: false,
       hasCompletedSetup: named,
     );
+  }
+
+  /// 依該組 building_id 取後端古蹟設定並套用到執行中資料（[applyHeritageConfig]）。
+  /// 線上成功會順手快取本機；離線回退讀快取。取不到（未指派 building / 首次離線）時
+  /// 不動現有資料。任何失敗都吞掉、不擋登入。
+  Future<void> _loadAssignedConfig() async {
+    final loader = _configLoader;
+    if (loader == null) return;
+    try {
+      final r = await loader.load(_backendBuildingId);
+      if (r != null && r.heritageId.isNotEmpty) {
+        _assignedHeritageId = r.heritageId;
+        applyHeritageConfig(r.heritageId, r.config);
+      }
+    } catch (_) {
+      // 設定載入失敗不擋登入。
+    }
   }
 
   UserModel _userFromUsername(String username, int gid) {
@@ -265,6 +296,7 @@ class AppState extends ChangeNotifier {
     _backendGroup = null;
     _backendMembers = const [];
     _backendBuildingId = 0;
+    _assignedHeritageId = null;
     _api?.clearTokens();
     notifyListeners();
   }

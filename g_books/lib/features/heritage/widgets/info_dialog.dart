@@ -9,7 +9,7 @@ import '../../../data/models/info_section.dart';
 ///
 /// 內容以 Markdown 撰寫，`# 標題` 分頁、`![說明](檔名){width=70}` 放圖（width 為內容欄
 /// 寬度的百分比、未寫預設 70，高度自動等比）。圖片路徑自動以
-/// `assets/images/heritages/<hid>/info/` 為前綴。
+/// `assets/heritages/<hid>/info_imgs/` 為前綴。
 class InfoDialog extends StatelessWidget {
   final String heritageId;
   final String title;

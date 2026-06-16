@@ -90,7 +90,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
     _assetsPrecached = true;
     for (final k in _areaKeys) {
       precacheImage(
-        AssetImage('assets/images/heritages/$_hid/area/$k.png'),
+        AssetImage('assets/heritages/$_hid/area/$k.png'),
         context,
         onError: (_, _) {},
       );
@@ -543,7 +543,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
                       child: _DifficultyCard(
                         name: names[d - 1],
                         imagePath:
-                            'assets/images/heritages/$_hid/area/${_areaKeys[d - 1]}.png',
+                            'assets/heritages/$_hid/area/${_areaKeys[d - 1]}.png',
                         stars: d,
                         progress: _progressOf(d),
                         onTap: () => _pickDifficulty(d),

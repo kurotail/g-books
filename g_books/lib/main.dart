@@ -30,15 +30,10 @@ Future<void> main() async {
 
   final heritageIds = mockHeritages.map((h) => h.id).toList();
 
-  // 先讀 assets 列出各古蹟可用的原料圖片 id（決定「有哪些原料」）。
+  // 先讀 assets 列出各古蹟可用的原料圖片 id（決定「有哪些原料」）。原料圖維持在 assets，
+  // slot 幾何 / 原料名稱 / 等級 / 可放對應則改由後端 building 提供，於學生登入後載入
+  // （見 [AppState] 的 StudentConfigLoader），故啟動時不再以 assets 種子設定。
   await loadComponentImageIds(heritageIds);
-
-  // 學生端顯示用古蹟設定（slot 幾何 / 原料名稱 / 等級）先以 assets 初值套用。啟動時
-  // 尚未登入、無法向後端取 building（需 JWT），故顯示走本機初值；功能規則（可放哪、
-  // 難度給哪種原料）一律以後端 building 為準。管理者於後端編輯後，學生重登即更新。
-  await Future.wait(heritageIds.map((hid) async {
-    applyHeritageConfig(hid, await seedHeritageConfigFromAssets(hid));
-  }));
 
   // 後端串接：所有服務共用同一個 ApiClient（持有 JWT、自動換新）。kUseBackend=false
   // 時改用本機 mock，App 可離線開發；後端資料備妥後翻成 true 即整組切過去、UI 不變。
@@ -50,7 +45,15 @@ Future<void> main() async {
       ? ApiHeritageConfigService(apiClient)
       : LocalHeritageConfigService();
 
-  final appState = AppState(apiClient: apiClient, useBackend: kUseBackend);
+  // 學生端執行設定載入器：登入後依該組 building_id 取後端設定並快取本機（離線回退）。
+  final studentConfigLoader =
+      StudentConfigLoader(kUseBackend ? apiClient : null);
+
+  final appState = AppState(
+    apiClient: apiClient,
+    useBackend: kUseBackend,
+    configLoader: studentConfigLoader,
+  );
 
   // 背包 / 放置：mock 與 API 共用同一套（後端形狀的）DTO，差別僅在傳輸。
   final HeritageSyncService syncService =

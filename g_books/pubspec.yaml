@@ -31,35 +31,32 @@ flutter:
   uses-material-design: true
 
   assets:
-    # App
+    # ── 共用（跨古蹟）────────────────────────────────────────────────
     - assets/logo.png                  # App logo（載入畫面）
-
-    # 設定資料：JSON，假後端「首次種子化」的來源（之後以本機檔為準）
-    - assets/data/slots/               # 各古蹟 slot 幾何
-    - assets/data/component_slots/     # 各古蹟 原料→可放 slot 對應
-
-    # 古蹟圖文資訊：Markdown，InfoDialog 呈現（一座古蹟一資料夾）
-    # heritage.md = 古蹟介紹、components/<id>.md = 各原料介紹
-    - assets/data/heritages/beigang_chaotian_temple/
-    - assets/data/heritages/beigang_chaotian_temple/components/
-
     # 背景圖
     - assets/images/bg_login.png       # 登入頁
     - assets/images/bg_group_info.png  # 小組總覽
     - assets/images/bg_view.png        # 古蹟檢視頁
     - assets/images/edit_grid.png      # 古蹟編輯格線
     - assets/images/fight_map.png      # 攻防戰地圖（功能預留）
-
-    # 古蹟圖片（一座古蹟一資料夾）
-    - assets/images/heritages/heritage_cards/                     # 選古蹟卡片
-    - assets/images/heritages/beigang_chaotian_temple/            # main.png 等
-    - assets/images/heritages/beigang_chaotian_temple/components/ # 原料圖
-    - assets/images/heritages/beigang_chaotian_temple/info/       # 資訊用圖（md ![](檔名) 自動補 info/ 前綴；新增子資料夾須在此登記）
-
     # icons
     - assets/icons/                    # star.png / times_up.png 等
     - assets/icons/buttons/            # 功能按鈕圖
     - assets/icons/card_frames/        # 原料卡框（綠/黃/紅）
 
-    # 資源採集：副本（難度）區域圖
-    - assets/images/heritages/beigang_chaotian_temple/area/  # easy/mid/hard.png
+    # ── 古蹟：一座一資料夾 assets/heritages/<hid>/ ────────────────────
+    # 新增一座古蹟 ＝ 複製下方「<hid>/ 四行區塊」改 hid + 在 heritage_data.dart 加一筆。
+    # <hid>/            info.md, card.png, main.png, enemy.png
+    #                   （slot/原料設定 json 不放 assets，改由後端 building 提供、
+    #                     學生登入後載入並快取本機；見 StudentConfigLoader）
+    # <hid>/area/       資源採集難度區域圖 easy/mid/hard.png
+    # <hid>/info_imgs/  info.md 內 ![](檔名) 自動補 <hid>/info_imgs/ 前綴的圖
+    # <hid>/components/ 原料圖 <id>.png ＋ 原料介紹 <id>.md
+    - assets/heritages/beigang_chaotian_temple/
+    - assets/heritages/beigang_chaotian_temple/area/
+    - assets/heritages/beigang_chaotian_temple/info_imgs/
+    - assets/heritages/beigang_chaotian_temple/components/
+    # stub：內容待補，目前僅卡片 card.png
+    - assets/heritages/anping_old_fort/
+    - assets/heritages/chihkan_tower/
+    - assets/heritages/former_british_consular_residence/
