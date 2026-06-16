@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'api_client.dart';
 
 /// 題目內容型別：文字或語音。
 enum QuizMediaType { text, audio }
@@ -22,7 +23,7 @@ class QuizChoices {
   const QuizChoices({this.type = QuizMediaType.text, required this.data});
 }
 
-/// 一道題目。對應後端回傳：
+/// 一道題目。對應後端 generate / target 回傳：
 /// `{ "session": "...", "content": { "description": {...}, "choices": {...}? } }`
 class QuizQuestion {
   final String session;
@@ -39,8 +40,8 @@ class QuizQuestion {
   bool get isChoice => choices != null;
 }
 
-/// 作答內容。對應後端：選擇題回 `{session, answer: <index>}`；
-/// 語音題回 `{session, answer: "<wav base64>"}`。
+/// 作答內容。對應後端 `POST /api/question/answer`：
+/// 選擇題 `{session, answer: <index>}`；語音題 `{session, answer: "<wav base64>"}`。
 class QuizAnswer {
   final String session;
   final int? choiceIndex;
@@ -53,22 +54,30 @@ class QuizAnswer {
   const QuizAnswer.audio(this.session, String base64)
       : audioBase64 = base64,
         choiceIndex = null;
+
+  /// 後端 `answer` 欄位：選擇題為數字、語音題為 base64 字串。
+  Object get payload => choiceIndex ?? audioBase64 ?? 0;
 }
 
-/// 作答結果（後端判定正確與否）。
+/// 作答結果（對應後端 `AnswerResponse`）。
+/// [itemId] 在「採集答對、後端入庫」時帶回（前端據此查背包顯示獲得的原料）；
+/// mock 不走伺服器入庫，[itemId] 為 null（由前端自行發獎）。
 class QuizResult {
   final bool correct;
-  const QuizResult({required this.correct});
+  final int? itemId;
+  const QuizResult({required this.correct, this.itemId});
 }
 
 /// 題目來源抽象層。對應後端：
-///   - [fetchQuestion] ↔ 依難度取題（回傳上述 question 格式）
-///   - [submitAnswer]  ↔ 送出作答（`{session, answer}`）→ 回正確與否
+///   - [fetchQuestion] ↔ `POST /api/question/generate`（依難度取題，順帶在伺服器
+///     建立待領取的物品與 session；答案不外洩）
+///   - [submitAnswer]  ↔ `POST /api/question/answer`（送出作答 → 回正確與否、
+///     及答對時入庫的 item_id）
 ///
-/// 之後換真後端只要新增 `ApiQuizService implements QuizService` 並在 `main.dart`
-/// 換掉實作，前端與 UI 不需更動。
+/// 之後換真後端只要在 `main.dart` 換成 [ApiQuizService]，前端與 UI 不需更動。
 abstract class QuizService {
-  /// 依 [difficulty]（1=易 / 2=中 / 3=難）取一題。
+  /// 依 [difficulty]（1=易 / 2=中 / 3=難）取一題。[heritageId] 供 mock 決定原料池；
+  /// API 模式下後端依 token 的 group→building 自行決定，不需用到。
   Future<QuizQuestion> fetchQuestion({
     required String heritageId,
     required int difficulty,
@@ -80,6 +89,7 @@ abstract class QuizService {
 /// 本機 mock：輪播三種題型（文字＋選擇 / 語音＋選擇 / 文字＋語音作答），確保每種
 /// 作答介面都能測到；難度只影響採集獎勵等級，不影響題型。正確選項以 session 暫存
 /// 供 [submitAnswer] 比對；語音作答因本機無法判定，一律視為正確（之後由後端判定）。
+/// mock 不回 item_id（採集獎勵由前端 [grantRandomOfLevel] 發），與後端 DTO 相容。
 class MockQuizService implements QuizService {
   static const _netDelay = Duration(milliseconds: 350);
   int _seq = 0;
@@ -147,4 +157,63 @@ class MockQuizService implements QuizService {
       correct: correct != null && answer.choiceIndex == correct,
     );
   }
+}
+
+/// 後端實作：取題走 `POST /api/question/generate`、作答走 `POST /api/question/answer`。
+/// 答對且為採集（KindItem）時回傳 `item_id`，前端據此刷新背包並顯示獲得的原料。
+class ApiQuizService implements QuizService {
+  ApiQuizService(this._client);
+
+  final ApiClient _client;
+
+  @override
+  Future<QuizQuestion> fetchQuestion({
+    required String heritageId,
+    required int difficulty,
+  }) async {
+    final m = await _client.sendJson('POST', '/api/question/generate',
+        body: {'difficulty': difficulty}) as Map<String, dynamic>;
+    return _parseQuestion(m);
+  }
+
+  @override
+  Future<QuizResult> submitAnswer(QuizAnswer answer) async {
+    final m = await _client.sendJson('POST', '/api/question/answer', body: {
+      'session': answer.session,
+      'answer': answer.payload,
+    }) as Map<String, dynamic>;
+    final itemId = (m['item_id'] as num?)?.toInt();
+    return QuizResult(
+      correct: m['correct'] == true,
+      itemId: (itemId != null && itemId != 0) ? itemId : null,
+    );
+  }
+
+  QuizQuestion _parseQuestion(Map<String, dynamic> m) {
+    final content = m['content'] as Map<String, dynamic>;
+    final desc = content['description'] as Map<String, dynamic>;
+    final choicesRaw = content['choices'] as Map<String, dynamic>?;
+    return QuizQuestion(
+      session: m['session'] as String,
+      prompt: QuizPrompt(
+        type: _mediaType(desc['type'] as String?),
+        data: (desc['data'] as String?) ?? '',
+      ),
+      choices: choicesRaw == null
+          ? null
+          : QuizChoices(
+              data: [
+                for (final c in (choicesRaw['data'] as List? ?? const []))
+                  c as String,
+              ],
+            ),
+    );
+  }
+
+  /// 後端 description.type：`text` / `audio` / `voice_response`。
+  /// `voice_response` 是「語音作答」題，敘述本身仍可能是文字或音檔；這裡只決定
+  /// 敘述要不要當音檔播放（audio→播放，其餘→文字）。是否為語音作答由 choices 是否
+  /// 存在決定（後端對 voice_response 題不給 choices）。
+  static QuizMediaType _mediaType(String? t) =>
+      t == 'audio' ? QuizMediaType.audio : QuizMediaType.text;
 }

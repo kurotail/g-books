@@ -145,6 +145,28 @@ func (s *AuthSvc) RegisterUser(accessToken, username, password string, role, gro
 	return http.StatusCreated, nil
 }
 
+// DeleteUser removes a student account. Only teachers/admins may call it, and
+// only student (role 0) accounts may be deleted (never a teacher/admin).
+func (s *AuthSvc) DeleteUser(accessToken, username string) (int, error) {
+	if status, err := requireTeacher(s.users, accessToken); err != nil {
+		return status, err
+	}
+	u, err := s.users.GetUser(username)
+	if err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
+		}
+		return http.StatusInternalServerError, err
+	}
+	if u.Role != model.RoleStudent {
+		return http.StatusForbidden, fmt.Errorf("只能刪除學生帳號")
+	}
+	if err := s.users.DeleteUser(username); err != nil {
+		return http.StatusInternalServerError, err
+	}
+	return http.StatusOK, nil
+}
+
 func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 	claims := &model.Claims{}
 	token, err := jwt.ParseWithClaims(refreshTokenStr, claims, func(t *jwt.Token) (any, error) {

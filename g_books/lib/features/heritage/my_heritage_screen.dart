@@ -13,6 +13,7 @@ import '../../data/models/heritage_slot.dart';
 import '../../data/slot_data.dart';
 import '../../state/app_state.dart';
 import '../../state/heritage_board_controller.dart';
+import '../../services/heritage_sync_service.dart' show GroupChangedException;
 import 'package:go_router/go_router.dart';
 import 'heritage_view_geometry.dart';
 import 'widgets/framed_component_tile.dart';
@@ -265,9 +266,40 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
       _confirmComp = null;
     });
     if (remove && slot != null) {
-      await context.read<HeritageBoardController>().removeAt(slot.id);
+      await _guardGroupChanged(
+          () => context.read<HeritageBoardController>().removeAt(slot.id));
     }
     _animateTo(_savedTransform);
+  }
+
+  /// 包住會打後端物品操作的動作：若收到 [GroupChangedException]（老師把這位學生換了
+  /// 組、但他還沒重登），提示重新登入而非冒出技術錯誤。
+  Future<void> _guardGroupChanged(Future<void> Function() action) async {
+    try {
+      await action();
+    } on GroupChangedException {
+      if (mounted) await _showGroupChangedDialog();
+    }
+  }
+
+  Future<void> _showGroupChangedDialog() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('分組已變更'),
+        content: const Text('你的分組已被老師調整，請重新登入以更新資料。'),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              context.read<AppState>().logout();
+            },
+            child: const Text('重新登入'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _animateTo(Matrix4 target) {
@@ -607,9 +639,11 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
                       child: ColoredBox(color: Color(0x73000000)),
                     ),
                   ),
-                // 已放置原料（隨 main 一起縮放/平移）
+                // 已放置原料（隨 main 一起縮放/平移）。後端可能回傳前端沒有對應
+                // 原料圖的 type（例：未對齊的 building），找不到就略過不畫，避免崩潰。
                 for (final s in slots)
-                  if (board.itemAt(s.id) != null)
+                  if (board.itemAt(s.id) != null &&
+                      componentById(_heritage.id, board.itemAt(s.id)!) != null)
                     _placedComponent(
                       HeritageViewGeometry.slotRect(s, main),
                       viewport,
@@ -688,7 +722,8 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
       rect: rect,
       child: DragTarget<ComponentModel>(
         onWillAcceptWithDetails: (d) => board.canPlace(d.data, s.id),
-        onAcceptWithDetails: (d) => board.place(d.data, s.id),
+        onAcceptWithDetails: (d) =>
+            _guardGroupChanged(() => board.place(d.data, s.id)),
         builder: (_, candidate, _) {
           final hovering = candidate.isNotEmpty;
           return AnimatedBuilder(

@@ -18,6 +18,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
   final _userCtrl = TextEditingController();
   final _pwdCtrl = TextEditingController();
   String? _error;
+  bool _loggingIn = false;
 
   @override
   void dispose() {
@@ -26,15 +27,25 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
     super.dispose();
   }
 
-  void _login() {
+  Future<void> _login() async {
+    if (_loggingIn) return;
     final user = _userCtrl.text.trim();
     final pwd = _pwdCtrl.text;
     if (user.isEmpty || pwd.isEmpty) {
       setState(() => _error = '請輸入帳號與密碼');
       return;
     }
-    final err = context.read<AppState>().loginAsStaff(user, pwd);
-    if (err != null) setState(() => _error = err);
+    final appState = context.read<AppState>();
+    setState(() {
+      _loggingIn = true;
+      _error = null;
+    });
+    final err = await appState.loginAsStaff(user, pwd);
+    if (!mounted) return;
+    setState(() {
+      _loggingIn = false;
+      if (err != null) _error = err;
+    });
     // 成功時 refreshListenable 觸發 redirect 自動導向。
   }
 
@@ -189,7 +200,7 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
   Widget _loginButton() => SizedBox(
         width: double.infinity,
         child: ElevatedButton(
-          onPressed: _login,
+          onPressed: _loggingIn ? null : _login,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.buttonDark,
             foregroundColor: Colors.white,
@@ -198,14 +209,21 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
             elevation: 0,
           ),
-          child: const Text(
-            '登 入',
-            style: TextStyle(
-              fontSize: 20,
-              letterSpacing: 6,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          child: _loggingIn
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2.5, color: Colors.white),
+                )
+              : const Text(
+                  '登 入',
+                  style: TextStyle(
+                    fontSize: 20,
+                    letterSpacing: 6,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
         ),
       );
 }

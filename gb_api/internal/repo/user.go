@@ -12,6 +12,7 @@ type UserRepo interface {
 	GetAllUsers() ([]model.User, error)
 	GetUser(username string) (model.User, error)
 	CreateUser(username, password string, role, groupID uint) error
+	DeleteUser(username string) error
 }
 
 type userRepo struct{}
@@ -60,6 +61,16 @@ func (_ *userRepo) CreateUser(username, password string, role, groupID uint) err
 		Role:     role,
 		GroupID:  groupID,
 	}
+	return nil
+}
+
+func (_ *userRepo) DeleteUser(username string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.users[username] == nil {
+		return apperr.ErrUserNotFound
+	}
+	delete(db.users, username)
 	return nil
 }
 

@@ -5,11 +5,14 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <!-- 資源採集語音作答：錄音 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- 串接後端 API / WebSocket -->
+    <uses-permission android:name="android.permission.INTERNET"/>
 
     <application
         android:label="g_books"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"><!-- 允許區網 http:// 後端（正式環境請改用 network security config 限定主機） -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

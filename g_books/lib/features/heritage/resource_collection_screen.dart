@@ -256,7 +256,15 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
   Future<void> _handleResult(QuizResult res) async {
     ComponentModel? reward;
     if (res.correct) {
-      reward = await _board.grantRandomOfLevel(_difficulty);
+      if (res.itemId != null) {
+        // 後端：物品已由伺服器入庫，刷新背包後依 item_id 查出對應原料。
+        await _board.refresh();
+        final type = _board.typeOfItemId(res.itemId!);
+        reward = type != null ? componentById(_hid, type) : null;
+      } else {
+        // 本機 mock：依難度隨機發一個對應等級的原料到背包。
+        reward = await _board.grantRandomOfLevel(_difficulty);
+      }
     }
     if (!mounted) return;
     setState(() {

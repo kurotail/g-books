@@ -18,6 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _nameCtrl = TextEditingController();
   final _seatCtrl = TextEditingController();
   String? _error;
+  bool _loggingIn = false;
   DateTime? _lastBackPress;
 
   @override
@@ -27,16 +28,26 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _login() {
+  Future<void> _login() async {
+    if (_loggingIn) return;
     final name = _nameCtrl.text.trim();
     final seat = _seatCtrl.text.trim();
     if (name.isEmpty || seat.isEmpty) {
       setState(() => _error = '請輸入姓名與座號');
       return;
     }
-    final err = context.read<AppState>().loginWithMock(name, seat);
-    if (err != null) setState(() => _error = err);
-    // GoRouter refreshListenable handles redirect on success
+    final appState = context.read<AppState>();
+    setState(() {
+      _loggingIn = true;
+      _error = null;
+    });
+    final err = await appState.login(name, seat);
+    if (!mounted) return;
+    setState(() {
+      _loggingIn = false;
+      if (err != null) _error = err;
+    });
+    // 成功時由 GoRouter refreshListenable 觸發導向。
   }
 
   @override
@@ -161,7 +172,7 @@ class _LoginScreenState extends State<LoginScreen> {
         Icon(Icons.info_outline_rounded, size: 20, color: AppColors.labelText),
         SizedBox(width: 10),
         Text(
-          '請小組長輸入資料來進行登入',
+          '請輸入姓名與座號登入',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -219,7 +230,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _loginButton() => SizedBox(
     width: double.infinity,
     child: ElevatedButton(
-      onPressed: _login,
+      onPressed: _loggingIn ? null : _login,
       style: ElevatedButton.styleFrom(
         backgroundColor: AppColors.buttonDark,
         foregroundColor: Colors.white,
@@ -227,14 +238,23 @@ class _LoginScreenState extends State<LoginScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
         elevation: 0,
       ),
-      child: const Text(
-        '登 入',
-        style: TextStyle(
-          fontSize: 20,
-          letterSpacing: 6,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
+      child: _loggingIn
+          ? const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: Colors.white,
+              ),
+            )
+          : const Text(
+              '登 入',
+              style: TextStyle(
+                fontSize: 20,
+                letterSpacing: 6,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
     ),
   );
 }

@@ -85,6 +85,16 @@ func (m *AuthRepo) CreateUser(username, password string, role, groupID uint) err
 	return nil
 }
 
+func (m *AuthRepo) DeleteUser(username string) error {
+	if _, ok := m.Users[username]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	delete(m.Users, username)
+	delete(m.Roles, username)
+	delete(m.Groups, username)
+	return nil
+}
+
 type RoleRepo struct {
 	Role uint
 }
@@ -95,6 +105,7 @@ func (m *RoleRepo) GetUser(username string) (model.User, error) {
 	return model.User{Username: username, Role: m.Role}, nil
 }
 func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error { return nil }
+func (m *RoleRepo) DeleteUser(_ string) error              { return nil }
 
 type ItemRepo struct {
 	Inv        map[uint]struct{}   // owned (unslotted) item ids
