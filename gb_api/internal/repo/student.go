@@ -6,7 +6,7 @@ import (
 )
 
 type StudentRepo interface {
-	CreateStudent(name, profilePicURL string) (uint, error)
+	CreateStudent(id uint, name, profilePicURL string) error
 	UpdateStudent(id uint, name, profilePicURL string) error
 	GetStudent(id uint) (model.Student, error)
 	GetAllStudents() ([]model.Student, error)
@@ -15,13 +15,16 @@ type StudentRepo interface {
 
 type studentRepo struct{}
 
-func (_ *studentRepo) CreateStudent(name, profilePicURL string) (uint, error) {
+// CreateStudent inserts a student under the client-supplied id, which is the
+// primary key. It returns ErrStudentExists if that id is already taken.
+func (_ *studentRepo) CreateStudent(id uint, name, profilePicURL string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	id := db.nextStudentID
-	db.nextStudentID++
+	if _, ok := db.students[id]; ok {
+		return apperr.ErrStudentExists
+	}
 	db.students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
-	return id, nil
+	return nil
 }
 
 func (_ *studentRepo) UpdateStudent(id uint, name, profilePicURL string) error {
@@ -61,6 +64,10 @@ func (_ *studentRepo) DeleteStudent(id uint) error {
 		return apperr.ErrStudentNotFound
 	}
 	delete(db.students, id)
+	// Cascade: drop the student from every user's roster.
+	for _, u := range db.users {
+		delete(u.Students, id)
+	}
 	return nil
 }
 

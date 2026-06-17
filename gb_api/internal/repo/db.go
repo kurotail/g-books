@@ -16,6 +16,7 @@ type User struct {
 	Inventory     map[uint]struct{} // set of owned (unslotted) item_ids
 	Slots         map[uint]int      // slot_id -> signed item_id (negative = broken)
 	ProfilePicURL string            // image link; empty = no picture
+	Students      map[uint]struct{} // set of assigned student_ids
 }
 
 // Building is a row in the buildings table. Primary key: ID.
@@ -41,7 +42,6 @@ type Database struct {
 	nextQuestionID uint                             // next id to assign on insert
 	nextBuildingID uint                             // next id to assign on insert
 	nextItemID     uint                             // next id to assign on insert
-	nextStudentID  uint                             // next id to assign on insert
 }
 
 // db is the process-wide store. It replaces the former denormalized mem_db.
@@ -56,6 +56,7 @@ func newDatabase() *Database {
 				Role:      model.RoleAdmin,
 				Inventory: map[uint]struct{}{1: {}, 2: {}, 4: {}},
 				Slots:     map[uint]int{0: 3},
+				Students:  map[uint]struct{}{1: {}},
 			},
 		},
 		buildings: map[uint]*Building{
@@ -119,6 +120,5 @@ func newDatabase() *Database {
 		nextQuestionID: 4,
 		nextBuildingID: 2,
 		nextItemID:     5,
-		nextStudentID:  2,
 	}
 }

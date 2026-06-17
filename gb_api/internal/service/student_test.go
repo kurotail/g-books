@@ -14,7 +14,6 @@ func newStudentSvc() (*StudentSvc, *mock.StudentRepo) {
 		Students: map[uint]model.Student{
 			1: {StudentID: 1, Name: "Alice", ProfilePicURL: "/images/a.jpg"},
 		},
-		NextID: 2,
 	}
 	users := &mock.AuthRepo{
 		Roles: map[string]uint{
@@ -28,7 +27,7 @@ func newStudentSvc() (*StudentSvc, *mock.StudentRepo) {
 func TestStudentSvc_Create_TeacherSucceeds(t *testing.T) {
 	s, r := newStudentSvc()
 
-	data, status, err := s.Create(tokenFor(t, "teacher"), "Bob", "/images/b.jpg")
+	data, status, err := s.Create(tokenFor(t, "teacher"), 42, "Bob", "/images/b.jpg")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,18 +39,30 @@ func TestStudentSvc_Create_TeacherSucceeds(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if resp.Name != "Bob" || resp.ProfilePicURL != "/images/b.jpg" || resp.StudentID == 0 {
+	if resp.StudentID != 42 || resp.Name != "Bob" || resp.ProfilePicURL != "/images/b.jpg" {
 		t.Errorf("unexpected response: %+v", resp)
 	}
-	if stored := r.Students[resp.StudentID]; stored.Name != "Bob" {
+	if stored := r.Students[42]; stored.Name != "Bob" {
 		t.Errorf("store not updated: %+v", stored)
+	}
+}
+
+func TestStudentSvc_Create_DuplicateConflict(t *testing.T) {
+	s, _ := newStudentSvc()
+
+	_, status, err := s.Create(tokenFor(t, "teacher"), 1, "Dup", "")
+	if err == nil {
+		t.Fatal("expected error for duplicate student id")
+	}
+	if status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", status)
 	}
 }
 
 func TestStudentSvc_Create_StudentForbidden(t *testing.T) {
 	s, _ := newStudentSvc()
 
-	_, status, err := s.Create(tokenFor(t, "student"), "Bob", "")
+	_, status, err := s.Create(tokenFor(t, "student"), 2, "Bob", "")
 	if err == nil {
 		t.Fatal("expected error for student caller")
 	}
@@ -196,10 +207,83 @@ func TestStudentSvc_List_StudentAllowed(t *testing.T) {
 	}
 }
 
+// newStudentSvcWithUsers is like newStudentSvc but also exposes the user mock so
+// tests can assert the roster written by SetStudents.
+func newStudentSvcWithUsers() (*StudentSvc, *mock.AuthRepo) {
+	r := &mock.StudentRepo{
+		Students: map[uint]model.Student{
+			1: {StudentID: 1, Name: "Alice"},
+			2: {StudentID: 2, Name: "Bob"},
+		},
+	}
+	users := &mock.AuthRepo{
+		Roles: map[string]uint{
+			"teacher": model.RoleTeacher,
+			"student": model.RoleStudent,
+		},
+	}
+	return NewStudentSvc(r, users), users
+}
+
+func TestStudentSvc_SetStudents_PartialMultiStatus(t *testing.T) {
+	s, users := newStudentSvcWithUsers()
+
+	data, status, err := s.SetStudents(tokenFor(t, "teacher"), "teacher", []uint{1, 999, 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", status)
+	}
+
+	var resp model.SetStudentsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(resp.Results) != 3 {
+		t.Fatalf("expected 3 results, got %d: %+v", len(resp.Results), resp.Results)
+	}
+	want := map[uint]int{1: http.StatusOK, 999: http.StatusNotFound, 2: http.StatusOK}
+	for _, res := range resp.Results {
+		if want[res.StudentID] != res.Status {
+			t.Errorf("student %d: expected status %d, got %d", res.StudentID, want[res.StudentID], res.Status)
+		}
+	}
+	// Only the valid ids were written to the roster.
+	got := users.Students["teacher"]
+	if len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Errorf("expected roster [1 2], got %v", got)
+	}
+}
+
+func TestStudentSvc_SetStudents_StudentForbidden(t *testing.T) {
+	s, _ := newStudentSvcWithUsers()
+
+	_, status, err := s.SetStudents(tokenFor(t, "student"), "teacher", []uint{1})
+	if err == nil {
+		t.Fatal("expected error for student caller")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+func TestStudentSvc_SetStudents_UnknownTarget(t *testing.T) {
+	s, _ := newStudentSvcWithUsers()
+
+	_, status, err := s.SetStudents(tokenFor(t, "teacher"), "ghost", []uint{1})
+	if err == nil {
+		t.Fatal("expected error for unknown target user")
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", status)
+	}
+}
+
 func TestStudentSvc_Create_InvalidToken(t *testing.T) {
 	s, _ := newStudentSvc()
 
-	_, status, err := s.Create("bad.token", "Bob", "")
+	_, status, err := s.Create("bad.token", 2, "Bob", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

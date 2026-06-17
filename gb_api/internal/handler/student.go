@@ -29,11 +29,15 @@ func (h *StudentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
+	if req.StudentID == 0 {
+		http.Error(w, "缺少 student_id", http.StatusBadRequest)
+		return
+	}
 	if req.Name == "" {
 		http.Error(w, "缺少 name", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Create(token, req.Name, req.ProfilePicURL)
+	data, status, err := h.svc.Create(token, req.StudentID, req.Name, req.ProfilePicURL)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -103,6 +107,27 @@ func (h *StudentHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, data)
+}
+
+// SetStudents replaces a user's student roster with the given list (teacher/admin only).
+// Returns 207 Multi-Status with a per-id result.
+func (h *StudentHandler) SetStudents(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.SetStudentsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.SetStudents(token, req.Username, req.StudentIDs)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSONStatus(w, status, data)
 }
 
 // Delete removes the student identified by the {id} path segment (teacher/admin only).

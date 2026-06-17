@@ -28,6 +28,7 @@ type User struct {
 	Role          uint   `json:"role"`
 	BuildingID    uint   `json:"building_id"`     // 0 = no building assigned
 	ProfilePicURL string `json:"profile_pic_url"` // image link; empty = no picture
+	Students      []uint `json:"students"`        // assigned student_ids, sorted ascending
 }
 
 type SetUserPicRequest struct {

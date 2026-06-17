@@ -65,14 +65,20 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/login` | — | Exchange credentials for a token pair |
 | `POST /api/register` | Bearer (> Student) | Register a new user (Student or Teacher; Admins cannot be created) |
 | `POST /api/refresh` | — | Rotate a refresh token into a new token pair |
-| `GET /api/users` | Bearer | List all users (username, role, building, profile picture) |
+| `GET /api/users` | Bearer | List all users (username, role, building, profile picture, student roster) |
 | `POST /api/users/pfp` | Bearer (self or > Student) | Set a user's profile-picture link (empty `profile_pic_url` clears it) |
 | `POST /api/users/building` | Bearer | Set the caller's own building (`building_id` `0` clears it) |
+| `POST /api/users/students` | Bearer (> Student) | Replace a user's student roster by a given list; returns a `207` per-id result |
 | `DELETE /api/users/{username}` | Bearer (> Student) | Delete a user (cannot delete yourself) |
 | `POST /api/building` | Bearer (> Student) | Create a building |
 | `GET /api/building` | Bearer | List all buildings |
 | `GET /api/building/{id}` | Bearer | Read a building by ID |
 | `PUT /api/building/{id}` | Bearer (> Student) | Replace a building by ID |
+| `POST /api/student` | Bearer (> Student) | Create a student (client-supplied `student_id`) |
+| `GET /api/student` | Bearer | List all students |
+| `GET /api/student/{id}` | Bearer | Read a student by ID |
+| `PUT /api/student/{id}` | Bearer (> Student) | Replace a student by ID |
+| `DELETE /api/student/{id}` | Bearer (> Student) | Delete a student (cascades: removed from every user's roster) |
 | `POST /api/item` | Bearer | Read all of a user's items (inventory + slots) |
 | `POST /api/item/inv2slot` | Bearer (not Student in QUIZ2) | Move one item from inventory into a slot (swaps out any normal item already there) |
 | `POST /api/item/slot2inv` | Bearer (not Student in QUIZ2) | Return a slotted item to the inventory |
@@ -194,8 +200,10 @@ Exchange a valid refresh token for a new token pair. The submitted token is inva
 ## Users
 
 Each user directly owns their game state: a `building_id` (`0` means **no building**),
-plus an inventory and slots (see [Inventory](#inventory)). `GET /api/users` lists every
-account; the other user endpoints set a user's picture or building, or delete an account.
+plus an inventory and slots (see [Inventory](#inventory)) and a **student roster** — the set
+of [student](#students) IDs assigned to them (see
+[`POST /api/users/students`](#post-apiusersstudents)). `GET /api/users` lists every account;
+the other user endpoints set a user's picture, building, or student roster, or delete an account.
 
 All endpoints require a valid access token:
 
@@ -208,13 +216,14 @@ Authorization: Bearer <access_token>
 List all users. Any authenticated user may call it.
 
 **Response `200 OK`** — `building_id` is `0` for users with no building;
-`profile_pic_url` is empty when no picture is set
+`profile_pic_url` is empty when no picture is set; `students` is the assigned student
+roster (ascending `student_id` order, empty when none)
 
 ```json
 {
   "users": [
-    { "username": "admin", "role": 2, "building_id": 1, "profile_pic_url": "/images/abc.jpg" },
-    { "username": "alice", "role": 0, "building_id": 0, "profile_pic_url": "" }
+    { "username": "admin", "role": 2, "building_id": 1, "profile_pic_url": "/images/abc.jpg", "students": [1, 2] },
+    { "username": "alice", "role": 0, "building_id": 0, "profile_pic_url": "", "students": [] }
   ]
 }
 ```
@@ -273,6 +282,46 @@ assignment. The building drives item generation and the slot type rules (see
 |--------|-----------|
 | `400`  | Malformed JSON body, or a missing `building_id` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+### `POST /api/users/students`
+
+Replace a target user's **student roster** with the given list of `student_id`s.
+**Teachers and Admins only.** `username` is **required** (the target user). The set is a
+**full replace**: the roster becomes exactly the valid ids from `student_ids`.
+
+Each id is checked against the [students](#students) table: known ids are assigned, unknown
+ids are reported and **skipped**. The response is therefore always a **`207 Multi-Status`**
+carrying one result per submitted id (duplicates are collapsed).
+
+**Request**
+
+```json
+{ "username": "teacher1", "student_ids": [1, 2, 999] }
+```
+
+**Response `207 Multi-Status`** — each result's `status` is `200` for an assigned student
+or `404` for an unknown one (with an `error`)
+
+```json
+{
+  "results": [
+    { "student_id": 1, "status": 200 },
+    { "student_id": 2, "status": 200 },
+    { "student_id": 999, "status": 404, "error": "學生不存在" }
+  ]
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `username` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | The target `username` does not exist |
 
 ---
 
@@ -438,6 +487,144 @@ values are cleared (read back as empty). `name` is required.
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
 | `404`  | No building with that `id` |
+
+---
+
+## Students
+
+A **student** is a lightweight record: `{ student_id, name, profile_pic_url }`. The
+`student_id` is the **primary key and is supplied by the client** on create (e.g. a
+school-assigned student number) — it is **not** auto-generated, and must be greater than `0`.
+`profile_pic_url` is an image link (typically a URL returned by [`POST /api/image`](#post-apiimage--post-apiaudio)),
+stored and returned verbatim; empty means no picture.
+
+Students are assigned to users via each user's [roster](#post-apiusersstudents). Deleting a
+student **cascades**: its id is removed from every user's roster.
+
+Create, update, and delete are **Teacher/Admin only**; any authenticated user may read.
+All endpoints require a valid access token:
+
+```
+Authorization: Bearer <access_token>
+```
+
+### `POST /api/student`
+
+Create a student under the **client-supplied** `student_id`. **Teachers and Admins only.**
+`student_id` (`> 0`) and `name` are required; `profile_pic_url` is optional.
+
+**Request**
+
+```json
+{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
+```
+
+**Response `200 OK`** — the created student
+
+```json
+{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, a missing/zero `student_id`, or a missing `name` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `409`  | A student with that `student_id` already exists |
+
+---
+
+### `GET /api/student`
+
+List every student. Any authenticated user may call it.
+
+**Response `200 OK`** — a JSON array of students
+
+```json
+[
+  { "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" },
+  { "student_id": 2, "name": "Bob", "profile_pic_url": "" }
+]
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+### `GET /api/student/{id}`
+
+Read a single student by ID. Any authenticated user may call it.
+
+**Response `200 OK`**
+
+```json
+{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `404`  | No student with that `id` |
+
+---
+
+### `PUT /api/student/{id}`
+
+Replace an existing student. **Teachers and Admins only.** The body is a **full replace**
+of `name` and `profile_pic_url` (`student_id` is taken from the path, not the body);
+`name` is required.
+
+**Request**
+
+```json
+{ "name": "Alice", "profile_pic_url": "/images/new.jpg" }
+```
+
+**Response `200 OK`** — the updated student
+
+```json
+{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/new.jpg" }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}`, malformed JSON body, or a missing `name` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | No student with that `id` |
+
+---
+
+### `DELETE /api/student/{id}`
+
+Delete a student. **Teachers and Admins only.** The deletion **cascades**: the `id` is
+also removed from every user's [student roster](#post-apiusersstudents).
+
+**Response `200 OK`**
+
+```json
+{ "deleted": true }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | No student with that `id` |
 
 ---
 

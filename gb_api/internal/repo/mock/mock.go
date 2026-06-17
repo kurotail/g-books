@@ -30,6 +30,7 @@ type AuthRepo struct {
 	Roles         map[string]uint
 	Buildings     map[string]uint // username -> building; absent/0 = no building
 	Pics          map[string]string
+	Students      map[string][]uint // username -> assigned student ids
 	RefreshTokens sync.Map
 }
 
@@ -64,7 +65,18 @@ func (m *AuthRepo) GetUser(username string) (model.User, error) {
 }
 
 func (m *AuthRepo) buildUser(username string) model.User {
-	return model.User{Username: username, Role: m.Roles[username], BuildingID: m.Buildings[username], ProfilePicURL: m.Pics[username]}
+	return model.User{Username: username, Role: m.Roles[username], BuildingID: m.Buildings[username], ProfilePicURL: m.Pics[username], Students: m.Students[username]}
+}
+
+func (m *AuthRepo) SetUserStudents(username string, studentIDs []uint) error {
+	if _, ok := m.Roles[username]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	if m.Students == nil {
+		m.Students = map[string][]uint{}
+	}
+	m.Students[username] = studentIDs
+	return nil
 }
 
 func (m *AuthRepo) SetUserProfilePic(username, url string) error {
@@ -124,10 +136,11 @@ func (m *RoleRepo) GetAllUsers() ([]model.User, error)            { return nil, 
 func (m *RoleRepo) GetUser(username string) (model.User, error) {
 	return model.User{Username: username, Role: m.Role}, nil
 }
-func (m *RoleRepo) CreateUser(_, _ string, _ uint) error   { return nil }
-func (m *RoleRepo) SetUserProfilePic(_, _ string) error    { return nil }
-func (m *RoleRepo) SetUserBuilding(_ string, _ uint) error { return nil }
-func (m *RoleRepo) DeleteUser(_ string) (bool, error)      { return true, nil }
+func (m *RoleRepo) CreateUser(_, _ string, _ uint) error     { return nil }
+func (m *RoleRepo) SetUserProfilePic(_, _ string) error      { return nil }
+func (m *RoleRepo) SetUserBuilding(_ string, _ uint) error   { return nil }
+func (m *RoleRepo) SetUserStudents(_ string, _ []uint) error { return nil }
+func (m *RoleRepo) DeleteUser(_ string) (bool, error)        { return true, nil }
 
 type ItemRepo struct {
 	Inv        map[uint]struct{}   // owned (unslotted) item ids
@@ -238,20 +251,17 @@ func (m *BuildingRepo) GetAllBuildings() ([]model.Building, error) {
 
 type StudentRepo struct {
 	Students map[uint]model.Student
-	NextID   uint
 }
 
-func (m *StudentRepo) CreateStudent(name, profilePicURL string) (uint, error) {
+func (m *StudentRepo) CreateStudent(id uint, name, profilePicURL string) error {
 	if m.Students == nil {
 		m.Students = map[uint]model.Student{}
 	}
-	if m.NextID == 0 {
-		m.NextID = 1
+	if _, ok := m.Students[id]; ok {
+		return apperr.ErrStudentExists
 	}
-	id := m.NextID
-	m.NextID++
 	m.Students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
-	return id, nil
+	return nil
 }
 
 func (m *StudentRepo) UpdateStudent(id uint, name, profilePicURL string) error {

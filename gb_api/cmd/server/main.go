@@ -34,6 +34,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("GET /api/users", authHandler.QueryUser)
 	mux.HandleFunc("POST /api/users/pfp", authHandler.SetProfilePic)
 	mux.HandleFunc("POST /api/users/building", authHandler.SetBuilding)
+	mux.HandleFunc("POST /api/users/students", studentHandler.SetStudents)
 	mux.HandleFunc("DELETE /api/users/{username}", authHandler.DeleteUser)
 
 	mux.HandleFunc("POST /api/item", itemHandler.QueryItems)
