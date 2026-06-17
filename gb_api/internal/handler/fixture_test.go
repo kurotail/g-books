@@ -58,8 +58,8 @@ func newFixture() *fixture {
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
-		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, authRepo, buildingRepo)),
-		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, buildingRepo, itemRepo, &mock.STTRepo{})),
+		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, itemRepo, authRepo, buildingRepo)),
+		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, buildingRepo, itemRepo, itemRepo, &mock.STTRepo{})),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
 		authRepo:     authRepo,
 		questionRepo: questionRepo,

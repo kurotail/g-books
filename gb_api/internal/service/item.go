@@ -13,17 +13,18 @@ import (
 
 type ItemSvc struct {
 	repo      repo.ItemRepo
+	inv       repo.InventoryRepo
 	users     repo.UserRepo
 	buildings repo.BuildingRepo
 }
 
-func NewItemSvc(r repo.ItemRepo, users repo.UserRepo, buildings repo.BuildingRepo) *ItemSvc {
-	return &ItemSvc{repo: r, users: users, buildings: buildings}
+func NewItemSvc(r repo.ItemRepo, inv repo.InventoryRepo, users repo.UserRepo, buildings repo.BuildingRepo) *ItemSvc {
+	return &ItemSvc{repo: r, inv: inv, users: users, buildings: buildings}
 }
 
 // ownsItem reports whether the user holds itemID loose in their inventory.
 func (s *ItemSvc) ownsItem(username string, itemID uint) (bool, error) {
-	ids, err := s.repo.QueryInv(username)
+	ids, err := s.inv.QueryInv(username)
 	if err != nil {
 		return false, err
 	}
@@ -72,7 +73,7 @@ func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, 
 	}
 	full := caller.Role >= model.RoleTeacher || caller.Username == username
 
-	invIDs, err := s.repo.QueryInv(username)
+	invIDs, err := s.inv.QueryInv(username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -89,7 +90,7 @@ func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, 
 		}
 	}
 
-	slotMap, err := s.repo.QuerySlot(username)
+	slotMap, err := s.inv.QuerySlot(username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -163,7 +164,7 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, username string, itemID, slot
 	if !allowed {
 		return http.StatusBadRequest, fmt.Errorf("slot %d 不允許類型 %d 的物品", slotID, it.Type)
 	}
-	slot, err := s.repo.QuerySlot(username)
+	slot, err := s.inv.QuerySlot(username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -172,21 +173,20 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, username string, itemID, slot
 		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀，無法放置物品", slotID, -held)
 	}
 	if held > 0 {
-		if err := s.repo.AddInvItem(username, uint(held)); err != nil {
+		if err := s.inv.AddInvItem(username, uint(held)); err != nil {
 			return http.StatusInternalServerError, err
 		}
 	}
-	if err := s.repo.RemoveInvItem(username, itemID); err != nil {
+	if err := s.inv.RemoveInvItem(username, itemID); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if err := s.repo.SetSlot(username, slotID, int(itemID)); err != nil {
+	if err := s.inv.SetSlot(username, slotID, int(itemID)); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil
 }
 
-// TranSlot2Inv returns the item held in a slot to the user's inventory. Only a
-// normal (non-broken) item can be returned.
+// TranSlot2Inv returns the item held in a slot to the user's inventory.
 func (s *ItemSvc) TranSlot2Inv(accessToken string, username string, slotID uint) (int, error) {
 	caller, status, err := s.blockStudentQuiz2(s.users, accessToken)
 	if err != nil {
@@ -195,7 +195,7 @@ func (s *ItemSvc) TranSlot2Inv(accessToken string, username string, slotID uint)
 	if caller.Username != username {
 		return http.StatusForbidden, fmt.Errorf("無法操作其他人的物品")
 	}
-	slot, err := s.repo.QuerySlot(username)
+	slot, err := s.inv.QuerySlot(username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -206,10 +206,10 @@ func (s *ItemSvc) TranSlot2Inv(accessToken string, username string, slotID uint)
 	if itemID < 0 {
 		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀", slotID, -itemID)
 	}
-	if err := s.repo.AddInvItem(username, uint(itemID)); err != nil {
+	if err := s.inv.AddInvItem(username, uint(itemID)); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if err := s.repo.SetSlot(username, slotID, 0); err != nil {
+	if err := s.inv.SetSlot(username, slotID, 0); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil

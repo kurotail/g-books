@@ -18,6 +18,7 @@ var (
 	_ repo.UserRepo         = (*RoleRepo)(nil)
 	_ repo.RefreshTokenRepo = (*AuthRepo)(nil)
 	_ repo.ItemRepo         = (*ItemRepo)(nil)
+	_ repo.InventoryRepo    = (*ItemRepo)(nil)
 	_ repo.BuildingRepo     = (*BuildingRepo)(nil)
 	_ repo.QuestionRepo     = (*QuestionRepo)(nil)
 	_ repo.STTRepo          = (*STTRepo)(nil)
@@ -122,10 +123,10 @@ func (m *RoleRepo) GetAllUsers() ([]model.User, error)            { return nil, 
 func (m *RoleRepo) GetUser(username string) (model.User, error) {
 	return model.User{Username: username, Role: m.Role}, nil
 }
-func (m *RoleRepo) CreateUser(_, _ string, _ uint) error    { return nil }
-func (m *RoleRepo) SetUserProfilePic(_, _ string) error     { return nil }
-func (m *RoleRepo) SetUserBuilding(_ string, _ uint) error  { return nil }
-func (m *RoleRepo) DeleteUser(_ string) (bool, error)       { return true, nil }
+func (m *RoleRepo) CreateUser(_, _ string, _ uint) error   { return nil }
+func (m *RoleRepo) SetUserProfilePic(_, _ string) error    { return nil }
+func (m *RoleRepo) SetUserBuilding(_ string, _ uint) error { return nil }
+func (m *RoleRepo) DeleteUser(_ string) (bool, error)      { return true, nil }
 
 type ItemRepo struct {
 	Inv        map[uint]struct{}   // owned (unslotted) item ids

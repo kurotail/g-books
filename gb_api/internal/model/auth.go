@@ -31,7 +31,7 @@ type User struct {
 }
 
 type SetUserPicRequest struct {
-	Username      string `json:"username"`        // optional; empty = caller's own
+	Username      string `json:"username"` // optional; empty = caller's own
 	ProfilePicURL string `json:"profile_pic_url"`
 }
 

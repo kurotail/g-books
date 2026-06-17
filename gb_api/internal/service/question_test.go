@@ -16,7 +16,7 @@ import (
 // session-only tests. Returns the service and its question repo mock.
 func newQuestionSvc(role uint) (*QuestionSvc, *mock.QuestionRepo) {
 	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}}
-	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}, &mock.BuildingRepo{}, &mock.ItemRepo{}, &mock.STTRepo{}), r
+	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}, &mock.BuildingRepo{}, &mock.ItemRepo{}, &mock.ItemRepo{}, &mock.STTRepo{}), r
 }
 
 // newQuizSvc builds a QuestionSvc for caller "u" (role) assigned the given building
@@ -28,7 +28,7 @@ func newQuizSvc(role, buildingID uint, difficultyType map[uint][]uint, questions
 	users := &mock.AuthRepo{Roles: map[string]uint{"u": role}, Buildings: map[string]uint{"u": buildingID}}
 	buildings := &mock.BuildingRepo{Buildings: map[uint]model.Building{1: {ID: 1, DifficultyType: difficultyType}}}
 	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
-	return NewQuestionSvc(r, users, buildings, items, &mock.STTRepo{}), r, items
+	return NewQuestionSvc(r, users, buildings, items, items, &mock.STTRepo{}), r, items
 }
 
 // idx is the wire form of an index answer the student submits to Answer.
@@ -771,7 +771,7 @@ func TestQuestionSvc_Answer_VoiceResponseGradesViaSTT(t *testing.T) {
 	users := &mock.AuthRepo{Roles: map[string]uint{"u": model.RoleStudent}, Buildings: map[string]uint{"u": 1}}
 	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
 	stt := &mock.STTRepo{Transcript: "Eighteen"} // returned regardless of the WAV bytes
-	s := NewQuestionSvc(r, users, &mock.BuildingRepo{}, items, stt)
+	s := NewQuestionSvc(r, users, &mock.BuildingRepo{}, items, items, stt)
 
 	// The student's answer is a base64-encoded WAV recording.
 	wavB64 := base64.StdEncoding.EncodeToString([]byte("RIFF....WAVE fake audio"))

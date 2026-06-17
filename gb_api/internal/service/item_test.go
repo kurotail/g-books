@@ -41,7 +41,7 @@ func itemSvc(role uint, allowed map[uint][]uint) (*ItemSvc, *mock.ItemRepo) {
 		Buildings: map[string]uint{"testuser": 1, "other": 1},
 	}
 	buildings := &mock.BuildingRepo{Buildings: map[uint]model.Building{1: {ID: 1, TypeAllowedSlot: allowed}}}
-	return NewItemSvc(r, users, buildings), r
+	return NewItemSvc(r, r, users, buildings), r
 }
 
 func newItemSvc(t *testing.T) (*ItemSvc, *mock.ItemRepo) {

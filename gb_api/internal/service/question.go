@@ -19,11 +19,12 @@ type QuestionSvc struct {
 	users     repo.UserRepo
 	buildings repo.BuildingRepo
 	items     repo.ItemRepo
+	inv       repo.InventoryRepo
 	stt       repo.STTRepo
 }
 
-func NewQuestionSvc(r repo.QuestionRepo, users repo.UserRepo, buildings repo.BuildingRepo, items repo.ItemRepo, stt repo.STTRepo) *QuestionSvc {
-	return &QuestionSvc{repo: r, users: users, buildings: buildings, items: items, stt: stt}
+func NewQuestionSvc(r repo.QuestionRepo, users repo.UserRepo, buildings repo.BuildingRepo, items repo.ItemRepo, inv repo.InventoryRepo, stt repo.STTRepo) *QuestionSvc {
+	return &QuestionSvc{repo: r, users: users, buildings: buildings, items: items, inv: inv, stt: stt}
 }
 
 // GenerateItem (QUIZ1 state) creates a new item of a random type for the requested difficulty
@@ -92,7 +93,7 @@ func (s *QuestionSvc) GenerateTarget(accessToken string, targetUsername string, 
 		return nil, status, err
 	}
 
-	slots, err := s.items.QuerySlot(targetUsername)
+	slots, err := s.inv.QuerySlot(targetUsername)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -292,7 +293,7 @@ func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) (
 	switch qs.Kind {
 	case model.KindItem:
 		if correct {
-			if err := s.items.AddInvItem(qs.Username, qs.ItemID); err != nil {
+			if err := s.inv.AddInvItem(qs.Username, qs.ItemID); err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
 			resp.ItemID = qs.ItemID
@@ -315,7 +316,7 @@ func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) (
 }
 
 func (s *QuestionSvc) applyTarget(callerUsername string, t model.Target) (bool, error) {
-	slots, err := s.items.QuerySlot(t.Username)
+	slots, err := s.inv.QuerySlot(t.Username)
 	if err != nil {
 		return false, err
 	}
@@ -330,7 +331,7 @@ func (s *QuestionSvc) applyTarget(callerUsername string, t model.Target) (bool, 
 	if !attack && v > 0 { // not broken, nothing to repair
 		return false, nil
 	}
-	if err := s.items.SetSlot(t.Username, t.SlotID, -v); err != nil {
+	if err := s.inv.SetSlot(t.Username, t.SlotID, -v); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -366,28 +367,4 @@ func (s *QuestionSvc) grade(answer model.Answer, raw json.RawMessage) (bool, int
 	default:
 		return false, http.StatusInternalServerError, fmt.Errorf("未知的答案類型")
 	}
-}
-
-// allowed type-value sets for question validation.
-var (
-	descTypes   = map[string]struct{}{model.DescText: {}, model.DescAudio: {}, model.DescVoice: {}}
-	answerTypes = map[string]struct{}{model.AnswerIndex: {}, model.AnswerVoice: {}}
-)
-
-// validateQuestionInput enforces that the content/answer carry only known type values
-// and a non-empty description. It does not check choice counts or index bounds.
-func validateQuestionInput(in model.QuestionInput) error {
-	if _, ok := descTypes[in.Content.Description.Type]; !ok {
-		return fmt.Errorf("不合法的 description type")
-	}
-	if in.Content.Description.Data == "" {
-		return fmt.Errorf("description 不可為空")
-	}
-	if in.Content.Choices != nil && in.Content.Choices.Type != model.ChoicesText {
-		return fmt.Errorf("不合法的 choices type")
-	}
-	if _, ok := answerTypes[in.Answer.Type]; !ok {
-		return fmt.Errorf("不合法的 answer type")
-	}
-	return nil
 }

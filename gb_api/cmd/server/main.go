@@ -19,8 +19,8 @@ import (
 
 func routes() (http.Handler, *handler.StateHandler) {
 	authHandler := handler.NewAuthHandler(service.NewAuthSvc(repo.InitUserRepo(), repo.InitRefreshTokenRepo()))
-	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitUserRepo(), repo.InitBuildingRepo()))
-	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitSTTRepo()))
+	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitUserRepo(), repo.InitBuildingRepo()))
+	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitSTTRepo()))
 	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
 	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
 	mediaHandler := handler.NewMediaHandler(service.NewMediaSvc(config.UploadDir, config.MaxImageMB, config.MaxAudioMB))
