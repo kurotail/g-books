@@ -1,4 +1,16 @@
--- Schema for the gb-api Postgres store. Applied idempotently at startup.
+-- Postgres bootstrap script for the gb-api database.
+--
+-- The official postgres image runs every *.sql file in
+-- /docker-entrypoint-initdb.d once, the first time the data directory is empty
+-- (i.e. on a fresh `pgdata` volume). It creates the schema and loads a small set
+-- of demo fixtures so the API is usable immediately after `docker compose up`.
+--
+-- This is the single source of truth for the database schema. Every INSERT here
+-- is idempotent (ON CONFLICT DO NOTHING).
+
+-- ---------------------------------------------------------------------------
+-- Schema
+-- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS users (
     username        TEXT PRIMARY KEY,

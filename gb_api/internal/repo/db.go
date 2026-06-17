@@ -2,7 +2,6 @@ package repo
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"time"
 
@@ -12,16 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//go:embed schema.sql
-var schemaSQL string
-
 // Pool is the process-wide Postgres connection Pool. It replaces the former
 // in-memory store. Init must be called once at startup before any repo is used.
 var pool *pgxpool.Pool
 
-// Init opens the connection pool, applies the schema, and seeds the admin account.
-// It retries the initial connection for a short while so it tolerates Postgres still
-// coming up alongside the API container.
+// Init opens the connection pool and seeds the admin account. The schema is
+// created by postgres/init.sql when the database is first initialized. It retries
+// the initial connection for a short while so it tolerates Postgres still coming
+// up alongside the API container.
 func Init(ctx context.Context, dsn, adminUser, adminPass string) error {
 	p, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -45,11 +42,6 @@ func Init(ctx context.Context, dsn, adminUser, adminPass string) error {
 	if pingErr != nil {
 		p.Close()
 		return fmt.Errorf("repo: database unreachable: %w", pingErr)
-	}
-
-	if _, err := p.Exec(ctx, schemaSQL); err != nil {
-		p.Close()
-		return fmt.Errorf("repo: apply schema: %w", err)
 	}
 
 	// Seed the admin account (idempotent). The password is bcrypt-hashed; the hash is

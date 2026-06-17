@@ -3,7 +3,7 @@
 REST API server for g-books, built with Go's standard `net/http` library and JWT-based authentication.
 
 - **Runtime:** Go 1.26+
-- **Storage:** PostgreSQL (via `pgx`); schema applied and an admin account seeded on startup
+- **Storage:** PostgreSQL (via `pgx`); schema and demo data loaded from `postgres/init.sql`, admin account seeded on startup
 - **Edge:** nginx reverse proxy terminating HTTPS on `443` (HTTP on `80` redirects to it)
 - **Auth scheme:** JWT (HS256) — short-lived access tokens + single-use rotating refresh tokens
 - **Real-time:** server-state changes are pushed to subscribers over a WebSocket (`GET /api/state/ws`, reached at `wss://localhost/api/state/ws`)
@@ -14,8 +14,9 @@ REST API server for g-books, built with Go's standard `net/http` library and JWT
 
 The stack runs as three containers via Docker Compose: a PostgreSQL database (`postgres`), the
 Go API (`api`, internal only), and an nginx reverse proxy (`nginx`) that terminates HTTPS and
-serves uploaded media. The API waits for `postgres` to be healthy, then applies its schema and
-seeds the admin account on startup.
+serves uploaded media. On a fresh database volume, `postgres` runs `postgres/init.sql`
+(mounted into `/docker-entrypoint-initdb.d`) to create the schema and load demo data. The API
+waits for `postgres` to be healthy, then seeds the admin account on startup.
 
 **1. Generate a self-signed TLS certificate** (one time; written to `nginx/certs/`):
 
@@ -47,8 +48,11 @@ Configuration is read from `.env` (consumed by both the `postgres` and `api` con
 | `JWT_KEY` / `JWT_REFRESH_KEY` | 64-char hex signing keys for access / refresh tokens |
 | `UPLOAD_DIR`, `MAX_IMAGE_MB`, `MAX_AUDIO_MB` | Media upload directory and per-category size caps |
 
-Database state persists in the `pgdata` Docker volume across restarts. The schema is created
-idempotently on each boot; only the admin account is seeded (no sample data).
+Database state persists in the `pgdata` Docker volume across restarts. The schema and demo
+fixtures (sample buildings, questions, students, and `teacher1` / `student1` accounts with
+passwords `teacher123` / `student123`) are loaded from `postgres/init.sql` **only when the
+`pgdata` volume is first created**; edits to that file take effect after a `docker compose down -v`
+(which deletes the volume and its data). The admin account is seeded by the API on each boot.
 
 ---
 
