@@ -1,5 +1,12 @@
 package repo
 
+import (
+	"context"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
+)
+
 // RefreshTokenRepo is the refresh-token store, keyed by jti. A token is a live,
 // single-use handle: StoreRefreshToken registers it, ConsumeRefreshToken
 // atomically validates and removes it.
@@ -11,20 +18,26 @@ type RefreshTokenRepo interface {
 type refreshTokenRepo struct{}
 
 func (_ *refreshTokenRepo) StoreRefreshToken(jti string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	db.refreshTokens[jti] = struct{}{}
-	return nil
+	ctx := context.Background()
+	_, err := pool.Exec(ctx,
+		`INSERT INTO refresh_tokens (jti) VALUES ($1) ON CONFLICT DO NOTHING`, jti,
+	)
+	return err
 }
 
 func (_ *refreshTokenRepo) ConsumeRefreshToken(jti string) (bool, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	if _, ok := db.refreshTokens[jti]; ok {
-		delete(db.refreshTokens, jti)
-		return true, nil
+	ctx := context.Background()
+	var got string
+	err := pool.QueryRow(ctx,
+		`DELETE FROM refresh_tokens WHERE jti = $1 RETURNING jti`, jti,
+	).Scan(&got)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
 	}
-	return false, nil
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func InitRefreshTokenRepo() RefreshTokenRepo {

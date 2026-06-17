@@ -1,7 +1,7 @@
 package repo
 
 import (
-	"sort"
+	"context"
 )
 
 type InventoryRepo interface {
@@ -14,81 +14,82 @@ type InventoryRepo interface {
 
 type inventoryRepo struct{}
 
-// userRow returns the user row for username and lazily initializes its Inventory/Slots
-// maps. It returns nil if the user does not exist. Callers must hold db.mu.Lock.
-func userRow(username string) *User {
-	u := db.users[username]
-	if u == nil {
-		return nil
-	}
-	if u.Inventory == nil {
-		u.Inventory = make(map[uint]struct{})
-	}
-	if u.Slots == nil {
-		u.Slots = make(map[uint]int)
-	}
-	return u
-}
-
 func (_ *inventoryRepo) QueryInv(username string) ([]uint, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	var ids []uint
-	if u := db.users[username]; u != nil {
-		ids = make([]uint, 0, len(u.Inventory))
-		for id := range u.Inventory {
-			ids = append(ids, id)
-		}
+	ctx := context.Background()
+	rows, err := pool.Query(ctx,
+		`SELECT item_id FROM user_inventory WHERE username = $1 ORDER BY item_id`, username,
+	)
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids, nil
+	defer rows.Close()
+	ids := make([]uint, 0)
+	for rows.Next() {
+		var id uint
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (_ *inventoryRepo) QuerySlot(username string) (map[uint]int, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	result := make(map[uint]int)
-	if u := db.users[username]; u != nil {
-		for k, v := range u.Slots {
-			result[k] = v
-		}
+	ctx := context.Background()
+	rows, err := pool.Query(ctx,
+		`SELECT slot_id, item_id FROM user_slots WHERE username = $1`, username,
+	)
+	if err != nil {
+		return nil, err
 	}
-	return result, nil
+	defer rows.Close()
+	result := make(map[uint]int)
+	for rows.Next() {
+		var (
+			slotID uint
+			itemID int
+		)
+		if err := rows.Scan(&slotID, &itemID); err != nil {
+			return nil, err
+		}
+		result[slotID] = itemID
+	}
+	return result, rows.Err()
 }
 
 func (_ *inventoryRepo) AddInvItem(username string, itemID uint) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	if u := userRow(username); u != nil {
-		u.Inventory[itemID] = struct{}{}
-	}
-	return nil
+	ctx := context.Background()
+	_, err := pool.Exec(ctx,
+		`INSERT INTO user_inventory (username, item_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		username, itemID,
+	)
+	return err
 }
 
 func (_ *inventoryRepo) RemoveInvItem(username string, itemID uint) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	if u := userRow(username); u != nil {
-		delete(u.Inventory, itemID)
-	}
+	ctx := context.Background()
+	_, err := pool.Exec(ctx,
+		`DELETE FROM user_inventory WHERE username = $1 AND item_id = $2`, username, itemID,
+	)
 	// TODO: maybeDeleteItem(itemID) — once no user inventory and no slot references
-	// an item, delete it from db.items. Left as a no-op for now.
-	return nil
+	// an item, delete it from items. Left as a no-op for now.
+	return err
 }
 
 func (_ *inventoryRepo) SetSlot(username string, slotID uint, itemID int) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	u := userRow(username)
-	if u == nil {
-		return nil
-	}
+	ctx := context.Background()
 	if itemID == 0 {
-		delete(u.Slots, slotID)
-	} else {
-		u.Slots[slotID] = itemID
+		_, err := pool.Exec(ctx,
+			`DELETE FROM user_slots WHERE username = $1 AND slot_id = $2`, username, slotID,
+		)
+		return err
 	}
-	return nil
+	_, err := pool.Exec(ctx,
+		`INSERT INTO user_slots (username, slot_id, item_id) VALUES ($1, $2, $3)
+		 ON CONFLICT (username, slot_id) DO UPDATE SET item_id = EXCLUDED.item_id`,
+		username, slotID, itemID,
+	)
+	return err
 }
 
 func InitInventoryRepo() InventoryRepo {

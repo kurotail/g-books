@@ -72,6 +72,14 @@ func routes() (http.Handler, *handler.StateHandler) {
 }
 
 func main() {
+	closeFunc, err := config.Init()
+	if err != nil {
+		logger.L.Error(err.Error())
+		logger.L.Error("failed to initialize database")
+		os.Exit(1)
+	}
+	defer closeFunc()
+
 	mux, stateHandler := routes()
 	server := &http.Server{
 		Addr:    ":8080",

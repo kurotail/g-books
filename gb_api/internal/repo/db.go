@@ -1,124 +1,81 @@
 package repo
 
 import (
-	"sync"
+	"context"
+	_ "embed"
+	"fmt"
 	"time"
 
+	"gb-api/internal/logger"
 	"gb-api/internal/model"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// User is a row in the users table. Primary key: Username.
-type User struct {
-	Username      string
-	Password      string
-	Role          uint
-	BuildingID    uint              // FK -> buildings; 0 = no building assigned
-	Inventory     map[uint]struct{} // set of owned (unslotted) item_ids
-	Slots         map[uint]int      // slot_id -> signed item_id (negative = broken)
-	ProfilePicURL string            // image link; empty = no picture
-	Students      map[uint]struct{} // set of assigned student_ids
+//go:embed schema.sql
+var schemaSQL string
+
+// Pool is the process-wide Postgres connection Pool. It replaces the former
+// in-memory store. Init must be called once at startup before any repo is used.
+var pool *pgxpool.Pool
+
+// Init opens the connection pool, applies the schema, and seeds the admin account.
+// It retries the initial connection for a short while so it tolerates Postgres still
+// coming up alongside the API container.
+func Init(ctx context.Context, dsn, adminUser, adminPass string) error {
+	p, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("repo: open pool: %w", err)
+	}
+
+	// Wait for the database to accept connections (up to ~30s).
+	var pingErr error
+	for range 30 {
+		if pingErr = p.Ping(ctx); pingErr == nil {
+			break
+		}
+		logger.L.Info("repo: waiting for database...")
+		select {
+		case <-ctx.Done():
+			p.Close()
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	if pingErr != nil {
+		p.Close()
+		return fmt.Errorf("repo: database unreachable: %w", pingErr)
+	}
+
+	if _, err := p.Exec(ctx, schemaSQL); err != nil {
+		p.Close()
+		return fmt.Errorf("repo: apply schema: %w", err)
+	}
+
+	// Seed the admin account (idempotent). The password is bcrypt-hashed; the hash is
+	// only inserted on first run (ON CONFLICT DO NOTHING leaves an existing admin alone).
+	adminHash, err := hashPassword(adminPass)
+	if err != nil {
+		p.Close()
+		return fmt.Errorf("repo: hash admin password: %w", err)
+	}
+	if _, err := p.Exec(ctx,
+		`INSERT INTO users (username, password, role) VALUES ($1, $2, $3)
+		 ON CONFLICT (username) DO NOTHING`,
+		adminUser, adminHash, model.RoleAdmin,
+	); err != nil {
+		p.Close()
+		return fmt.Errorf("repo: seed admin: %w", err)
+	}
+
+	pool = p
+	logger.L.Info("repo: database ready")
+	return nil
 }
 
-// Building is a row in the buildings table. Primary key: ID.
-type Building struct {
-	ID              uint
-	Name            string          // empty = use the default "Building <id>"
-	Layout          string          // frontend-specific JSON blob, stored verbatim
-	TypeAllowedSlot map[uint][]uint // type -> allowed slot_ids
-	DifficultyType  map[uint][]uint // difficulty -> types
-}
-
-// Database is an in-memory, relationally-structured store: a set of tables keyed
-// by primary key, guarded by one RWMutex (a single serialized "connection").
-type Database struct {
-	mu             sync.RWMutex
-	users          map[string]*User                 // PK: username
-	buildings      map[uint]*Building               // PK: id
-	items          map[uint]model.Item              // PK: item id
-	sessions       map[string]model.QuestionSession // PK: session_id
-	refreshTokens  map[string]struct{}              // PK: jti (refresh token id)
-	questions      map[uint]model.Question          // PK: question id; the pool sessions are drawn from
-	students       map[uint]model.Student           // PK: student id
-	nextQuestionID uint                             // next id to assign on insert
-	nextBuildingID uint                             // next id to assign on insert
-	nextItemID     uint                             // next id to assign on insert
-}
-
-// db is the process-wide store. It replaces the former denormalized mem_db.
-var db = newDatabase()
-
-func newDatabase() *Database {
-	return &Database{
-		users: map[string]*User{
-			"admin": {
-				Username:  "admin",
-				Password:  "admin123",
-				Role:      model.RoleAdmin,
-				Inventory: map[uint]struct{}{1: {}, 2: {}, 4: {}},
-				Slots:     map[uint]int{0: 3},
-				Students:  map[uint]struct{}{1: {}},
-			},
-		},
-		buildings: map[uint]*Building{
-			1: {
-				ID:              1,
-				Name:            "Library",
-				Layout:          "{}",
-				TypeAllowedSlot: map[uint][]uint{10: {0, 1}, 20: {2}},
-				DifficultyType:  map[uint][]uint{1: {10}, 2: {20}},
-			},
-		},
-		items: map[uint]model.Item{
-			1: {ItemID: 1, Type: 10, QuestionID: 1},
-			2: {ItemID: 2, Type: 20, QuestionID: 2},
-			3: {ItemID: 3, Type: 10, QuestionID: 1}, // slotted; has a question so it can be attacked
-			4: {ItemID: 4, Type: 30},
-		},
-		sessions: map[string]model.QuestionSession{
-			"0123456789abcdef0123456789abcdef": {
-				ExpiresAt: time.Now().Add(15 * time.Minute),
-				Username:  "user",
-				Kind:      model.KindItem,
-				ItemID:    4,
-				Question: model.Question{
-					Content: model.TextContent("What is six times three?", "6", "18", "9", "12"),
-					Answer:  model.IndexAnswer(1),
-				},
-			},
-		},
-		refreshTokens: map[string]struct{}{},
-		questions: map[uint]model.Question{
-			1: {
-				Content:    model.TextContent("What is six times three?", "6", "18", "9", "12"),
-				Answer:     model.IndexAnswer(1),
-				Difficulty: 1,
-				Area:       1,
-			},
-			2: {
-				Content:    model.TextContent("Who is F", "HRM", "M's child", "White cat", "O's Big sis"),
-				Answer:     model.IndexAnswer(0),
-				Difficulty: 2,
-				Area:       2,
-			},
-			3: {
-				// A voice_response question: the prompt is an audio clip and the
-				// answer is graded by transcribing the student's spoken reply.
-				// Difficulty 3 keeps it out of the seed item-generate flow (the seed
-				// building only generates difficulties 1 and 2) while leaving it in
-				// the pool for search and manual use.
-				Content: model.Content{
-					Description: model.Description{Type: model.DescVoice, Data: "https://example.com/audio/q3.mp3"},
-				},
-				Answer:     model.VoiceAnswer("eighteen"),
-				Difficulty: 3,
-				Area:       1,
-			},
-		},
-		students: map[uint]model.Student{
-			1: {StudentID: 1, Name: "Alice"},
-		},
-		nextQuestionID: 4,
-		nextBuildingID: 2,
-		nextItemID:     5,
+// Close releases the connection pool.
+func Close() {
+	if pool != nil {
+		pool.Close()
 	}
 }

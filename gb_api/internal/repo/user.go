@@ -1,10 +1,14 @@
 package repo
 
 import (
-	"slices"
+	"context"
+	"errors"
 
 	apperr "gb-api/internal/error"
 	"gb-api/internal/model"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // UserRepo is the user-account table: credentials, roles, and membership. It is
@@ -23,106 +27,148 @@ type UserRepo interface {
 type userRepo struct{}
 
 func (_ *userRepo) ValidateCredentials(username, password string) (bool, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	u := db.users[username]
-	return u != nil && u.Password == password, nil
+	ctx := context.Background()
+	var stored string
+	err := pool.QueryRow(ctx, `SELECT password FROM users WHERE username = $1`, username).Scan(&stored)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return checkPassword(stored, password), nil
+}
+
+// selectUsers is the shared projection: a user row plus its sorted student roster.
+const selectUsers = `
+	SELECT u.username, u.role, u.building_id, u.profile_pic_url,
+	       COALESCE(array_agg(us.student_id ORDER BY us.student_id)
+	                FILTER (WHERE us.student_id IS NOT NULL), '{}') AS students
+	FROM users u
+	LEFT JOIN user_students us ON us.username = u.username`
+
+func scanUser(row pgx.Row) (model.User, error) {
+	var u model.User
+	var students []int64
+	if err := row.Scan(&u.Username, &u.Role, &u.BuildingID, &u.ProfilePicURL, &students); err != nil {
+		return model.User{}, err
+	}
+	u.Students = make([]uint, len(students))
+	for i, id := range students {
+		u.Students[i] = uint(id)
+	}
+	return u, nil
 }
 
 func (_ *userRepo) GetAllUsers() ([]model.User, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	users := make([]model.User, 0, len(db.users))
-	for _, u := range db.users {
-		users = append(users, toModelUser(u))
+	ctx := context.Background()
+	rows, err := pool.Query(ctx, selectUsers+` GROUP BY u.username`)
+	if err != nil {
+		return nil, err
 	}
-	return users, nil
+	defer rows.Close()
+	users := make([]model.User, 0)
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
 }
 
 func (_ *userRepo) GetUser(username string) (model.User, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	u := db.users[username]
-	if u == nil {
+	ctx := context.Background()
+	row := pool.QueryRow(ctx, selectUsers+` WHERE u.username = $1 GROUP BY u.username`, username)
+	u, err := scanUser(row)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return model.User{}, apperr.ErrUserNotFound
 	}
-	return toModelUser(u), nil
-}
-
-// toModelUser maps a users-table row to the model exposed to the service layer.
-func toModelUser(u *User) model.User {
-	students := make([]uint, 0, len(u.Students))
-	for id := range u.Students {
-		students = append(students, id)
+	if err != nil {
+		return model.User{}, err
 	}
-	slices.Sort(students)
-	return model.User{Username: u.Username, Role: u.Role, BuildingID: u.BuildingID, ProfilePicURL: u.ProfilePicURL, Students: students}
+	return u, nil
 }
 
 func (_ *userRepo) SetUserProfilePic(username, url string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	u := db.users[username]
-	if u == nil {
-		return apperr.ErrUserNotFound
-	}
-	u.ProfilePicURL = url
-	return nil
+	return updateUserField(`UPDATE users SET profile_pic_url = $2 WHERE username = $1`, username, url)
 }
 
 func (_ *userRepo) SetUserBuilding(username string, buildingID uint) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	u := db.users[username]
-	if u == nil {
+	return updateUserField(`UPDATE users SET building_id = $2 WHERE username = $1`, username, buildingID)
+}
+
+// updateUserField runs a single-column UPDATE keyed by username, returning
+// ErrUserNotFound when no row matched.
+func updateUserField(sql, username string, value any) error {
+	ctx := context.Background()
+	tag, err := pool.Exec(ctx, sql, username, value)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
 		return apperr.ErrUserNotFound
 	}
-	u.BuildingID = buildingID
 	return nil
 }
 
 // SetUserStudents replaces the user's assigned-student set with the given ids.
 func (_ *userRepo) SetUserStudents(username string, studentIDs []uint) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	u := db.users[username]
-	if u == nil {
-		return apperr.ErrUserNotFound
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	students := make(map[uint]struct{}, len(studentIDs))
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT true FROM users WHERE username = $1`, username).Scan(&exists); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.ErrUserNotFound
+		}
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM user_students WHERE username = $1`, username); err != nil {
+		return err
+	}
 	for _, id := range studentIDs {
-		students[id] = struct{}{}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO user_students (username, student_id) VALUES ($1, $2)
+			 ON CONFLICT DO NOTHING`, username, id,
+		); err != nil {
+			return err
+		}
 	}
-	u.Students = students
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (_ *userRepo) CreateUser(username, password string, role uint) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	if db.users[username] != nil {
+	ctx := context.Background()
+	hash, err := hashPassword(password)
+	if err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx,
+		`INSERT INTO users (username, password, role) VALUES ($1, $2, $3)`,
+		username, hash, role,
+	)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
 		return apperr.ErrUserExists
 	}
-	db.users[username] = &User{
-		Username:  username,
-		Password:  password,
-		Role:      role,
-		Inventory: make(map[uint]struct{}),
-		Slots:     make(map[uint]int),
-		Students:  make(map[uint]struct{}),
-	}
-	return nil
+	return err
 }
 
 // DeleteUser removes a user. The bool reports whether the user existed.
 func (_ *userRepo) DeleteUser(username string) (bool, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	if db.users[username] == nil {
-		return false, nil
+	ctx := context.Background()
+	tag, err := pool.Exec(ctx, `DELETE FROM users WHERE username = $1`, username)
+	if err != nil {
+		return false, err
 	}
-	delete(db.users, username)
-	return true, nil
+	return tag.RowsAffected() > 0, nil
 }
 
 func InitUserRepo() UserRepo {
