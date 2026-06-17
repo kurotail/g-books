@@ -16,6 +16,15 @@ func newMockAuthRepo() *mock.AuthRepo {
 	}
 }
 
+func tokenFor(t *testing.T, username string) string {
+	t.Helper()
+	tok, err := newTestAuthSvc().newAccessToken(username)
+	if err != nil {
+		t.Fatalf("failed to mint access token: %v", err)
+	}
+	return tok
+}
+
 func newTestAuthSvc() *AuthSvc {
 	r := newMockAuthRepo()
 	return NewAuthSvc(r, r)
@@ -114,7 +123,7 @@ func TestRegisterUser_TeacherCreatesStudent(t *testing.T) {
 	repo := newMockAuthRepo()
 	s := NewAuthSvc(repo, repo)
 
-	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleStudent, 0)
+	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleStudent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -134,7 +143,7 @@ func TestRegisterUser_StudentForbidden(t *testing.T) {
 	repo.Roles["user"] = model.RoleStudent
 	s := NewAuthSvc(repo, repo)
 
-	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleStudent, 0)
+	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleStudent)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -146,7 +155,7 @@ func TestRegisterUser_StudentForbidden(t *testing.T) {
 func TestRegisterUser_CannotCreateAdmin(t *testing.T) {
 	s := newTestAuthSvc()
 
-	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleAdmin, 0)
+	status, err := s.RegisterUser(tokenFor(t, "user"), "alice", "pw", model.RoleAdmin)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -158,7 +167,7 @@ func TestRegisterUser_CannotCreateAdmin(t *testing.T) {
 func TestRegisterUser_DuplicateUser(t *testing.T) {
 	s := newTestAuthSvc()
 
-	status, err := s.RegisterUser(tokenFor(t, "user"), "user", "pw", model.RoleStudent, 0)
+	status, err := s.RegisterUser(tokenFor(t, "user"), "user", "pw", model.RoleStudent)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -170,7 +179,7 @@ func TestRegisterUser_DuplicateUser(t *testing.T) {
 func TestRegisterUser_InvalidToken(t *testing.T) {
 	s := newTestAuthSvc()
 
-	status, err := s.RegisterUser("invalid.token", "alice", "pw", model.RoleStudent, 0)
+	status, err := s.RegisterUser("invalid.token", "alice", "pw", model.RoleStudent)
 	if err == nil {
 		t.Fatal("expected error")
 	}

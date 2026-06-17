@@ -17,14 +17,13 @@ import (
 type QuestionSvc struct {
 	repo      repo.QuestionRepo
 	users     repo.UserRepo
-	groups    repo.GroupRepo
 	buildings repo.BuildingRepo
 	items     repo.ItemRepo
 	stt       repo.STTRepo
 }
 
-func NewQuestionSvc(r repo.QuestionRepo, users repo.UserRepo, groups repo.GroupRepo, buildings repo.BuildingRepo, items repo.ItemRepo, stt repo.STTRepo) *QuestionSvc {
-	return &QuestionSvc{repo: r, users: users, groups: groups, buildings: buildings, items: items, stt: stt}
+func NewQuestionSvc(r repo.QuestionRepo, users repo.UserRepo, buildings repo.BuildingRepo, items repo.ItemRepo, stt repo.STTRepo) *QuestionSvc {
+	return &QuestionSvc{repo: r, users: users, buildings: buildings, items: items, stt: stt}
 }
 
 // GenerateItem (QUIZ1 state) creates a new item of a random type for the requested difficulty
@@ -33,15 +32,11 @@ func (s *QuestionSvc) GenerateItem(accessToken string, difficulty uint) ([]byte,
 	if err != nil {
 		return nil, status, err
 	}
-	if caller.GroupID == 0 {
-		return nil, http.StatusBadRequest, fmt.Errorf("尚未加入任何群組")
+	if caller.BuildingID == 0 {
+		return nil, http.StatusBadRequest, fmt.Errorf("尚未指定建築")
 	}
 
-	g, err := s.groups.GetGroup(caller.GroupID)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	itemType, ok, err := s.randomTypeForDifficulty(g.BuildingID, difficulty)
+	itemType, ok, err := s.randomTypeForDifficulty(caller.BuildingID, difficulty)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -62,7 +57,7 @@ func (s *QuestionSvc) GenerateItem(accessToken string, difficulty uint) ([]byte,
 		return nil, http.StatusInternalServerError, err
 	}
 	id, err := s.repo.StoreSession(model.QuestionSession{
-		GroupID:  caller.GroupID,
+		Username: caller.Username,
 		Question: q,
 		Kind:     model.KindItem,
 		ItemID:   itemID,
@@ -91,16 +86,13 @@ func (s *QuestionSvc) randomTypeForDifficulty(buildingID, difficulty uint) (uint
 	return types[mrand.Intn(len(types))], true, nil
 }
 
-func (s *QuestionSvc) GenerateTarget(accessToken string, targetGroupID, targetSlotID uint) ([]byte, int, error) {
+func (s *QuestionSvc) GenerateTarget(accessToken string, targetUsername string, targetSlotID uint) ([]byte, int, error) {
 	caller, status, err := studentBlockedNotQuiz2(s.users, accessToken)
 	if err != nil {
 		return nil, status, err
 	}
-	if caller.GroupID == 0 {
-		return nil, http.StatusBadRequest, fmt.Errorf("尚未加入任何群組")
-	}
 
-	slots, err := s.items.QuerySlot(targetGroupID)
+	slots, err := s.items.QuerySlot(targetUsername)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -109,8 +101,8 @@ func (s *QuestionSvc) GenerateTarget(accessToken string, targetGroupID, targetSl
 		return nil, http.StatusBadRequest, fmt.Errorf("目標格子沒有物品")
 	}
 
-	attack := targetGroupID != caller.GroupID && v > 0
-	repair := targetGroupID == caller.GroupID && v < 0
+	attack := targetUsername != caller.Username && v > 0
+	repair := targetUsername == caller.Username && v < 0
 	if !attack && !repair {
 		return nil, http.StatusBadRequest, fmt.Errorf("無效的目標")
 	}
@@ -144,10 +136,10 @@ func (s *QuestionSvc) GenerateTarget(accessToken string, targetGroupID, targetSl
 	}
 
 	id, err := s.repo.StoreSession(model.QuestionSession{
-		GroupID:  caller.GroupID,
+		Username: caller.Username,
 		Question: q,
 		Kind:     model.KindTarget,
-		Target:   &model.Target{GroupID: targetGroupID, SlotID: targetSlotID},
+		Target:   &model.Target{Username: targetUsername, SlotID: targetSlotID},
 	})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
@@ -300,14 +292,14 @@ func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) (
 	switch qs.Kind {
 	case model.KindItem:
 		if correct {
-			if err := s.items.AddInvItem(qs.GroupID, qs.ItemID); err != nil {
+			if err := s.items.AddInvItem(qs.Username, qs.ItemID); err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
 			resp.ItemID = qs.ItemID
 		}
 	case model.KindTarget:
 		if correct && qs.Target != nil {
-			success, err := s.applyTarget(qs.GroupID, *qs.Target)
+			success, err := s.applyTarget(qs.Username, *qs.Target)
 			if err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
@@ -322,8 +314,8 @@ func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) (
 	return data, http.StatusOK, nil
 }
 
-func (s *QuestionSvc) applyTarget(callerGroupID uint, t model.Target) (bool, error) {
-	slots, err := s.items.QuerySlot(t.GroupID)
+func (s *QuestionSvc) applyTarget(callerUsername string, t model.Target) (bool, error) {
+	slots, err := s.items.QuerySlot(t.Username)
 	if err != nil {
 		return false, err
 	}
@@ -331,14 +323,14 @@ func (s *QuestionSvc) applyTarget(callerGroupID uint, t model.Target) (bool, err
 	if !ok || v == 0 {
 		return false, nil
 	}
-	attack := t.GroupID != callerGroupID
+	attack := t.Username != callerUsername
 	if attack && v < 0 { // already broken
 		return false, nil
 	}
 	if !attack && v > 0 { // not broken, nothing to repair
 		return false, nil
 	}
-	if err := s.items.SetSlot(t.GroupID, t.SlotID, -v); err != nil {
+	if err := s.items.SetSlot(t.Username, t.SlotID, -v); err != nil {
 		return false, err
 	}
 	return true, nil

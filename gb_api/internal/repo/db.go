@@ -12,19 +12,10 @@ type User struct {
 	Username      string
 	Password      string
 	Role          uint
-	GroupID       uint   // FK -> groups; 0 = not a member of any group
-	ProfilePicURL string // image link; empty = no picture
-}
-
-// Group is a row in the groups table. Primary key: ID.
-type Group struct {
-	ID            uint
-	Name          string              // empty = use the default "Group <id>"
-	BuildingID    uint                // FK -> buildings; 0 = no building assigned
-	Inventory     map[uint]struct{}   // set of owned (unslotted) item_ids
-	Slots         map[uint]int        // slot_id -> signed item_id (negative = broken)
-	ProfilePicURL string              // image link; empty = no picture
-	Members       map[string]struct{} // set of member usernames; kept in sync with User.GroupID
+	BuildingID    uint              // FK -> buildings; 0 = no building assigned
+	Inventory     map[uint]struct{} // set of owned (unslotted) item_ids
+	Slots         map[uint]int      // slot_id -> signed item_id (negative = broken)
+	ProfilePicURL string            // image link; empty = no picture
 }
 
 // Building is a row in the buildings table. Primary key: ID.
@@ -41,7 +32,6 @@ type Building struct {
 type Database struct {
 	mu             sync.RWMutex
 	users          map[string]*User                 // PK: username
-	groups         map[uint]*Group                  // PK: id
 	buildings      map[uint]*Building               // PK: id
 	items          map[uint]model.Item              // PK: item id
 	sessions       map[string]model.QuestionSession // PK: session_id
@@ -58,19 +48,12 @@ var db = newDatabase()
 func newDatabase() *Database {
 	return &Database{
 		users: map[string]*User{
-			"user": {
-				Username: "user",
-				Password: "password123",
-				Role:     model.RoleTeacher,
-				GroupID:  1,
-			},
-		},
-		groups: map[uint]*Group{
-			1: {
-				ID:        1,
+			"admin": {
+				Username:  "admin",
+				Password:  "admin123",
+				Role:      model.RoleAdmin,
 				Inventory: map[uint]struct{}{1: {}, 2: {}, 4: {}},
 				Slots:     map[uint]int{0: 3},
-				Members:   map[string]struct{}{"user": {}},
 			},
 		},
 		buildings: map[uint]*Building{
@@ -91,7 +74,7 @@ func newDatabase() *Database {
 		sessions: map[string]model.QuestionSession{
 			"0123456789abcdef0123456789abcdef": {
 				ExpiresAt: time.Now().Add(15 * time.Minute),
-				GroupID:   1,
+				Username:  "user",
 				Kind:      model.KindItem,
 				ItemID:    4,
 				Question: model.Question{

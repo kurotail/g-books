@@ -88,7 +88,30 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 role", http.StatusBadRequest)
 		return
 	}
-	status, err := h.svc.RegisterUser(token, req.Username, req.Password, *req.Role, req.GroupID)
+	status, err := h.svc.RegisterUser(token, req.Username, req.Password, *req.Role)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(status)
+}
+
+func (h *AuthHandler) SetBuilding(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.SetUserBuildingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if req.BuildingID == nil {
+		http.Error(w, "缺少 building_id", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.SetBuilding(token, *req.BuildingID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

@@ -1,20 +1,19 @@
 package model
 
-// Pointers distinguish a missing field from a valid zero value (group 0 and
-// slot 0 both exist).
+// Pointers distinguish a missing field from a valid zero value (slot 0 exists).
 type QueryItemRequest struct {
-	GroupID *uint `json:"group_id"`
+	Username *string `json:"username"`
 }
 
 type TranInv2SlotRequest struct {
-	GroupID *uint `json:"group_id"`
-	ItemID  *uint `json:"item_id"`
-	SlotID  *uint `json:"slot_id"`
+	Username *string `json:"username"`
+	ItemID   *uint   `json:"item_id"`
+	SlotID   *uint   `json:"slot_id"`
 }
 
 type TranSlot2InvRequest struct {
-	GroupID *uint `json:"group_id"`
-	SlotID  *uint `json:"slot_id"`
+	Username *string `json:"username"`
+	SlotID   *uint   `json:"slot_id"`
 }
 
 // Item is a row in the items table: a unique item instance with a Type (which the
@@ -42,7 +41,7 @@ type SlotView struct {
 }
 
 type ItemsResponse struct {
-	GroupID   uint              `json:"group_id"`
+	Username  string            `json:"username"`
 	Inventory []ItemView        `json:"inventory"`
 	Slots     map[uint]SlotView `json:"slots"`
 }

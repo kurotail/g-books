@@ -11,8 +11,9 @@ type UserRepo interface {
 	ValidateCredentials(username, password string) (bool, error)
 	GetAllUsers() ([]model.User, error)
 	GetUser(username string) (model.User, error)
-	CreateUser(username, password string, role, groupID uint) error
+	CreateUser(username, password string, role uint) error
 	SetUserProfilePic(username, url string) error
+	SetUserBuilding(username string, buildingID uint) error
 	DeleteUser(username string) (bool, error)
 }
 
@@ -47,7 +48,7 @@ func (_ *userRepo) GetUser(username string) (model.User, error) {
 
 // toModelUser maps a users-table row to the model exposed to the service layer.
 func toModelUser(u *User) model.User {
-	return model.User{Username: u.Username, Role: u.Role, GroupID: u.GroupID, ProfilePicURL: u.ProfilePicURL}
+	return model.User{Username: u.Username, Role: u.Role, BuildingID: u.BuildingID, ProfilePicURL: u.ProfilePicURL}
 }
 
 func (_ *userRepo) SetUserProfilePic(username, url string) error {
@@ -61,25 +62,29 @@ func (_ *userRepo) SetUserProfilePic(username, url string) error {
 	return nil
 }
 
-func (_ *userRepo) CreateUser(username, password string, role, groupID uint) error {
+func (_ *userRepo) SetUserBuilding(username string, buildingID uint) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	u := db.users[username]
+	if u == nil {
+		return apperr.ErrUserNotFound
+	}
+	u.BuildingID = buildingID
+	return nil
+}
+
+func (_ *userRepo) CreateUser(username, password string, role uint) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	if db.users[username] != nil {
 		return apperr.ErrUserExists
 	}
 	db.users[username] = &User{
-		Username: username,
-		Password: password,
-		Role:     role,
-		GroupID:  groupID,
-	}
-	if groupID != 0 {
-		g := db.groups[groupID]
-		if g == nil {
-			g = newGroup(groupID)
-			db.groups[groupID] = g
-		}
-		g.Members[username] = struct{}{}
+		Username:  username,
+		Password:  password,
+		Role:      role,
+		Inventory: make(map[uint]struct{}),
+		Slots:     make(map[uint]int),
 	}
 	return nil
 }
@@ -88,14 +93,8 @@ func (_ *userRepo) CreateUser(username, password string, role, groupID uint) err
 func (_ *userRepo) DeleteUser(username string) (bool, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	u := db.users[username]
-	if u == nil {
+	if db.users[username] == nil {
 		return false, nil
-	}
-	if u.GroupID != 0 {
-		if g := db.groups[u.GroupID]; g != nil {
-			delete(g.Members, username)
-		}
 	}
 	delete(db.users, username)
 	return true, nil

@@ -7,39 +7,40 @@ import (
 )
 
 type ItemRepo interface {
-	QueryInv(groupID uint) ([]uint, error)        // owned (unslotted) item ids, sorted
-	QuerySlot(groupID uint) (map[uint]int, error) // slot_id -> signed item_id (negative = broken)
+	QueryInv(username string) ([]uint, error)        // owned (unslotted) item ids, sorted
+	QuerySlot(username string) (map[uint]int, error) // slot_id -> signed item_id (negative = broken)
 	GetItem(itemID uint) (model.Item, bool, error)
 	CreateItem(itemType, questionID uint) (uint, error)
-	AddInvItem(groupID, itemID uint) error
-	RemoveInvItem(groupID, itemID uint) error
-	SetSlot(groupID, slotID uint, itemID int) error // itemID 0 clears the slot
+	AddInvItem(username string, itemID uint) error
+	RemoveInvItem(username string, itemID uint) error
+	SetSlot(username string, slotID uint, itemID int) error // itemID 0 clears the slot
 }
 
 type itemRepo struct{}
 
-// group returns the group row for groupID, creating an empty one if absent.
-// Callers must hold db.mu.Lock.
-func group(groupID uint) *Group {
-	g := db.groups[groupID]
-	if g == nil {
-		g = &Group{
-			ID:        groupID,
-			Inventory: make(map[uint]struct{}),
-			Slots:     make(map[uint]int),
-		}
-		db.groups[groupID] = g
+// userRow returns the user row for username and lazily initializes its Inventory/Slots
+// maps. It returns nil if the user does not exist. Callers must hold db.mu.Lock.
+func userRow(username string) *User {
+	u := db.users[username]
+	if u == nil {
+		return nil
 	}
-	return g
+	if u.Inventory == nil {
+		u.Inventory = make(map[uint]struct{})
+	}
+	if u.Slots == nil {
+		u.Slots = make(map[uint]int)
+	}
+	return u
 }
 
-func (_ *itemRepo) QueryInv(groupID uint) ([]uint, error) {
+func (_ *itemRepo) QueryInv(username string) ([]uint, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	var ids []uint
-	if g := db.groups[groupID]; g != nil {
-		ids = make([]uint, 0, len(g.Inventory))
-		for id := range g.Inventory {
+	if u := db.users[username]; u != nil {
+		ids = make([]uint, 0, len(u.Inventory))
+		for id := range u.Inventory {
 			ids = append(ids, id)
 		}
 	}
@@ -47,12 +48,12 @@ func (_ *itemRepo) QueryInv(groupID uint) ([]uint, error) {
 	return ids, nil
 }
 
-func (_ *itemRepo) QuerySlot(groupID uint) (map[uint]int, error) {
+func (_ *itemRepo) QuerySlot(username string) (map[uint]int, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	result := make(map[uint]int)
-	if g := db.groups[groupID]; g != nil {
-		for k, v := range g.Slots {
+	if u := db.users[username]; u != nil {
+		for k, v := range u.Slots {
 			result[k] = v
 		}
 	}
@@ -76,30 +77,37 @@ func (_ *itemRepo) CreateItem(itemType, questionID uint) (uint, error) {
 	return id, nil
 }
 
-func (_ *itemRepo) AddInvItem(groupID, itemID uint) error {
+func (_ *itemRepo) AddInvItem(username string, itemID uint) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	group(groupID).Inventory[itemID] = struct{}{}
+	if u := userRow(username); u != nil {
+		u.Inventory[itemID] = struct{}{}
+	}
 	return nil
 }
 
-func (_ *itemRepo) RemoveInvItem(groupID, itemID uint) error {
+func (_ *itemRepo) RemoveInvItem(username string, itemID uint) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	delete(group(groupID).Inventory, itemID)
-	// TODO: maybeDeleteItem(itemID) — once no group inventory and no slot references
+	if u := userRow(username); u != nil {
+		delete(u.Inventory, itemID)
+	}
+	// TODO: maybeDeleteItem(itemID) — once no user inventory and no slot references
 	// an item, delete it from db.items. Left as a no-op for now.
 	return nil
 }
 
-func (_ *itemRepo) SetSlot(groupID, slotID uint, itemID int) error {
+func (_ *itemRepo) SetSlot(username string, slotID uint, itemID int) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	g := group(groupID)
+	u := userRow(username)
+	if u == nil {
+		return nil
+	}
 	if itemID == 0 {
-		delete(g.Slots, slotID)
+		delete(u.Slots, slotID)
 	} else {
-		g.Slots[slotID] = itemID
+		u.Slots[slotID] = itemID
 	}
 	return nil
 }

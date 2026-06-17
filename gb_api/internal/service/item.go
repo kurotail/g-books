@@ -14,17 +14,16 @@ import (
 type ItemSvc struct {
 	repo      repo.ItemRepo
 	users     repo.UserRepo
-	groups    repo.GroupRepo
 	buildings repo.BuildingRepo
 }
 
-func NewItemSvc(r repo.ItemRepo, users repo.UserRepo, groups repo.GroupRepo, buildings repo.BuildingRepo) *ItemSvc {
-	return &ItemSvc{repo: r, users: users, groups: groups, buildings: buildings}
+func NewItemSvc(r repo.ItemRepo, users repo.UserRepo, buildings repo.BuildingRepo) *ItemSvc {
+	return &ItemSvc{repo: r, users: users, buildings: buildings}
 }
 
-// ownsItem reports whether the group holds itemID loose in its inventory.
-func (s *ItemSvc) ownsItem(groupID, itemID uint) (bool, error) {
-	ids, err := s.repo.QueryInv(groupID)
+// ownsItem reports whether the user holds itemID loose in their inventory.
+func (s *ItemSvc) ownsItem(username string, itemID uint) (bool, error) {
+	ids, err := s.repo.QueryInv(username)
 	if err != nil {
 		return false, err
 	}
@@ -36,18 +35,18 @@ func (s *ItemSvc) ownsItem(groupID, itemID uint) (bool, error) {
 	return false, nil
 }
 
-// slotAllowsType reports whether the group's building permits an item of itemType
-// in slotID (per the building's TypeAllowedSlot). A group with no building, or a
+// slotAllowsType reports whether the user's building permits an item of itemType
+// in slotID (per the building's TypeAllowedSlot). A user with no building, or a
 // building that no longer exists, allows nothing.
-func (s *ItemSvc) slotAllowsType(groupID, slotID, itemType uint) (bool, error) {
-	g, err := s.groups.GetGroup(groupID)
+func (s *ItemSvc) slotAllowsType(username string, slotID, itemType uint) (bool, error) {
+	u, err := s.users.GetUser(username)
 	if err != nil {
 		return false, err
 	}
-	if g.BuildingID == 0 {
+	if u.BuildingID == 0 {
 		return false, nil
 	}
-	b, err := s.buildings.GetBuilding(g.BuildingID)
+	b, err := s.buildings.GetBuilding(u.BuildingID)
 	if err != nil {
 		if errors.Is(err, apperr.ErrBuildingNotFound) {
 			return false, nil
@@ -62,7 +61,7 @@ func (s *ItemSvc) slotAllowsType(groupID, slotID, itemType uint) (bool, error) {
 	return false, nil
 }
 
-func (s *ItemSvc) QueryItems(accessToken string, groupID uint) ([]byte, int, error) {
+func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
@@ -71,10 +70,9 @@ func (s *ItemSvc) QueryItems(accessToken string, groupID uint) ([]byte, int, err
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	// group 0 means "no group", so it is never anyone's own group.
-	full := caller.Role >= model.RoleTeacher || (groupID != 0 && caller.GroupID == groupID)
+	full := caller.Role >= model.RoleTeacher || caller.Username == username
 
-	invIDs, err := s.repo.QueryInv(groupID)
+	invIDs, err := s.repo.QueryInv(username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -91,7 +89,7 @@ func (s *ItemSvc) QueryItems(accessToken string, groupID uint) ([]byte, int, err
 		}
 	}
 
-	slotMap, err := s.repo.QuerySlot(groupID)
+	slotMap, err := s.repo.QuerySlot(username)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -112,7 +110,7 @@ func (s *ItemSvc) QueryItems(accessToken string, groupID uint) ([]byte, int, err
 		slots[slotID] = slotView(it, broken, full)
 	}
 
-	data, err := json.Marshal(model.ItemsResponse{GroupID: groupID, Inventory: inventory, Slots: slots})
+	data, err := json.Marshal(model.ItemsResponse{Username: username, Inventory: inventory, Slots: slots})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -133,18 +131,18 @@ func slotView(it model.Item, broken, full bool) model.SlotView {
 	return model.SlotView{ItemID: it.ItemID, Type: it.Type, QuestionID: it.QuestionID, Broken: broken}
 }
 
-// TranInv2Slot moves an owned item from the group's inventory into a slot. The
-// item's Type must be allowed in the slot by the group's building. A normal item
+// TranInv2Slot moves an owned item from the user's inventory into a slot. The
+// item's Type must be allowed in the slot by the user's building. A normal item
 // already in the slot is swapped back into the inventory; a broken one blocks the move.
-func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint) (int, error) {
-	caller, status, err := s.blockStudentQuiz2(s.users, accessToken, groupID)
+func (s *ItemSvc) TranInv2Slot(accessToken string, username string, itemID, slotID uint) (int, error) {
+	caller, status, err := s.blockStudentQuiz2(s.users, accessToken)
 	if err != nil {
 		return status, err
 	}
-	if caller.GroupID == 0 || caller.GroupID != groupID {
-		return http.StatusForbidden, fmt.Errorf("學生無法操作其他組別的物品")
+	if caller.Username != username {
+		return http.StatusForbidden, fmt.Errorf("無法操作其他人的物品")
 	}
-	has, err := s.ownsItem(groupID, itemID)
+	has, err := s.ownsItem(username, itemID)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -158,14 +156,14 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint)
 	if !ok {
 		return http.StatusInternalServerError, fmt.Errorf("item %d 不存在", itemID)
 	}
-	allowed, err := s.slotAllowsType(groupID, slotID, it.Type)
+	allowed, err := s.slotAllowsType(username, slotID, it.Type)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	if !allowed {
 		return http.StatusBadRequest, fmt.Errorf("slot %d 不允許類型 %d 的物品", slotID, it.Type)
 	}
-	slot, err := s.repo.QuerySlot(groupID)
+	slot, err := s.repo.QuerySlot(username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -174,30 +172,30 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, groupID, itemID, slotID uint)
 		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀，無法放置物品", slotID, -held)
 	}
 	if held > 0 {
-		if err := s.repo.AddInvItem(groupID, uint(held)); err != nil {
+		if err := s.repo.AddInvItem(username, uint(held)); err != nil {
 			return http.StatusInternalServerError, err
 		}
 	}
-	if err := s.repo.RemoveInvItem(groupID, itemID); err != nil {
+	if err := s.repo.RemoveInvItem(username, itemID); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if err := s.repo.SetSlot(groupID, slotID, int(itemID)); err != nil {
+	if err := s.repo.SetSlot(username, slotID, int(itemID)); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil
 }
 
-// TranSlot2Inv returns the item held in a slot to the group's inventory. Only a
+// TranSlot2Inv returns the item held in a slot to the user's inventory. Only a
 // normal (non-broken) item can be returned.
-func (s *ItemSvc) TranSlot2Inv(accessToken string, groupID, slotID uint) (int, error) {
-	caller, status, err := s.blockStudentQuiz2(s.users, accessToken, groupID)
+func (s *ItemSvc) TranSlot2Inv(accessToken string, username string, slotID uint) (int, error) {
+	caller, status, err := s.blockStudentQuiz2(s.users, accessToken)
 	if err != nil {
 		return status, err
 	}
-	if caller.GroupID == 0 || caller.GroupID != groupID {
-		return http.StatusForbidden, fmt.Errorf("學生無法操作其他組別的物品")
+	if caller.Username != username {
+		return http.StatusForbidden, fmt.Errorf("無法操作其他人的物品")
 	}
-	slot, err := s.repo.QuerySlot(groupID)
+	slot, err := s.repo.QuerySlot(username)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -208,10 +206,10 @@ func (s *ItemSvc) TranSlot2Inv(accessToken string, groupID, slotID uint) (int, e
 	if itemID < 0 {
 		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀", slotID, -itemID)
 	}
-	if err := s.repo.AddInvItem(groupID, uint(itemID)); err != nil {
+	if err := s.repo.AddInvItem(username, uint(itemID)); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if err := s.repo.SetSlot(groupID, slotID, 0); err != nil {
+	if err := s.repo.SetSlot(username, slotID, 0); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil

@@ -19,10 +19,9 @@ import (
 
 func routes() (http.Handler, *handler.StateHandler) {
 	authHandler := handler.NewAuthHandler(service.NewAuthSvc(repo.InitUserRepo(), repo.InitRefreshTokenRepo()))
-	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitUserRepo(), repo.InitGroupRepo(), repo.InitBuildingRepo()))
-	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitGroupRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitSTTRepo()))
+	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitUserRepo(), repo.InitBuildingRepo()))
+	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitSTTRepo()))
 	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
-	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo(), repo.InitUserRepo()))
 	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
 	mediaHandler := handler.NewMediaHandler(service.NewMediaSvc(config.UploadDir, config.MaxImageMB, config.MaxAudioMB))
 
@@ -33,18 +32,12 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/refresh", authHandler.Refresh)
 	mux.HandleFunc("GET /api/users", authHandler.QueryUser)
 	mux.HandleFunc("POST /api/users/pfp", authHandler.SetProfilePic)
+	mux.HandleFunc("POST /api/users/building", authHandler.SetBuilding)
 	mux.HandleFunc("DELETE /api/users/{username}", authHandler.DeleteUser)
 
 	mux.HandleFunc("POST /api/item", itemHandler.QueryItems)
 	mux.HandleFunc("POST /api/item/inv2slot", itemHandler.TranInv2Slot)
 	mux.HandleFunc("POST /api/item/slot2inv", itemHandler.TranSlot2Inv)
-
-	mux.HandleFunc("POST /api/group/set", groupHandler.SetGroup)
-	mux.HandleFunc("POST /api/group/name", groupHandler.SetName)
-	mux.HandleFunc("POST /api/group/building", groupHandler.SetBuilding)
-	mux.HandleFunc("GET /api/group", groupHandler.QueryGroup)
-	mux.HandleFunc("POST /api/group/pfp", groupHandler.SetProfilePic)
-	mux.HandleFunc("DELETE /api/group/{id}", groupHandler.DeleteGroup)
 
 	mux.HandleFunc("POST /api/building", buildingHandler.Create)
 	mux.HandleFunc("GET /api/building", buildingHandler.List)
