@@ -23,6 +23,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitSTTRepo()))
 	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
 	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
+	studentHandler := handler.NewStudentHandler(service.NewStudentSvc(repo.InitStudentRepo(), repo.InitUserRepo()))
 	mediaHandler := handler.NewMediaHandler(service.NewMediaSvc(config.UploadDir, config.MaxImageMB, config.MaxAudioMB))
 
 	mux := http.NewServeMux()
@@ -43,6 +44,12 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("GET /api/building", buildingHandler.List)
 	mux.HandleFunc("GET /api/building/{id}", buildingHandler.Get)
 	mux.HandleFunc("PUT /api/building/{id}", buildingHandler.Update)
+
+	mux.HandleFunc("POST /api/student", studentHandler.Create)
+	mux.HandleFunc("GET /api/student", studentHandler.List)
+	mux.HandleFunc("GET /api/student/{id}", studentHandler.Get)
+	mux.HandleFunc("PUT /api/student/{id}", studentHandler.Update)
+	mux.HandleFunc("DELETE /api/student/{id}", studentHandler.Delete)
 
 	mux.HandleFunc("POST /api/question/generate", questionHandler.GenerateItem)
 	mux.HandleFunc("POST /api/question/target", questionHandler.GenerateTarget)

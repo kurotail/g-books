@@ -20,6 +20,7 @@ var (
 	_ repo.ItemRepo         = (*ItemRepo)(nil)
 	_ repo.InventoryRepo    = (*ItemRepo)(nil)
 	_ repo.BuildingRepo     = (*BuildingRepo)(nil)
+	_ repo.StudentRepo      = (*StudentRepo)(nil)
 	_ repo.QuestionRepo     = (*QuestionRepo)(nil)
 	_ repo.STTRepo          = (*STTRepo)(nil)
 )
@@ -233,6 +234,56 @@ func (m *BuildingRepo) GetAllBuildings() ([]model.Building, error) {
 		out = append(out, b)
 	}
 	return out, nil
+}
+
+type StudentRepo struct {
+	Students map[uint]model.Student
+	NextID   uint
+}
+
+func (m *StudentRepo) CreateStudent(name, profilePicURL string) (uint, error) {
+	if m.Students == nil {
+		m.Students = map[uint]model.Student{}
+	}
+	if m.NextID == 0 {
+		m.NextID = 1
+	}
+	id := m.NextID
+	m.NextID++
+	m.Students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
+	return id, nil
+}
+
+func (m *StudentRepo) UpdateStudent(id uint, name, profilePicURL string) error {
+	if _, ok := m.Students[id]; !ok {
+		return apperr.ErrStudentNotFound
+	}
+	m.Students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
+	return nil
+}
+
+func (m *StudentRepo) GetStudent(id uint) (model.Student, error) {
+	s, ok := m.Students[id]
+	if !ok {
+		return model.Student{}, apperr.ErrStudentNotFound
+	}
+	return s, nil
+}
+
+func (m *StudentRepo) GetAllStudents() ([]model.Student, error) {
+	out := make([]model.Student, 0, len(m.Students))
+	for _, s := range m.Students {
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func (m *StudentRepo) DeleteStudent(id uint) error {
+	if _, ok := m.Students[id]; !ok {
+		return apperr.ErrStudentNotFound
+	}
+	delete(m.Students, id)
+	return nil
 }
 
 type QuestionRepo struct {

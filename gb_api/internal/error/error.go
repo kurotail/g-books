@@ -19,3 +19,6 @@ var ErrUserNotFound = errors.New("使用者不存在")
 
 // ErrBuildingNotFound is returned when a lookup targets a building that does not exist.
 var ErrBuildingNotFound = errors.New("建築不存在")
+
+// ErrStudentNotFound is returned when a lookup targets a student that does not exist.
+var ErrStudentNotFound = errors.New("學生不存在")

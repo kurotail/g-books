@@ -37,9 +37,11 @@ type Database struct {
 	sessions       map[string]model.QuestionSession // PK: session_id
 	refreshTokens  map[string]struct{}              // PK: jti (refresh token id)
 	questions      map[uint]model.Question          // PK: question id; the pool sessions are drawn from
+	students       map[uint]model.Student           // PK: student id
 	nextQuestionID uint                             // next id to assign on insert
 	nextBuildingID uint                             // next id to assign on insert
 	nextItemID     uint                             // next id to assign on insert
+	nextStudentID  uint                             // next id to assign on insert
 }
 
 // db is the process-wide store. It replaces the former denormalized mem_db.
@@ -111,8 +113,12 @@ func newDatabase() *Database {
 				Area:       1,
 			},
 		},
+		students: map[uint]model.Student{
+			1: {StudentID: 1, Name: "Alice"},
+		},
 		nextQuestionID: 4,
 		nextBuildingID: 2,
 		nextItemID:     5,
+		nextStudentID:  2,
 	}
 }
