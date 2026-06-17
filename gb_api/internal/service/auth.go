@@ -181,6 +181,48 @@ func (s *AuthSvc) SetBuilding(accessToken string, buildingID uint) (int, error) 
 	return http.StatusOK, nil
 }
 
+// SetUsername renames the calling user's own account. The rename cascades to the
+// user's items/slots/roster; the caller's existing tokens reference the old name and
+// will stop working, so they must log in again.
+func (s *AuthSvc) SetUsername(accessToken, newUsername string) (int, error) {
+	caller, status, err := getCaller(s.users, accessToken)
+	if err != nil {
+		return status, err
+	}
+	if err := s.users.RenameUser(caller.Username, newUsername); err != nil {
+		if errors.Is(err, apperr.ErrUserExists) {
+			return http.StatusConflict, err
+		}
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", caller.Username)
+		}
+		return http.StatusInternalServerError, err
+	}
+	return http.StatusOK, nil
+}
+
+// SetPassword changes the calling user's own password after verifying the current one.
+func (s *AuthSvc) SetPassword(accessToken, oldPassword, newPassword string) (int, error) {
+	caller, status, err := getCaller(s.users, accessToken)
+	if err != nil {
+		return status, err
+	}
+	ok, err := s.users.ValidateCredentials(caller.Username, oldPassword)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if !ok {
+		return http.StatusUnauthorized, fmt.Errorf("目前密碼錯誤")
+	}
+	if err := s.users.SetUserPassword(caller.Username, newPassword); err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", caller.Username)
+		}
+		return http.StatusInternalServerError, err
+	}
+	return http.StatusOK, nil
+}
+
 // DeleteUser removes a user account. Teachers/admins only
 func (s *AuthSvc) DeleteUser(accessToken, username string) (int, error) {
 	caller, status, err := getCaller(s.users, accessToken)

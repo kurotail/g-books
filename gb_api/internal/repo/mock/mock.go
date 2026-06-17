@@ -116,6 +116,48 @@ func (m *AuthRepo) CreateUser(username, password string, role uint) error {
 	return nil
 }
 
+func (m *AuthRepo) SetUserPassword(username, plainPassword string) error {
+	if _, ok := m.Roles[username]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	if m.Users == nil {
+		m.Users = map[string]string{}
+	}
+	m.Users[username] = plainPassword
+	return nil
+}
+
+// RenameUser moves all of a user's entries from oldUsername to newUsername.
+func (m *AuthRepo) RenameUser(oldUsername, newUsername string) error {
+	if _, ok := m.Roles[oldUsername]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	if _, ok := m.Roles[newUsername]; ok {
+		return apperr.ErrUserExists
+	}
+	move := func(dst, src map[string]string) {
+		if v, ok := src[oldUsername]; ok {
+			dst[newUsername] = v
+			delete(src, oldUsername)
+		}
+	}
+	move(m.Users, m.Users)
+	move(m.Pics, m.Pics)
+	if v, ok := m.Roles[oldUsername]; ok {
+		m.Roles[newUsername] = v
+		delete(m.Roles, oldUsername)
+	}
+	if v, ok := m.Buildings[oldUsername]; ok {
+		m.Buildings[newUsername] = v
+		delete(m.Buildings, oldUsername)
+	}
+	if v, ok := m.Students[oldUsername]; ok {
+		m.Students[newUsername] = v
+		delete(m.Students, oldUsername)
+	}
+	return nil
+}
+
 func (m *AuthRepo) DeleteUser(username string) (bool, error) {
 	if _, ok := m.Roles[username]; !ok {
 		return false, nil
@@ -140,6 +182,8 @@ func (m *RoleRepo) CreateUser(_, _ string, _ uint) error     { return nil }
 func (m *RoleRepo) SetUserProfilePic(_, _ string) error      { return nil }
 func (m *RoleRepo) SetUserBuilding(_ string, _ uint) error   { return nil }
 func (m *RoleRepo) SetUserStudents(_ string, _ []uint) error { return nil }
+func (m *RoleRepo) SetUserPassword(_, _ string) error        { return nil }
+func (m *RoleRepo) RenameUser(_, _ string) error             { return nil }
 func (m *RoleRepo) DeleteUser(_ string) (bool, error)        { return true, nil }
 
 type ItemRepo struct {

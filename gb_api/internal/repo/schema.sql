@@ -36,25 +36,26 @@ CREATE TABLE IF NOT EXISTS students (
     profile_pic_url TEXT NOT NULL DEFAULT ''
 );
 
--- A user's loose (unslotted) item ids.
+-- A user's loose (unslotted) item ids. ON UPDATE CASCADE lets a username rename
+-- propagate to these rows.
 CREATE TABLE IF NOT EXISTS user_inventory (
-    username TEXT   NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+    username TEXT   NOT NULL REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
     item_id  BIGINT NOT NULL,
     PRIMARY KEY (username, item_id)
 );
 
 -- A user's slots: slot_id -> signed item_id (negative = broken).
 CREATE TABLE IF NOT EXISTS user_slots (
-    username TEXT   NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+    username TEXT   NOT NULL REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
     slot_id  BIGINT NOT NULL,
     item_id  BIGINT NOT NULL,
     PRIMARY KEY (username, slot_id)
 );
 
--- A user's assigned student roster. The FK cascade removes roster rows when the
--- referenced student is deleted.
+-- A user's assigned student roster. The username FK cascades on rename; the student
+-- FK cascade removes roster rows when the referenced student is deleted.
 CREATE TABLE IF NOT EXISTS user_students (
-    username   TEXT   NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+    username   TEXT   NOT NULL REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
     student_id BIGINT NOT NULL REFERENCES students(id)    ON DELETE CASCADE,
     PRIMARY KEY (username, student_id)
 );

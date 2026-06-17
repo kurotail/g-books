@@ -42,6 +42,15 @@ type SetUserBuildingRequest struct {
 	BuildingID *uint `json:"building_id"`
 }
 
+type SetUsernameRequest struct {
+	Username string `json:"username"`
+}
+
+type SetPasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
 type UsersResponse struct {
 	Users []User `json:"users"`
 }

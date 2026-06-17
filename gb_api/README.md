@@ -88,6 +88,8 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `GET /api/users` | Bearer | List all users (username, role, building, profile picture, student roster) |
 | `POST /api/users/pfp` | Bearer (self or > Student) | Set a user's profile-picture link (empty `profile_pic_url` clears it) |
 | `POST /api/users/building` | Bearer | Set the caller's own building (`building_id` `0` clears it) |
+| `POST /api/users/username` | Bearer | Rename the caller's own account (forces re-login) |
+| `POST /api/users/password` | Bearer | Change the caller's own password (must supply the current one) |
 | `POST /api/users/students` | Bearer (> Student) | Replace a user's student roster by a given list; returns a `207` per-id result |
 | `DELETE /api/users/{username}` | Bearer (> Student) | Delete a user (cannot delete yourself) |
 | `POST /api/building` | Bearer (> Student) | Create a building |
@@ -342,6 +344,53 @@ or `404` for an unknown one (with an `error`)
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
 | `404`  | The target `username` does not exist |
+
+---
+
+### `POST /api/users/username`
+
+Rename **the calling user's own** account. The new `username` must not already be taken.
+The rename cascades to everything keyed by the account (inventory, slots, student roster),
+but the caller's existing access/refresh tokens embed the **old** name and stop working — the
+user must **log in again** with the new username.
+
+**Request**
+
+```json
+{ "username": "new_name" }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `username` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `409`  | The requested `username` is already taken |
+
+---
+
+### `POST /api/users/password`
+
+Change **the calling user's own** password. The current password must be supplied and
+correct (a valid token alone is not sufficient).
+
+**Request**
+
+```json
+{ "old_password": "current-secret", "new_password": "new-secret" }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `old_password` / `new_password` |
+| `401`  | Missing/malformed `Authorization` header, an invalid/expired access token, or a wrong current password |
 
 ---
 

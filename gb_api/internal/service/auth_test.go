@@ -43,6 +43,75 @@ func loginTokenPair(t *testing.T, s *AuthSvc) map[string]string {
 	return pair
 }
 
+func TestAuthSvc_SetPassword_WrongCurrent(t *testing.T) {
+	r := newMockAuthRepo()
+	s := NewAuthSvc(r, r)
+
+	status, err := s.SetPassword(tokenFor(t, "user"), "wrongpass", "newpass")
+	if err == nil {
+		t.Fatal("expected error for wrong current password")
+	}
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", status)
+	}
+	if r.Users["user"] != "password123" {
+		t.Errorf("password should be unchanged, got %q", r.Users["user"])
+	}
+}
+
+func TestAuthSvc_SetPassword_Success(t *testing.T) {
+	r := newMockAuthRepo()
+	s := NewAuthSvc(r, r)
+
+	status, err := s.SetPassword(tokenFor(t, "user"), "password123", "newpass")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if ok, _ := r.ValidateCredentials("user", "newpass"); !ok {
+		t.Error("new password should validate")
+	}
+	if ok, _ := r.ValidateCredentials("user", "password123"); ok {
+		t.Error("old password should no longer validate")
+	}
+}
+
+func TestAuthSvc_SetUsername_Success(t *testing.T) {
+	r := newMockAuthRepo()
+	s := NewAuthSvc(r, r)
+
+	status, err := s.SetUsername(tokenFor(t, "user"), "renamed")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if _, ok := r.Roles["renamed"]; !ok {
+		t.Error("expected user reachable under new name")
+	}
+	if _, ok := r.Roles["user"]; ok {
+		t.Error("expected old name to be gone")
+	}
+}
+
+func TestAuthSvc_SetUsername_Conflict(t *testing.T) {
+	r := newMockAuthRepo()
+	r.Users["taken"] = "pw"
+	r.Roles["taken"] = model.RoleStudent
+	s := NewAuthSvc(r, r)
+
+	status, err := s.SetUsername(tokenFor(t, "user"), "taken")
+	if err == nil {
+		t.Fatal("expected error renaming to an existing username")
+	}
+	if status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", status)
+	}
+}
+
 func TestAuthSvc_QueryUser_ValidToken(t *testing.T) {
 	s := newTestAuthSvc()
 

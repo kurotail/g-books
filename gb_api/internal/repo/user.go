@@ -21,6 +21,8 @@ type UserRepo interface {
 	SetUserProfilePic(username, url string) error
 	SetUserBuilding(username string, buildingID uint) error
 	SetUserStudents(username string, studentIDs []uint) error
+	SetUserPassword(username, plainPassword string) error
+	RenameUser(oldUsername, newUsername string) error
 	DeleteUser(username string) (bool, error)
 }
 
@@ -142,6 +144,36 @@ func (_ *userRepo) SetUserStudents(username string, studentIDs []uint) error {
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// SetUserPassword hashes and stores a new password for the user.
+func (_ *userRepo) SetUserPassword(username, plainPassword string) error {
+	hash, err := hashPassword(plainPassword)
+	if err != nil {
+		return err
+	}
+	return updateUserField(`UPDATE users SET password = $2 WHERE username = $1`, username, hash)
+}
+
+// RenameUser changes a user's primary key. Child rows (inventory, slots, roster)
+// follow via ON UPDATE CASCADE. Returns ErrUserExists if newUsername is taken and
+// ErrUserNotFound if oldUsername does not exist.
+func (_ *userRepo) RenameUser(oldUsername, newUsername string) error {
+	ctx := context.Background()
+	tag, err := pool.Exec(ctx,
+		`UPDATE users SET username = $2 WHERE username = $1`, oldUsername, newUsername,
+	)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
+		return apperr.ErrUserExists
+	}
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.ErrUserNotFound
+	}
+	return nil
 }
 
 func (_ *userRepo) CreateUser(username, password string, role uint) error {

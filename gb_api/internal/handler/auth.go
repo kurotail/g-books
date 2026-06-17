@@ -138,6 +138,52 @@ func (h *AuthHandler) SetProfilePic(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
+func (h *AuthHandler) SetUsername(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.SetUsernameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if req.Username == "" {
+		http.Error(w, "缺少 username", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.SetUsername(token, req.Username)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(status)
+}
+
+func (h *AuthHandler) SetPassword(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req model.SetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
+		return
+	}
+	if req.OldPassword == "" || req.NewPassword == "" {
+		http.Error(w, "缺少 old_password 或 new_password", http.StatusBadRequest)
+		return
+	}
+	status, err := h.svc.SetPassword(token, req.OldPassword, req.NewPassword)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(status)
+}
+
 func (h *AuthHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
