@@ -103,7 +103,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/student` | Bearer (> Student) | Create a student (client-supplied `student_id`) |
 | `GET /api/student` | Bearer | List all students |
 | `GET /api/student/{id}` | Bearer | Read a student by ID |
-| `PUT /api/student/{id}` | Bearer (> Student) | Replace a student by ID |
+| `PUT /api/student/{id}` | Bearer (> Student, or a student assigned to the caller) | Replace a student by ID |
 | `DELETE /api/student/{id}` | Bearer (> Student) | Delete a student (cascades: removed from every user's roster) |
 | `POST /api/item` | Bearer | Read all of a user's items (inventory + slots) |
 | `POST /api/item/inv2slot` | Bearer (not Student in QUIZ2) | Move one item from inventory into a slot (swaps out any normal item already there) |
@@ -652,7 +652,8 @@ Read a single student by ID. Any authenticated user may call it.
 
 ### `PUT /api/student/{id}`
 
-Replace an existing student. **Teachers and Admins only.** The body is a **full replace**
+Replace an existing student. **Teachers and Admins, or a Student-role caller updating a
+student in their own [roster](#post-apiusersstudents).** The body is a **full replace**
 of `name` and `profile_pic_url` (`student_id` is taken from the path, not the body);
 `name` is required.
 
@@ -674,7 +675,7 @@ of `name` and `profile_pic_url` (`student_id` is taken from the path, not the bo
 |--------|-----------|
 | `400`  | A non-numeric `{id}`, malformed JSON body, or a missing `name` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller's role is Student or lower |
+| `403`  | Caller's role is Student or lower and the `id` is not in their roster |
 | `404`  | No student with that `id` |
 
 ---

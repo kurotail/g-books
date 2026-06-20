@@ -94,12 +94,54 @@ func TestStudentSvc_Update_TeacherSucceeds(t *testing.T) {
 	}
 }
 
+func TestStudentSvc_Update_AssignedStudentSucceeds(t *testing.T) {
+	r := &mock.StudentRepo{
+		Students: map[uint]model.Student{
+			1: {StudentID: 1, Name: "Alice", ProfilePicURL: "/images/a.jpg"},
+		},
+	}
+	users := &mock.AuthRepo{
+		Roles:    map[string]uint{"student": model.RoleStudent},
+		Students: map[string][]uint{"student": {1}},
+	}
+	s := NewStudentSvc(r, users)
+
+	data, status, err := s.Update(tokenFor(t, "student"), 1, "Alice2", "/images/a2.jpg")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+
+	var resp model.Student
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp.Name != "Alice2" || resp.ProfilePicURL != "/images/a2.jpg" {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+	if stored := r.Students[1]; stored.Name != "Alice2" {
+		t.Errorf("store not updated: %+v", stored)
+	}
+}
+
 func TestStudentSvc_Update_StudentForbidden(t *testing.T) {
-	s, _ := newStudentSvc()
+	r := &mock.StudentRepo{
+		Students: map[uint]model.Student{
+			1: {StudentID: 1, Name: "Alice"},
+			2: {StudentID: 2, Name: "Bob"},
+		},
+	}
+	users := &mock.AuthRepo{
+		Roles:    map[string]uint{"student": model.RoleStudent},
+		Students: map[string][]uint{"student": {2}}, // assigned 2, not 1
+	}
+	s := NewStudentSvc(r, users)
 
 	_, status, err := s.Update(tokenFor(t, "student"), 1, "New", "")
 	if err == nil {
-		t.Fatal("expected error for student caller")
+		t.Fatal("expected error for student caller without that student in roster")
 	}
 	if status != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", status)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	apperr "gb-api/internal/error"
 	"gb-api/internal/model"
@@ -42,10 +43,13 @@ func (s *StudentSvc) Create(accessToken string, id uint, name, profilePicURL str
 	return data, http.StatusOK, nil
 }
 
-// Update replaces every field of the student identified by id. Only teachers/admins may update.
 func (s *StudentSvc) Update(accessToken string, id uint, name, profilePicURL string) ([]byte, int, error) {
-	if status, err := requireTeacher(s.users, accessToken); err != nil {
+	caller, status, err := getCaller(s.users, accessToken)
+	if err != nil {
 		return nil, status, err
+	}
+	if caller.Role < model.RoleTeacher && !slices.Contains(caller.Students, id) {
+		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
 	}
 	if err := s.repo.UpdateStudent(id, name, profilePicURL); err != nil {
 		if errors.Is(err, apperr.ErrStudentNotFound) {
