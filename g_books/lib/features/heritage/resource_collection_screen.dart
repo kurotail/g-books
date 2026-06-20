@@ -14,7 +14,7 @@ import '../../data/component_data.dart';
 import '../../data/heritage_data.dart';
 import '../../data/models/component_model.dart';
 import '../../data/models/heritage_model.dart';
-import '../../data/models/user_model.dart';
+import '../../data/models/roster_student.dart';
 import '../../state/app_state.dart';
 import '../../state/heritage_board_controller.dart';
 import '../../services/game_state_service.dart';
@@ -180,7 +180,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         .id;
   }
 
-  List<UserModel> get _members => _appState.groupMembers;
+  List<RosterStudent> get _members => _appState.groupMembers;
 
   /// 答題組員依小組名單依序輪流（回合 1→第一位，超過人數則回繞）。
   String get _memberLetter {

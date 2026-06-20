@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
-import '../core/account_id.dart';
-import '../data/models/user_model.dart';
 import '../data/models/group_model.dart';
+import '../data/models/roster_student.dart';
 import '../data/models/staff_account.dart';
 import '../data/mock_data.dart';
 import '../data/component_data.dart' show applyHeritageConfig;
@@ -9,24 +8,34 @@ import '../services/avatar_service.dart';
 import '../services/api_client.dart';
 import '../services/heritage_config_service.dart' show StudentConfigLoader;
 
+/// 登入時自動綁定的古蹟（目前單一座；多古蹟時改由教師指派 / 學生選擇）。
+const String _kDefaultHeritageId = 'beigang_chaotian_temple';
+
+/// App 全域狀態（學生端 + 後台 session）。
+///
+/// 新模型「一組一帳號」：一個登入帳號 = 一個小組（[currentGroup]，name=username、
+/// 頭像=帳號 pfp）；組員是後端 `students` 名冊（[groupMembers]，非帳號）。
 class AppState extends ChangeNotifier {
-  UserModel? _currentUser;
-  StaffAccount? _currentStaff;
-  final List<GroupModel> _groups = List.from(mockGroups);
   final AvatarService avatarService;
 
-  /// 串接後端時用：登入 / 取小組走 [ApiClient]；mock 模式為 null。
+  /// 串接後端時用：登入 / 取資料走 [ApiClient]；mock 模式為 null。
   final ApiClient? _api;
   final bool _useBackend;
 
   /// 學生端執行設定載入器：登入後依 building_id 取後端設定並快取本機（離線回退）。
   final StudentConfigLoader? _configLoader;
 
-  // 後端模式下登入後從 `GET /api/group` 取得的小組與成員（mock 模式不使用）。
-  GroupModel? _backendGroup;
-  List<UserModel> _backendMembers = const [];
-  int _backendBuildingId = 0;
+  // ── 學生（小組）session ─────────────────────────────────────────────────────
+  bool _loggedIn = false;
+  GroupModel? _group; // 登入的小組（name=username、avatarUrl=帳號 pfp）
+  List<RosterStudent> _members = const []; // 本組名冊成員
+  bool _setupComplete = false;
+  int _buildingId = 0;
   String? _assignedHeritageId;
+  String? _password; // 改名（=改 username）後需以新名重登，故記住密碼
+
+  // ── 後台（教師 / 管理者）session ───────────────────────────────────────────
+  StaffAccount? _currentStaff;
 
   AppState({
     AvatarService? avatarService,
@@ -38,18 +47,28 @@ class AppState extends ChangeNotifier {
         _useBackend = useBackend,
         _configLoader = configLoader;
 
-  UserModel? get currentUser => _currentUser;
-  bool get isLoggedIn => _currentUser != null;
-  bool get isSetupComplete => _currentUser?.hasCompletedSetup ?? false;
+  bool get isLoggedIn => _loggedIn;
+  bool get isSetupComplete => _setupComplete;
+  GroupModel? get currentGroup => _group;
+
+  /// 目前小組的全部組員（後端名冊，依學號遞增）。供小組總攬列出卡片用。
+  List<RosterStudent> get groupMembers => _members;
 
   /// 後端模式下、登入後依指派 building 解析出的古蹟 id（heritageId = building.name）。
   /// 目前畫面仍以 mock 的 assigned 古蹟為準，此值保留供日後多古蹟接線。
   String? get assignedHeritageId => _assignedHeritageId;
 
-  // ── 後台（教師 / 管理者）session ───────────────────────────────────────────
   StaffAccount? get currentStaff => _currentStaff;
   bool get isStaffLoggedIn => _currentStaff != null;
   StaffRole? get staffRole => _currentStaff?.role;
+
+  /// 依學號取得本組某位組員（小組總攬點卡片改頭像時用）。
+  RosterStudent? memberById(int id) {
+    for (final m in _members) {
+      if (m.id == id) return m;
+    }
+    return null;
+  }
 
   /// 把登入請求的例外轉成顯示用訊息：401 用 [on401]、其餘 [ApiException] 帶狀態碼、
   /// 連線失敗給通用訊息。
@@ -63,7 +82,7 @@ class AppState extends ChangeNotifier {
   /// 以教師 / 管理者帳密登入。成功回 null、失敗回錯誤訊息。
   /// - 後端模式：打 `/api/login` 取 JWT，再 `GET /api/users` 找自己讀 role
   ///   （登入本身不回角色）：role=2→管理者（古蹟編輯器）、role=1→教師（控制台）、
-  ///   role=0（學生）拒絕。
+  ///   role=0（小組）拒絕。
   /// - mock 模式：比對本機 [mockStaff]（admin / teacher 角色）。
   Future<String?> loginAsStaff(String username, String password) async {
     final u = username.trim();
@@ -76,12 +95,7 @@ class AppState extends ChangeNotifier {
       // 讀自己的 role 決定後台。GET /api/users 任何登入者皆可呼叫。
       int role = 0;
       try {
-        final m = await _api.getJson('/api/users') as Map<String, dynamic>;
-        final users = (m['users'] as List?) ?? const [];
-        final me = users.cast<Map<String, dynamic>>().firstWhere(
-              (x) => (x['username'] as String?) == u,
-              orElse: () => const {},
-            );
+        final me = await _fetchSelf(u);
         role = (me['role'] as num?)?.toInt() ?? 0;
       } catch (_) {
         _api.clearTokens();
@@ -111,139 +125,116 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  GroupModel? get currentGroup {
-    if (_useBackend) return _backendGroup;
-    if (_currentUser == null) return null;
-    try {
-      return _groups.firstWhere((g) => g.id == _currentUser!.groupId);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 目前小組的全部組員，依座號遞增。供小組總攬列出卡片用。
-  List<UserModel> get groupMembers {
-    if (_useBackend) return _backendMembers;
-    final gid = _currentUser?.groupId;
-    if (gid == null) return const [];
-    final list = mockUsers.where((u) => u.groupId == gid).toList();
-    list.sort((a, b) {
-      if (a.isLeader != b.isLeader) return a.isLeader ? -1 : 1;
-      return (int.tryParse(a.seatNumber) ?? 0)
-          .compareTo(int.tryParse(b.seatNumber) ?? 0);
-    });
-    return list;
-  }
-
-  /// 依座號取得目前小組的某位組員（小組總攬點卡片改頭像時用）。
-  UserModel? memberBySeat(String seatNumber) {
-    if (_useBackend) {
-      try {
-        return _backendMembers.firstWhere((u) => u.seatNumber == seatNumber);
-      } catch (_) {
-        return null;
-      }
-    }
-    final gid = _currentUser?.groupId;
-    if (gid == null) return null;
-    try {
-      return mockUsers.firstWhere(
-        (u) => u.groupId == gid && u.seatNumber == seatNumber,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 學生登入：任一組員輸入姓名 + 座號即登入該組（不分組長）。
-  /// - 後端模式：以 `username=姓名_座號`、`password=座號` 打 `/api/login`，成功後
-  ///   `GET /api/group` 取小組與成員。
-  /// - mock 模式：比對本機名冊。
-  /// 成功回 null、失敗回錯誤訊息。
-  Future<String?> login(String name, String seatNumber) async {
-    final n = name.trim();
-    final s = seatNumber.trim();
-    if (n.isEmpty || s.isEmpty) return '請輸入姓名與座號';
+  /// 學生（小組）登入：輸入組帳號 + 密碼。成功回 null、失敗回錯誤訊息。
+  /// - 後端模式：`/api/login` 取 JWT → `GET /api/users` 找自己（取 building / 組徽 /
+  ///   名冊）→ 自動綁定古蹟 → 取設定 → 取名冊成員。role≠0 視為非小組帳號而拒絕。
+  /// - mock 模式：比對本機 [mockGroupAccounts] / [mockGroupPasswords]。
+  Future<String?> login(String username, String password) async {
+    final u = username.trim();
+    final p = password;
+    if (u.isEmpty || p.isEmpty) return '請輸入帳號與密碼';
 
     if (_useBackend && _api != null) {
       try {
-        await _api.login(usernameOf(n, s), s); // username=姓名_座號, password=座號
+        await _api.login(u, p);
       } catch (e) {
-        return _loginErrorMessage(e, on401: '姓名或座號錯誤');
+        return _loginErrorMessage(e, on401: '帳號或密碼錯誤');
       }
+      Map<String, dynamic> me;
       try {
-        final g = await _api.getJson('/api/group') as Map<String, dynamic>;
-        _applyBackendGroup(g, selfName: n, selfSeat: s);
-      } on ApiException catch (e) {
-        return e.statusCode == 404 ? '此帳號尚未被分配到小組' : '取得小組資料失敗（${e.statusCode}）';
+        me = await _fetchSelf(u);
       } catch (_) {
-        return '無法取得小組資料';
+        _api.clearTokens();
+        return '無法取得帳號資料，請稍後再試';
       }
-      // 依該組 building_id 取後端古蹟設定（slot/原料名稱/等級/可放對應）並套用；
-      // 失敗不擋登入（板面退回本機快取或現有資料）。
+      if (me.isEmpty) {
+        _api.clearTokens();
+        return '找不到此帳號資料';
+      }
+      if (((me['role'] as num?)?.toInt() ?? 0) != 0) {
+        _api.clearTokens();
+        return '此帳號非小組帳號，請改用教師 / 管理者登入';
+      }
+
+      _password = p;
+      _buildingId = (me['building_id'] as num?)?.toInt() ?? 0;
+      final pfp = (me['profile_pic_url'] as String?) ?? '';
+      final studentIds = ((me['students'] as List?) ?? const [])
+          .map((x) => (x as num).toInt())
+          .toList();
+      _group = GroupModel(id: 0, name: u, avatarUrl: pfp.isEmpty ? null : pfp);
+      _setupComplete = pfp.isNotEmpty; // 已設組徽＝視為已完成首次設定
+      _loggedIn = true;
+
+      // 單一古蹟：登入時自動把本帳號綁到該 building（後端要求有 building 才能採集）。
+      await _ensureBuildingBound();
+      // 依 building_id 取後端古蹟設定並套用（失敗不擋登入）。
       await _loadAssignedConfig();
-      // 取各組員 / 本人頭像（GET /api/group 只給 username，頭像在 GET /api/users）。
-      await _loadMemberAvatars();
+      // 取本組名冊成員（含頭像）。
+      await _loadMembers(studentIds);
       notifyListeners();
       return null;
     }
 
-    // mock：任一組員皆可登入（不再限組長）。
+    // mock：比對本機組帳號 + 密碼。
+    final match = mockGroupAccounts.where((g) => g.username == u).toList();
+    if (match.isEmpty || mockGroupPasswords[u] != p) {
+      return '帳號或密碼錯誤';
+    }
+    final g = match.first;
+    _group = GroupModel(id: 0, name: u, avatarUrl: g.avatarUrl);
+    _members = [
+      for (final id in g.studentIds) ?_rosterById(id),
+    ]..sort((a, b) => a.id.compareTo(b.id));
+    _setupComplete = g.avatarUrl != null;
+    _loggedIn = true;
+    notifyListeners();
+    return null;
+  }
+
+  /// `GET /api/users` 取全部使用者，挑出 username == [u] 的那筆（找不到回空 map）。
+  Future<Map<String, dynamic>> _fetchSelf(String u) async {
+    final m = await _api!.getJson('/api/users') as Map<String, dynamic>;
+    final users = (m['users'] as List?) ?? const [];
+    return users.cast<Map<String, dynamic>>().firstWhere(
+          (x) => (x['username'] as String?) == u,
+          orElse: () => <String, dynamic>{},
+        );
+  }
+
+  /// 確保本帳號已綁定到單一古蹟（[_kDefaultHeritageId]）。找出該 building 的 id，
+  /// 若自己尚未綁或綁錯則 `POST /api/users/building`（設自己的）。失敗不擋登入。
+  Future<void> _ensureBuildingBound() async {
+    final api = _api;
+    if (api == null) return;
     try {
-      final user = mockUsers.firstWhere(
-        (u) => u.name == n && u.seatNumber == s,
-      );
-      _currentUser = user;
-      notifyListeners();
-      return null;
+      final list = await api.getJson('/api/building');
+      if (list is! List) return;
+      int targetId = 0;
+      for (final b in list) {
+        final m = (b as Map).cast<String, dynamic>();
+        if ((m['name'] as String?) == _kDefaultHeritageId) {
+          targetId = (m['building_id'] as num?)?.toInt() ?? 0;
+          break;
+        }
+      }
+      if (targetId > 0 && targetId != _buildingId) {
+        await api.sendJson('POST', '/api/users/building',
+            body: {'building_id': targetId});
+        _buildingId = targetId;
+      }
     } catch (_) {
-      return '找不到此帳號，請確認姓名與座號';
+      // 綁定失敗不擋登入（採集時後端會再以 400 提示無 building）。
     }
   }
 
-  /// 套用後端 `GET /api/group` 回傳的小組：成員 username 為「姓名_座號」，解析回顯示用
-  /// 的姓名 / 座號（後端尚未存姓名/頭像，故以 username 還原；頭像之後接端口）。
-  void _applyBackendGroup(
-    Map<String, dynamic> g, {
-    required String selfName,
-    required String selfSeat,
-  }) {
-    final gid = (g['group_id'] as num?)?.toInt() ?? 0;
-    final rawName = (g['name'] as String?) ?? '';
-    _backendBuildingId = (g['building_id'] as num?)?.toInt() ?? 0;
-    // 後端未命名時預設 "Group <id>"，視為尚未命名 → 顯示空字串、走設定流程。
-    final named = rawName.isNotEmpty && !RegExp(r'^Group \d+$').hasMatch(rawName);
-
-    final members = <UserModel>[
-      for (final u in ((g['members'] as List?) ?? const []).cast<String>())
-        _userFromUsername(u, gid),
-    ]..sort((a, b) => (int.tryParse(a.seatNumber) ?? 0)
-        .compareTo(int.tryParse(b.seatNumber) ?? 0));
-
-    final groupPic = (g['profile_pic_url'] as String?) ?? '';
-    _backendMembers = members;
-    _backendGroup = GroupModel(
-      id: gid,
-      name: named ? rawName : '',
-      avatarUrl: groupPic.isEmpty ? null : groupPic,
-    );
-    _currentUser = UserModel(
-      name: selfName,
-      seatNumber: selfSeat,
-      groupId: gid,
-      isLeader: false,
-      hasCompletedSetup: named,
-    );
-  }
-
-  /// 依該組 building_id 取後端古蹟設定並套用到執行中資料（[applyHeritageConfig]）。
-  /// 線上成功會順手快取本機；離線回退讀快取。取不到（未指派 building / 首次離線）時
-  /// 不動現有資料。任何失敗都吞掉、不擋登入。
+  /// 依 building_id 取後端古蹟設定並套用到執行中資料（[applyHeritageConfig]）。
+  /// 線上成功會順手快取本機；離線回退讀快取。任何失敗都吞掉、不擋登入。
   Future<void> _loadAssignedConfig() async {
     final loader = _configLoader;
     if (loader == null) return;
     try {
-      final r = await loader.load(_backendBuildingId);
+      final r = await loader.load(_buildingId);
       if (r != null && r.heritageId.isNotEmpty) {
         _assignedHeritageId = r.heritageId;
         applyHeritageConfig(r.heritageId, r.config);
@@ -253,105 +244,122 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 取小組成員（含本人）的頭像。`GET /api/group` 只給 username，頭像存在 `GET /api/users`
-  /// 的 `profile_pic_url`，故另取一次以 username 對應填回。失敗不擋登入。
-  Future<void> _loadMemberAvatars() async {
+  /// 取本組名冊成員：`GET /api/student` 拿全班名冊，依本組 [ids] 挑出並保留頭像。
+  /// 失敗不擋登入（組員清單留空）。
+  Future<void> _loadMembers(List<int> ids) async {
     final api = _api;
-    if (api == null) return;
+    if (api == null) {
+      _members = const [];
+      return;
+    }
     try {
-      final m = await api.getJson('/api/users') as Map<String, dynamic>;
-      final users = (m['users'] as List?) ?? const [];
-      final pics = <String, String>{};
-      for (final u in users.cast<Map<String, dynamic>>()) {
-        final un = (u['username'] as String?) ?? '';
-        final p = (u['profile_pic_url'] as String?) ?? '';
-        if (un.isNotEmpty && p.isNotEmpty) pics[un] = p;
+      final list = await api.getJson('/api/student');
+      final all = <int, RosterStudent>{};
+      if (list is List) {
+        for (final s in list) {
+          final m = (s as Map).cast<String, dynamic>();
+          final id = (m['student_id'] as num?)?.toInt() ?? 0;
+          final pic = (m['profile_pic_url'] as String?) ?? '';
+          all[id] = RosterStudent(
+            id: id,
+            name: (m['name'] as String?) ?? '',
+            avatarUrl: pic.isEmpty ? null : pic,
+          );
+        }
       }
-      for (final mem in _backendMembers) {
-        final p = pics[usernameOf(mem.name, mem.seatNumber)];
-        if (p != null) mem.personalAvatarUrl = p;
-      }
-      final cu = _currentUser;
-      if (cu != null) {
-        final p = pics[usernameOf(cu.name, cu.seatNumber)];
-        if (p != null) cu.personalAvatarUrl = p;
-      }
+      _members = [
+        for (final id in ids) ?all[id],
+      ]..sort((a, b) => a.id.compareTo(b.id));
     } catch (_) {
-      // 頭像載入失敗不擋登入。
+      _members = const [];
     }
   }
 
-  UserModel _userFromUsername(String username, int gid) {
-    final (:name, :seat) = splitUsername(username);
-    return UserModel(
-      name: name,
-      seatNumber: seat,
-      groupId: gid,
-      isLeader: false,
-      hasCompletedSetup: true,
-    );
+  RosterStudent? _rosterById(int id) {
+    for (final s in mockRoster) {
+      if (s.id == id) return s;
+    }
+    return null;
   }
 
-  /// 設定某位組員（含本人）的個人頭像，於小組總攬編輯後呼叫。後端模式同步
-  /// `POST /api/users/pfp`。注意：後端僅允許「本人或教師」改頭像，學生在共用平板上改
-  /// 「其他組員」會被後端擋（403）→ 僅本機預覽、不會持久化（已知限制）。
-  void setMemberAvatarUrl(String seatNumber, String? url) {
-    final member = memberBySeat(seatNumber);
-    if (member == null) return;
-    member.personalAvatarUrl = url;
+  /// 設定某位組員的個人頭像（小組總攬編輯後呼叫）。後端模式同步 `PUT /api/student/{id}`
+  /// （整筆覆蓋，需帶 name）。注意：後端目前僅教師 / 管理者可改名冊，學生組帳號會被擋
+  /// （403）→ 僅本機預覽、不持久化（待後端放寬「同組可改組內頭像」）。
+  void setMemberAvatarUrl(int studentId, String? url) {
+    final i = _members.indexWhere((m) => m.id == studentId);
+    if (i < 0) return;
+    final old = _members[i];
+    _members = List<RosterStudent>.from(_members)
+      ..[i] = RosterStudent(id: old.id, name: old.name, avatarUrl: url);
     if (_useBackend && _api != null) {
       _api
-          .sendJson('POST', '/api/users/pfp', body: {
-            'username': usernameOf(member.name, member.seatNumber),
+          .sendJson('PUT', '/api/student/$studentId', body: {
+            'name': old.name,
             'profile_pic_url': url ?? '', // 空字串＝清除
           })
-          .catchError((_) => null); // 非本人遭 403 等失敗：保留本機預覽
+          .catchError((_) => null); // 非教師遭 403 等失敗：保留本機預覽
     }
     notifyListeners();
   }
 
+  /// 設定小組頭像（組徽）。後端模式同步 `POST /api/users/pfp`（設自己，省略 username）。
   void setGroupAvatarUrl(String? url) {
-    currentGroup?.avatarUrl = url;
-    // 後端模式同步小組頭像 `POST /api/group/pfp`（組員即可設自己這組）。
+    _group?.avatarUrl = url;
     if (_useBackend && _api != null) {
-      final gid = _backendGroup?.id;
-      if (gid != null && gid > 0) {
-        _api
-            .sendJson('POST', '/api/group/pfp',
-                body: {'group_id': gid, 'profile_pic_url': url ?? ''})
-            .catchError((_) => null);
-      }
+      _api
+          .sendJson('POST', '/api/users/pfp',
+              body: {'profile_pic_url': url ?? ''})
+          .catchError((_) => null);
     }
     notifyListeners();
   }
 
-  void setGroupName(String name) {
-    currentGroup?.name = name;
-    // 後端有 `POST /api/group/name`，順手同步（失敗不擋本機）。
+  /// 小組命名 = 改自己的登入帳號 username（`POST /api/users/username`）。成功回 null、
+  /// 失敗回錯誤訊息。後端改名後舊 token 立即失效，故成功後以「新名 + 記住的密碼」透明
+  /// 重新登入一次（使用者無感）。
+  Future<String?> setGroupName(String name) async {
+    final newName = name.trim();
+    if (newName.isEmpty) return '請輸入小組名稱';
+    if (newName == _group?.name) return null; // 沒變
+
     if (_useBackend && _api != null) {
-      final gid = _backendGroup?.id;
-      if (gid != null) {
-        _api
-            .sendJson('POST', '/api/group/name',
-                body: {'group_id': gid, 'name': name})
-            .catchError((_) => null);
+      try {
+        await _api.sendJson('POST', '/api/users/username',
+            body: {'username': newName});
+      } on ApiException catch (e) {
+        return e.statusCode == 409 ? '此組名已被使用，請換一個' : '命名失敗（${e.statusCode}）';
+      } catch (_) {
+        return '命名失敗，請稍後再試';
+      }
+      // 改名後舊 token 失效 → 用新名 + 記住的密碼重登。
+      final pw = _password;
+      if (pw != null) {
+        try {
+          await _api.login(newName, pw);
+        } catch (_) {
+          return '已改名，請重新登入';
+        }
       }
     }
+    _group?.name = newName;
     notifyListeners();
+    return null;
   }
 
   void completeSetup() {
-    _currentUser?.hasCompletedSetup = true;
+    _setupComplete = true;
     notifyListeners();
   }
 
   void logout() {
-    _currentUser = null;
-    _currentStaff = null;
-    _backendGroup = null;
-    _backendMembers = const [];
-    _backendBuildingId = 0;
+    _loggedIn = false;
+    _group = null;
+    _members = const [];
+    _setupComplete = false;
+    _buildingId = 0;
     _assignedHeritageId = null;
+    _password = null;
+    _currentStaff = null;
     _api?.clearTokens();
     notifyListeners();
   }

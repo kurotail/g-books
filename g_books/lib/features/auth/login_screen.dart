@@ -15,25 +15,25 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _nameCtrl = TextEditingController();
-  final _seatCtrl = TextEditingController();
+  final _userCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
   String? _error;
   bool _loggingIn = false;
   DateTime? _lastBackPress;
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
-    _seatCtrl.dispose();
+    _userCtrl.dispose();
+    _passCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _login() async {
     if (_loggingIn) return;
-    final name = _nameCtrl.text.trim();
-    final seat = _seatCtrl.text.trim();
-    if (name.isEmpty || seat.isEmpty) {
-      setState(() => _error = '請輸入姓名與座號');
+    final user = _userCtrl.text.trim();
+    final pass = _passCtrl.text;
+    if (user.isEmpty || pass.isEmpty) {
+      setState(() => _error = '請輸入帳號與密碼');
       return;
     }
     final appState = context.read<AppState>();
@@ -41,7 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _loggingIn = true;
       _error = null;
     });
-    final err = await appState.login(name, seat);
+    final err = await appState.login(user, pass);
     if (!mounted) return;
     setState(() {
       _loggingIn = false;
@@ -127,13 +127,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _label('姓名'),
+                          _label('帳號'),
                           const SizedBox(height: 8),
-                          _textField(_nameCtrl, '請輸入姓名'),
+                          _textField(_userCtrl, '請輸入小組帳號'),
                           const SizedBox(height: 20),
-                          _label('座號'),
+                          _label('密碼'),
                           const SizedBox(height: 8),
-                          _textField(_seatCtrl, '請輸入座號', isNumber: true),
+                          _textField(_passCtrl, '請輸入密碼', obscure: true),
                           if (_error != null) ...[
                             const SizedBox(height: 10),
                             Text(
@@ -172,7 +172,7 @@ class _LoginScreenState extends State<LoginScreen> {
         Icon(Icons.info_outline_rounded, size: 20, color: AppColors.labelText),
         SizedBox(width: 10),
         Text(
-          '請輸入姓名與座號登入',
+          '請輸入小組帳號與密碼登入',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -195,11 +195,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _textField(
     TextEditingController ctrl,
     String hint, {
-    bool isNumber = false,
+    bool obscure = false,
   }) {
     return TextField(
       controller: ctrl,
-      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      obscureText: obscure,
+      keyboardType: TextInputType.text,
       style: const TextStyle(color: Colors.white, fontSize: 16),
       onChanged: (_) => setState(() => _error = null),
       decoration: InputDecoration(

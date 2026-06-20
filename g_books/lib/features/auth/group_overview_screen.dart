@@ -5,7 +5,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/widgets/parchment_scaffold.dart';
 import '../../core/widgets/step_indicator.dart';
 import '../../core/widgets/avatar_image.dart';
-import '../../data/models/user_model.dart';
+import '../../data/models/roster_student.dart';
 import '../../state/app_state.dart';
 import 'upload_avatar_screen.dart';
 
@@ -111,7 +111,7 @@ class GroupOverviewScreen extends StatelessWidget {
                         height: 212,
                         child: _MemberStrip(
                           members: members,
-                          onEdit: (seat) => _editMember(context, seat),
+                          onEdit: (id) => _editMember(context, id),
                         ),
                       ),
                     ),
@@ -143,17 +143,17 @@ class GroupOverviewScreen extends StatelessWidget {
   /// 進入上傳畫面設定某組員頭像。刻意用「根 Navigator 推出」而非 go_router：
   /// 上傳頁是回傳值的子畫面，放在 Navigator 上，go_router 的 refreshListenable
   /// （setMemberAvatarUrl 會觸發）重整時不會把它還原，避免回到總覽後又被推回上傳頁。
-  Future<void> _editMember(BuildContext context, String seat) async {
+  Future<void> _editMember(BuildContext context, int id) async {
     final appState = context.read<AppState>();
     final url = await Navigator.of(context).push<String?>(
       MaterialPageRoute(
         builder: (_) => UploadAvatarScreen(
           target: AvatarTarget.member,
-          memberSeat: seat,
+          memberId: id,
         ),
       ),
     );
-    if (url != null) appState.setMemberAvatarUrl(seat, url);
+    if (url != null) appState.setMemberAvatarUrl(id, url);
   }
 
   Widget _bottomButton(BuildContext context, bool editMode) {
@@ -227,8 +227,8 @@ class _GroupHeader extends StatelessWidget {
 /// 卡片一律靠左排列（minWidth = 視窗寬，故人少時不再置中而是貼左）；人數多到超出
 /// 可視寬度時可水平滑動，並在「還能往該方向滑」時於左／右邊緣顯示箭頭提示。
 class _MemberStrip extends StatefulWidget {
-  final List<UserModel> members;
-  final void Function(String seat) onEdit;
+  final List<RosterStudent> members;
+  final void Function(int id) onEdit;
 
   const _MemberStrip({required this.members, required this.onEdit});
 
@@ -295,7 +295,7 @@ class _MemberStripState extends State<_MemberStrip> {
                     if (i > 0) const SizedBox(width: _gap),
                     _MemberCard(
                       member: members[i],
-                      onEdit: () => widget.onEdit(members[i].seatNumber),
+                      onEdit: () => widget.onEdit(members[i].id),
                     ),
                   ],
                 ],
@@ -365,7 +365,7 @@ class _ScrollArrow extends StatelessWidget {
 
 // ── 組員卡片 ─────────────────────────────────────────────────────────────────
 class _MemberCard extends StatelessWidget {
-  final UserModel member;
+  final RosterStudent member;
   final VoidCallback onEdit;
 
   const _MemberCard({required this.member, required this.onEdit});
@@ -383,7 +383,7 @@ class _MemberCard extends StatelessWidget {
             onTap: onEdit,
             child: Stack(
               children: [
-                _AvatarCircle(url: member.personalAvatarUrl, size: _w),
+                _AvatarCircle(url: member.avatarUrl, size: _w),
                 // 右下角編輯 icon（點卡片可改該組員頭像）
                 const Positioned(right: 6, bottom: 6, child: _EditBadge()),
               ],
@@ -399,7 +399,7 @@ class _MemberCard extends StatelessWidget {
               border: Border.all(color: const Color(0x33000000)),
             ),
             child: Text(
-              '${member.seatNumber}  ${member.name}',
+              '${member.id}  ${member.name}',
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,

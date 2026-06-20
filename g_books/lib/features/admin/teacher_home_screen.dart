@@ -5,15 +5,20 @@ import 'package:provider/provider.dart';
 import '../../core/format.dart';
 import '../../core/widgets/avatar_image.dart';
 import '../../data/heritage_data.dart';
+import '../../data/models/group_account.dart';
 import '../../data/models/heritage_model.dart';
+import '../../data/models/roster_student.dart';
 import '../../services/game_state_service.dart';
 import '../../services/teacher_service.dart';
 import '../../state/app_state.dart';
 
-/// 教師控制台：遊戲階段（含時長 / 時間到自動回平時）/ 學生帳號 / 小組設定 /
-/// 上課古蹟 / 題目匯入。操作走 [TeacherService]，目前階段讀 [GameStateService]。
+/// 教師控制台。新模型「一組一帳號 + 班級名冊」：
+/// - 班級名冊：管理 students 表（學號 / 姓名 / 頭像），非登入帳號。
+/// - 小組帳號：建立各組登入帳號（username 即組名）、指派名冊學生進組。
+/// - 上課古蹟：單一古蹟，學生登入時自動綁定，本頁只負責開始 / 結束課程與重置。
+/// 操作走 [TeacherService]，目前階段讀 [GameStateService]。
 ///
-/// 「開始上課」後會鎖定結構性設定（學生分組、新增帳號），避免上課中誤改。
+/// 「開始上課」後會鎖定結構性設定（名冊 / 帳號 / 分組），避免上課中誤改。
 class TeacherHomeScreen extends StatefulWidget {
   const TeacherHomeScreen({super.key});
 
@@ -31,7 +36,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   late final GameStateService _gameSvc;
 
   int _tab = 0;
-  // 兩階段：課前準備（學生 / 分組 / 上課古蹟）→ 開始課程 → 課程控制（遊戲階段）。
+  // 兩階段：課前準備（名冊 / 帳號 / 上課古蹟）→ 開始課程 → 課程控制（遊戲階段）。
   // 課程進行中即視為鎖定結構設定（_locked），且只會停在課程控制頁，回不到準備頁。
   bool _courseStarted = false;
   bool get _locked => _courseStarted;
@@ -44,23 +49,19 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   Timer? _autoTimer; // 時間到自動回平時
   Timer? _ticker; // 每秒刷新倒數顯示
 
-  // 學生
-  List<TeacherStudent> _students = const [];
-  bool _loadingStudents = false;
-
-  // 小組設定
-  int _detailGroup = 1; // 第一區塊目前檢視的組別
-  final Set<int> _extraGroups = {}; // 手動新增、暫無成員的空組
-  final Map<int, String> _groupNames = {}; // 本機記住的組名（後端無「列出所有組」端點）
+  // 班級名冊 + 小組帳號
+  List<RosterStudent> _roster = const [];
+  List<GroupAccount> _groups = const [];
+  bool _loading = false;
 
   String _selectedHeritage = 'beigang_chaotian_temple';
-  bool _applyingHeritage = false;
   bool _resetting = false;
 
-  final _nameCtrl = TextEditingController();
-  final _seatCtrl = TextEditingController();
+  final _idCtrl = TextEditingController(); // 學號
+  final _nameCtrl = TextEditingController(); // 姓名
   final _csvCtrl = TextEditingController();
-  final _groupNameCtrl = TextEditingController();
+  final _groupUserCtrl = TextEditingController(); // 組帳號（組名）
+  final _groupPassCtrl = TextEditingController(); // 組帳號密碼
   final _searchCtrl = TextEditingController();
   String _search = '';
 
@@ -70,17 +71,18 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     _teacher = context.read<TeacherService>();
     _gameSvc = context.read<GameStateService>();
     _refreshPhase();
-    _refreshStudents();
+    _refreshData();
   }
 
   @override
   void dispose() {
     _autoTimer?.cancel();
     _ticker?.cancel();
+    _idCtrl.dispose();
     _nameCtrl.dispose();
-    _seatCtrl.dispose();
     _csvCtrl.dispose();
-    _groupNameCtrl.dispose();
+    _groupUserCtrl.dispose();
+    _groupPassCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -285,33 +287,48 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     return r.isNegative ? Duration.zero : r;
   }
 
-  // ── 學生 / 小組 ───────────────────────────────────────────────────────────────
-  Future<void> _refreshStudents() async {
-    setState(() => _loadingStudents = true);
+  // ── 名冊 / 小組 ───────────────────────────────────────────────────────────────
+  Future<void> _refreshData() async {
+    setState(() => _loading = true);
     try {
-      final list = await _teacher.listStudents();
-      if (mounted) setState(() => _students = list);
+      final roster = await _teacher.listRoster();
+      final groups = await _teacher.listGroups();
+      if (mounted) {
+        setState(() {
+          _roster = roster;
+          _groups = groups;
+        });
+      }
     } catch (e) {
-      _toast('讀取學生名單失敗：${_msg(e)}');
+      _toast('讀取資料失敗：${_msg(e)}');
     } finally {
-      if (mounted) setState(() => _loadingStudents = false);
+      if (mounted) setState(() => _loading = false);
     }
+  }
+
+  // 名冊學生目前所屬的組（username；未分組回空字串）。
+  String _groupOfStudent(int id) {
+    for (final g in _groups) {
+      if (g.studentIds.contains(id)) return g.username;
+    }
+    return '';
   }
 
   Future<void> _addStudent() async {
     if (_locked) return;
+    final idText = _idCtrl.text.trim();
     final name = _nameCtrl.text.trim();
-    final seat = _seatCtrl.text.trim();
-    if (name.isEmpty || seat.isEmpty) {
-      _toast('請輸入姓名與座號');
+    final id = int.tryParse(idText);
+    if (id == null || id <= 0 || name.isEmpty) {
+      _toast('請輸入有效學號與姓名');
       return;
     }
     try {
-      await _teacher.registerStudent(name: name, seat: seat);
+      await _teacher.createStudent(id: id, name: name);
+      _idCtrl.clear();
       _nameCtrl.clear();
-      _seatCtrl.clear();
-      await _refreshStudents();
-      _toast('已新增 ${name}_$seat');
+      await _refreshData();
+      _toast('已新增 $name（學號 $id）');
     } catch (e) {
       _toast('新增失敗：${_msg(e)}');
     }
@@ -335,124 +352,128 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
         skipped++;
         continue;
       }
-      if (parts.any((p) => p.contains('座號') || p.contains('姓名'))) continue;
-      final firstIsSeat = RegExp(r'^\d+$').hasMatch(parts[0]);
-      final seat = firstIsSeat ? parts[0] : parts[1];
-      final name = firstIsSeat ? parts[1] : parts[0];
-      if (name.isEmpty || seat.isEmpty) {
+      if (parts.any((p) => p.contains('學號') || p.contains('姓名'))) continue;
+      final firstIsId = RegExp(r'^\d+$').hasMatch(parts[0]);
+      final idText = firstIsId ? parts[0] : parts[1];
+      final name = firstIsId ? parts[1] : parts[0];
+      final id = int.tryParse(idText);
+      if (id == null || id <= 0 || name.isEmpty) {
         skipped++;
         continue;
       }
       try {
-        await _teacher.registerStudent(name: name, seat: seat);
+        await _teacher.createStudent(id: id, name: name);
         created++;
       } catch (_) {
         skipped++;
       }
     }
     _csvCtrl.clear();
-    await _refreshStudents();
+    await _refreshData();
     _toast('匯入完成：新增 $created 筆，略過 $skipped 筆');
   }
 
-  Future<void> _deleteStudent(TeacherStudent s) async {
-    final ok =
-        await _confirm('刪除學生', '確定刪除「${s.name}（座號 ${s.seat}）」的帳號？', '刪除');
+  Future<void> _deleteStudent(RosterStudent s) async {
+    final ok = await _confirm(
+        '刪除學生', '確定從名冊刪除「${s.name}（學號 ${s.id}）」？會一併從各組移除。', '刪除');
     if (ok != true) return;
     try {
-      await _teacher.deleteStudent(username: s.username);
-      await _refreshStudents();
+      await _teacher.deleteStudent(id: s.id);
+      await _refreshData();
       _toast('已刪除 ${s.name}');
     } catch (e) {
       _toast('刪除失敗：${_msg(e)}');
     }
   }
 
-  /// 重置進度：刪除全班所有學生帳號（前端逐一呼叫刪除；後端暫不另設 reset 端點）。
-  /// 古蹟設定與題庫保留。之後若有「儲存古蹟進度」再加後端 reset。
-  Future<void> _resetProgress() async {
-    final n = _students.length;
-    if (n == 0) {
-      _toast('目前沒有學生帳號');
+  Future<void> _addGroup() async {
+    if (_locked) return;
+    final user = _groupUserCtrl.text.trim();
+    final pass = _groupPassCtrl.text.trim();
+    if (user.isEmpty || pass.isEmpty) {
+      _toast('請輸入組名（帳號）與密碼');
       return;
     }
-    final ok = await _confirm(
-        '重置進度', '將刪除全部 $n 位學生帳號（含分組）。古蹟設定與題庫會保留。確定重置？', '重置');
+    try {
+      await _teacher.createGroup(username: user, password: pass);
+      _groupUserCtrl.clear();
+      _groupPassCtrl.clear();
+      await _refreshData();
+      _toast('已建立小組帳號「$user」');
+    } catch (e) {
+      _toast('建立失敗：${_msg(e)}');
+    }
+  }
+
+  Future<void> _deleteGroup(GroupAccount g) async {
+    if (_locked) return;
+    final ok =
+        await _confirm('刪除小組帳號', '確定刪除小組帳號「${g.username}」？名冊學生不受影響。', '刪除');
+    if (ok != true) return;
+    try {
+      await _teacher.deleteGroup(username: g.username);
+      await _refreshData();
+      _toast('已刪除「${g.username}」');
+    } catch (e) {
+      _toast('刪除失敗：${_msg(e)}');
+    }
+  }
+
+  /// 把學生指派到 [target] 組（target 空字串 = 未分組）。為維持「一人一組」，
+  /// 會把該學生從其他組移除、加入目標組（只對有變動的組打 API）。
+  Future<void> _assignStudent(RosterStudent s, String target) async {
+    if (_locked) return;
+    try {
+      for (final g in List<GroupAccount>.from(_groups)) {
+        final has = g.studentIds.contains(s.id);
+        final want = g.username == target;
+        if (has == want) continue;
+        final ids = List<int>.from(g.studentIds);
+        if (want) {
+          ids.add(s.id);
+        } else {
+          ids.remove(s.id);
+        }
+        ids.sort();
+        await _teacher.setGroupStudents(username: g.username, studentIds: ids);
+      }
+      await _refreshData();
+    } catch (e) {
+      _toast('指派失敗：${_msg(e)}');
+    }
+  }
+
+  /// 重置（全清）：刪除全部小組帳號與全部名冊學生。古蹟設定與題庫保留。
+  Future<void> _resetProgress() async {
+    final gN = _groups.length, sN = _roster.length;
+    if (gN == 0 && sN == 0) {
+      _toast('目前沒有資料');
+      return;
+    }
+    final ok = await _confirm('重置（全清）',
+        '將刪除全部 $gN 個小組帳號與 $sN 位名冊學生。古蹟設定與題庫會保留。確定？', '全部刪除');
     if (ok != true) return;
     setState(() => _resetting = true);
-    var done = 0;
     try {
-      for (final s in List<TeacherStudent>.from(_students)) {
+      for (final g in List<GroupAccount>.from(_groups)) {
         try {
-          await _teacher.deleteStudent(username: s.username);
-          done++;
+          await _teacher.deleteGroup(username: g.username);
         } catch (_) {}
       }
-      _extraGroups.clear();
-      _groupNames.clear();
-      _detailGroup = 1;
-      await _refreshStudents();
-      _toast('已重置：刪除 $done 位學生帳號');
+      for (final s in List<RosterStudent>.from(_roster)) {
+        try {
+          await _teacher.deleteStudent(id: s.id);
+        } catch (_) {}
+      }
+      await _refreshData();
+      _toast('已重置（全清）');
     } finally {
       if (mounted) setState(() => _resetting = false);
     }
   }
 
-  Future<void> _assignGroup(TeacherStudent s, int groupId) async {
-    if (_locked) return;
-    try {
-      await _teacher.assignGroup(username: s.username, groupId: groupId);
-      await _refreshStudents();
-    } catch (e) {
-      _toast('分組失敗：${_msg(e)}');
-    }
-  }
-
-  Future<void> _renameGroup() async {
-    final name = _groupNameCtrl.text.trim();
-    if (name.isEmpty) {
-      _toast('請輸入小組名稱');
-      return;
-    }
-    try {
-      await _teacher.renameGroup(groupId: _detailGroup, name: name);
-      setState(() => _groupNames[_detailGroup] = name);
-      _toast('已將第 $_detailGroup 組命名為「$name」');
-    } catch (e) {
-      _toast('命名失敗：${_msg(e)}');
-    }
-  }
-
-  List<int> get _groupIds {
-    final s = <int>{
-      for (final st in _students)
-        if (st.groupId > 0) st.groupId,
-      ..._extraGroups,
-    };
-    if (s.isEmpty) s.add(1);
-    return s.toList()..sort();
-  }
-
-  int get _maxGroupOption {
-    final ids = _groupIds;
-    return ids.isEmpty ? 6 : (ids.last > 6 ? ids.last : 6);
-  }
-
-  void _selectDetailGroup(int id) {
-    setState(() {
-      _detailGroup = id;
-      _groupNameCtrl.text = _groupNames[id] ?? '';
-    });
-  }
-
-  void _addGroup() {
-    if (_locked) return;
-    final next = _groupIds.last + 1;
-    setState(() => _extraGroups.add(next));
-    _selectDetailGroup(next);
-  }
-
-  /// 進入課程控制（由「上課古蹟」套用後呼叫）。鎖定準備頁、切到遊戲階段。
+  /// 進入課程控制。鎖定準備頁、切到遊戲階段。學生端登入時自動綁定古蹟，故此處
+  /// 不需逐組指派 building。
   void _startCourse() {
     setState(() {
       _courseStarted = true;
@@ -547,8 +568,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     final items = _courseStarted
         ? const [(Icons.flag_rounded, '遊戲階段')]
         : const [
-            (Icons.person_add_alt_1_rounded, '學生帳號'),
-            (Icons.groups_rounded, '小組設定'),
+            (Icons.badge_rounded, '班級名冊'),
+            (Icons.groups_rounded, '小組帳號'),
             (Icons.account_balance_rounded, '上課古蹟'),
             (Icons.quiz_rounded, '題目匯入'),
           ];
@@ -625,7 +646,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     );
   }
 
-  // 課程控制頁的側欄頁尾：結束課程（重置進度待後端 reset 端點定義後補上）。
+  // 課程控制頁的側欄頁尾：結束課程。
   Widget _runningFooter() {
     return SizedBox(
       height: 38,
@@ -669,17 +690,17 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   }
 
   Widget _content() {
-    // 課程進行中只剩遊戲階段控制；課前準備才有學生 / 分組 / 古蹟 / 題目。
+    // 課程進行中只剩遊戲階段控制；課前準備才有名冊 / 帳號 / 古蹟 / 題目。
     if (_courseStarted) return _phaseTab();
     return switch (_tab) {
-      0 => _accountsTab(),
+      0 => _rosterTab(),
       1 => _groupsTab(),
       2 => _heritageTab(),
       _ => _questionsTab(),
     };
   }
 
-  // ── 0：遊戲階段 ───────────────────────────────────────────────────────────────
+  // ── 遊戲階段 ───────────────────────────────────────────────────────────────
   Widget _phaseTab() {
     final running = _phaseEndsAt != null;
     return ListView(
@@ -837,27 +858,27 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     );
   }
 
-  // ── 1：學生帳號 ───────────────────────────────────────────────────────────────
-  Widget _accountsTab() {
+  // ── 班級名冊 ─────────────────────────────────────────────────────────────────
+  Widget _rosterTab() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _header('學生帳號', '帳號＝姓名_座號、密碼＝座號',
-            trailing: _refreshBtn(_refreshStudents)),
+        _header('班級名冊', '管理學生（學號 / 姓名 / 頭像）；學生由小組帳號登入，名冊本身非帳號',
+            trailing: _refreshBtn(_refreshData)),
         const SizedBox(height: 16),
         Expanded(
           child: ListView(
             children: [
-              if (_locked) _lockBanner('上課中：已停止新增帳號'),
+              if (_locked) _lockBanner('上課中：已停止編輯名冊'),
               if (_locked) const SizedBox(height: 16),
               _card(
                 '手動新增',
                 Row(
                   children: [
-                    Expanded(flex: 3, child: _input(_nameCtrl, '姓名')),
-                    const SizedBox(width: 12),
                     Expanded(
-                        flex: 2, child: _input(_seatCtrl, '座號', number: true)),
+                        flex: 2, child: _input(_idCtrl, '學號', number: true)),
+                    const SizedBox(width: 12),
+                    Expanded(flex: 3, child: _input(_nameCtrl, '姓名')),
                     const SizedBox(width: 12),
                     _primaryBtn('新增', _addStudent, enabled: !_locked),
                   ],
@@ -869,7 +890,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('每行一位：座號,姓名（例：01,王小明）',
+                    const Text('每行一位：學號,姓名（例：01,王小明）',
                         style: TextStyle(color: Colors.white38, fontSize: 13)),
                     const SizedBox(height: 8),
                     _input(_csvCtrl, '01,王小明\n02,李小花',
@@ -883,7 +904,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              _card('學生名單（${_students.length}）', _studentListView(editable: false)),
+              _card('學生名冊（${_roster.length}）', _rosterListView()),
             ],
           ),
         ),
@@ -891,273 +912,23 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     );
   }
 
-  // ── 2：小組設定（兩區）──────────────────────────────────────────────────────────
-  Widget _groupsTab() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _header('小組設定', '上區：依組別檢視 / 勾選成員；下區：所有學生設定組別',
-            trailing: _refreshBtn(_refreshStudents)),
-        const SizedBox(height: 16),
-        Expanded(
-          child: ListView(
-            children: [
-              if (_locked) _lockBanner('上課中：已鎖定分組變更'),
-              if (_locked) const SizedBox(height: 16),
-              _groupDetailRegion(),
-              const SizedBox(height: 16),
-              _allStudentsRegion(),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // 第一區塊：選組別 → 看組名 / 頭像 / 勾選成員
-  Widget _groupDetailRegion() {
-    final ids = _groupIds;
-    final value = ids.contains(_detailGroup) ? _detailGroup : ids.first;
-    final members = _students.where((s) => s.groupId == value).toList();
-    return _card(
-      '小組檢視',
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text('組別', style: TextStyle(color: Colors.white70)),
-              const SizedBox(width: 12),
-              _intDropdown(
-                value: value,
-                items: ids,
-                onChanged: (v) => _selectDetailGroup(v),
-                label: (g) => _groupNames[g]?.isNotEmpty == true
-                    ? '第 $g 組 · ${_groupNames[g]}'
-                    : '第 $g 組',
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: _locked ? null : _addGroup,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('新增小組'),
-                style: OutlinedButton.styleFrom(
-                    foregroundColor: _gold,
-                    side: BorderSide(
-                        color: _locked ? Colors.white24 : _gold)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // 小組頭像（後端端口開發中，先顯示預設）
-              Column(
-                children: [
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _field,
-                      border: Border.all(color: Colors.white24),
-                    ),
-                    child: const Icon(Icons.groups_rounded,
-                        color: Colors.white38, size: 30),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text('組徽（開發中）',
-                      style: TextStyle(color: Colors.white24, fontSize: 11)),
-                ],
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('小組名稱',
-                        style: TextStyle(color: Colors.white54, fontSize: 13)),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Expanded(child: _input(_groupNameCtrl, '第 $value 組')),
-                        const SizedBox(width: 10),
-                        _primaryBtn('儲存', _renameGroup),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const Divider(color: Colors.white12, height: 28),
-          Text('勾選加入本組的學生（${members.length} 人）',
-              style: const TextStyle(color: Colors.white70, fontSize: 14)),
-          const SizedBox(height: 8),
-          if (_loadingStudents)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator(color: _gold)),
-            )
-          else if (_students.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 14),
-              child: Text('尚無學生帳號',
-                  style: TextStyle(color: Colors.white38)),
-            )
-          else
-            ..._students.map((s) {
-              final inGroup = s.groupId == value;
-              return _memberCheckRow(s, value, inGroup);
-            }),
-        ],
-      ),
-    );
-  }
-
-  Widget _memberCheckRow(TeacherStudent s, int group, bool inGroup) {
-    return InkWell(
-      onTap: _locked
-          ? null
-          : () => _assignGroup(s, inGroup ? 0 : group),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
-        child: Row(
-          children: [
-            Checkbox(
-              value: inGroup,
-              activeColor: _gold,
-              checkColor: const Color(0xFF2A1A0A),
-              onChanged: _locked
-                  ? null
-                  : (v) => _assignGroup(s, (v ?? false) ? group : 0),
-            ),
-            _avatar(s.avatarUrl),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(s.name,
-                  style: const TextStyle(color: Colors.white, fontSize: 15)),
-            ),
-            Text('座號 ${s.seat}',
-                style: const TextStyle(color: Colors.white38, fontSize: 13)),
-            const SizedBox(width: 10),
-            Text(
-                s.groupId == 0
-                    ? '未分組'
-                    : (s.groupId == group ? '本組' : '第 ${s.groupId} 組'),
-                style: TextStyle(
-                    color: s.groupId == group ? _gold : Colors.white38,
-                    fontSize: 12)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // 第二區塊：所有學生 + 搜尋 + 設定組別
-  Widget _allStudentsRegion() {
-    final q = _search.trim();
-    final filtered = q.isEmpty
-        ? _students
-        : _students
-            .where((s) => s.name.contains(q) || s.seat.contains(q))
-            .toList();
-    return _card(
-      '所有學生（設定組別）',
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            controller: _searchCtrl,
-            style: const TextStyle(color: Colors.white, fontSize: 15),
-            onChanged: (v) => setState(() => _search = v),
-            decoration: InputDecoration(
-              hintText: '搜尋姓名或座號…',
-              hintStyle: const TextStyle(color: Colors.white30, fontSize: 14),
-              prefixIcon:
-                  const Icon(Icons.search_rounded, color: Colors.white38),
-              suffixIcon: q.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close_rounded,
-                          color: Colors.white38),
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        setState(() => _search = '');
-                      },
-                    ),
-              filled: true,
-              fillColor: _field,
-              contentPadding: const EdgeInsets.symmetric(vertical: 4),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (_loadingStudents)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator(color: _gold)),
-            )
-          else if (filtered.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              child: Text(q.isEmpty ? '尚無學生帳號' : '查無符合「$q」的學生',
-                  style: const TextStyle(color: Colors.white38)),
-            )
-          else
-            ...filtered.map(_setGroupRow),
-        ],
-      ),
-    );
-  }
-
-  Widget _setGroupRow(TeacherStudent s) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        children: [
-          _avatar(s.avatarUrl),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(s.name,
-                style: const TextStyle(color: Colors.white, fontSize: 15)),
-          ),
-          Text('座號 ${s.seat}',
-              style: const TextStyle(color: Colors.white38, fontSize: 13)),
-          const SizedBox(width: 12),
-          _intDropdown(
-            value: s.groupId,
-            items: [0, for (var g = 1; g <= _maxGroupOption; g++) g],
-            onChanged: _locked ? null : (v) => _assignGroup(s, v),
-            label: (g) => g == 0 ? '未分組' : '第 $g 組',
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── 學生名單（帳號頁；唯讀）──────────────────────────────────────────────────
-  Widget _studentListView({required bool editable}) {
-    if (_loadingStudents) {
+  Widget _rosterListView() {
+    if (_loading) {
       return const Padding(
         padding: EdgeInsets.all(20),
         child: Center(child: CircularProgressIndicator(color: _gold)),
       );
     }
-    if (_students.isEmpty) {
+    if (_roster.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 20),
-        child: Text('尚無學生帳號',
+        child: Text('尚無名冊學生',
             style: TextStyle(color: Colors.white38, fontSize: 14)),
       );
     }
     return Column(
       children: [
-        for (final s in _students)
+        for (final s in _roster)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 5),
             child: Row(
@@ -1169,14 +940,116 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                       style:
                           const TextStyle(color: Colors.white, fontSize: 15)),
                 ),
-                Text('座號 ${s.seat}',
+                Text('學號 ${s.id}',
                     style:
                         const TextStyle(color: Colors.white38, fontSize: 13)),
                 const SizedBox(width: 12),
-                Text(s.groupId == 0 ? '未分組' : '第 ${s.groupId} 組',
-                    style: const TextStyle(color: Colors.white54, fontSize: 13)),
+                Builder(builder: (_) {
+                  final g = _groupOfStudent(s.id);
+                  return Text(g.isEmpty ? '未分組' : g,
+                      style: TextStyle(
+                          color: g.isEmpty ? Colors.white38 : Colors.white54,
+                          fontSize: 13));
+                }),
                 IconButton(
-                  onPressed: () => _deleteStudent(s),
+                  onPressed: _locked ? null : () => _deleteStudent(s),
+                  icon: const Icon(Icons.delete_outline_rounded,
+                      color: Colors.white38, size: 20),
+                  tooltip: '刪除學生',
+                  splashRadius: 20,
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ── 小組帳號 ─────────────────────────────────────────────────────────────────
+  Widget _groupsTab() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _header('小組帳號', '建立各組登入帳號（帳號＝組名），並把名冊學生指派進組',
+            trailing: _refreshBtn(_refreshData)),
+        const SizedBox(height: 16),
+        Expanded(
+          child: ListView(
+            children: [
+              if (_locked) _lockBanner('上課中：已鎖定帳號與分組'),
+              if (_locked) const SizedBox(height: 16),
+              _card(
+                '建立小組帳號',
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('帳號＝組名（學生用此登入）；密碼自訂',
+                        style: TextStyle(color: Colors.white38, fontSize: 13)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                            flex: 3,
+                            child: _input(_groupUserCtrl, '組名 / 帳號')),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            flex: 2, child: _input(_groupPassCtrl, '密碼')),
+                        const SizedBox(width: 12),
+                        _primaryBtn('建立', _addGroup, enabled: !_locked),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              _card('小組帳號（${_groups.length}）', _groupListView()),
+              const SizedBox(height: 16),
+              _card('指派學生到小組', _assignRegion()),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _groupListView() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator(color: _gold)),
+      );
+    }
+    if (_groups.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 14),
+        child: Text('尚無小組帳號', style: TextStyle(color: Colors.white38)),
+      );
+    }
+    return Column(
+      children: [
+        for (final g in _groups)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                _avatar(g.avatarUrl, fallback: Icons.groups_rounded),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(g.username,
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 15)),
+                ),
+                Text('${g.studentIds.length} 人',
+                    style:
+                        const TextStyle(color: Colors.white54, fontSize: 13)),
+                const SizedBox(width: 12),
+                Text(g.buildingId > 0 ? '已綁古蹟' : '未綁古蹟',
+                    style: TextStyle(
+                        color:
+                            g.buildingId > 0 ? _gold : Colors.white38,
+                        fontSize: 12)),
+                IconButton(
+                  onPressed: _locked ? null : () => _deleteGroup(g),
                   icon: const Icon(Icons.delete_outline_rounded,
                       color: Colors.white38, size: 20),
                   tooltip: '刪除帳號',
@@ -1189,43 +1062,99 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     );
   }
 
-  // ── 3：上課古蹟 ───────────────────────────────────────────────────────────────
-  /// 解析所選古蹟的 building_id，逐組指派為上課古蹟（全班統一一座）。
-  Future<void> _applyHeritageToClass() async {
-    if (_applyingHeritage) return;
-    setState(() => _applyingHeritage = true);
-    try {
-      final buildings = await _teacher.listBuildings();
-      final match =
-          buildings.where((b) => b.name == _selectedHeritage).toList();
-      if (match.isEmpty) {
-        _toast('後端尚無此古蹟設定，請先在管理者後台建立並儲存');
-        return;
-      }
-      final buildingId = match.first.id;
-      final groups = _groupIds;
-      var ok = 0;
-      for (final g in groups) {
-        try {
-          await _teacher.setGroupBuilding(groupId: g, buildingId: buildingId);
-          ok++;
-        } catch (_) {}
-      }
-      _toast('已將上課古蹟套用到 $ok 組');
-      _startCourse(); // 套用後進入課程控制
-    } catch (e) {
-      _toast('套用失敗：${_msg(e)}');
-    } finally {
-      if (mounted) setState(() => _applyingHeritage = false);
-    }
-  }
-
-  Widget _heritageTab() {
-    final groupCount = _groupIds.length;
+  // 指派區：搜尋 + 每位名冊學生一個「屬於哪一組」下拉。
+  Widget _assignRegion() {
+    final q = _search.trim();
+    final filtered = q.isEmpty
+        ? _roster
+        : _roster
+            .where((s) => s.name.contains(q) || '${s.id}'.contains(q))
+            .toList();
+    final usernames = [for (final g in _groups) g.username];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _header('上課古蹟', '課前準備最後一步：選一座古蹟套用到全班並開始課程（目前僅開放：北港朝天宮）'),
+        TextField(
+          controller: _searchCtrl,
+          style: const TextStyle(color: Colors.white, fontSize: 15),
+          onChanged: (v) => setState(() => _search = v),
+          decoration: InputDecoration(
+            hintText: '搜尋姓名或學號…',
+            hintStyle: const TextStyle(color: Colors.white30, fontSize: 14),
+            prefixIcon: const Icon(Icons.search_rounded, color: Colors.white38),
+            suffixIcon: q.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.white38),
+                    onPressed: () {
+                      _searchCtrl.clear();
+                      setState(() => _search = '');
+                    },
+                  ),
+            filled: true,
+            fillColor: _field,
+            contentPadding: const EdgeInsets.symmetric(vertical: 4),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(child: CircularProgressIndicator(color: _gold)),
+          )
+        else if (_groups.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 14),
+            child: Text('請先建立小組帳號', style: TextStyle(color: Colors.white38)),
+          )
+        else if (filtered.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Text(q.isEmpty ? '尚無名冊學生' : '查無符合「$q」的學生',
+                style: const TextStyle(color: Colors.white38)),
+          )
+        else
+          ...filtered.map((s) => _assignRow(s, usernames)),
+      ],
+    );
+  }
+
+  Widget _assignRow(RosterStudent s, List<String> usernames) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          _avatar(s.avatarUrl),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(s.name,
+                style: const TextStyle(color: Colors.white, fontSize: 15)),
+          ),
+          Text('學號 ${s.id}',
+              style: const TextStyle(color: Colors.white38, fontSize: 13)),
+          const SizedBox(width: 12),
+          _groupDropdown(
+            value: _groupOfStudent(s.id),
+            usernames: usernames,
+            onChanged: _locked ? null : (v) => _assignStudent(s, v),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 上課古蹟 ───────────────────────────────────────────────────────────────
+  Widget _heritageTab() {
+    final groupCount = _groups.length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _header('上課古蹟',
+            '課前準備最後一步：確認古蹟並開始課程（學生登入時自動綁定；目前僅開放：北港朝天宮）'),
         const SizedBox(height: 16),
         Expanded(
           child: GridView.builder(
@@ -1244,7 +1173,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
           children: [
             Expanded(
               child: Text(
-                '開始後會把所選古蹟指派給全班 $groupCount 組，並進入課程控制（期間鎖定分組 / 帳號）。',
+                '開始後進入課程控制（期間鎖定名冊 / 帳號 / 分組）。目前共 $groupCount 個小組帳號。',
                 style: const TextStyle(color: Colors.white54, fontSize: 13),
               ),
             ),
@@ -1262,7 +1191,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                     onPressed: _resetProgress,
                     icon: const Icon(Icons.restart_alt_rounded,
                         size: 18, color: Colors.redAccent),
-                    label: const Text('重置進度',
+                    label: const Text('重置（全清）',
                         style: TextStyle(
                             color: Colors.redAccent,
                             fontWeight: FontWeight.w700)),
@@ -1273,16 +1202,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                     ),
                   ),
             const SizedBox(width: 12),
-            _applyingHeritage
-                ? const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 24),
-                    child: SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                            color: _gold, strokeWidth: 2.5)),
-                  )
-                : _primaryBtn('開始課程', _applyHeritageToClass),
+            _primaryBtn('開始課程', _startCourse),
           ],
         ),
       ],
@@ -1353,7 +1273,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     );
   }
 
-  // ── 4：題目匯入（預留）────────────────────────────────────────────────────────
+  // ── 題目匯入（預留）──────────────────────────────────────────────────────────
   Widget _questionsTab() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1381,7 +1301,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   }
 
   // ── 共用元件 ─────────────────────────────────────────────────────────────────
-  Widget _avatar(String? rawUrl, {double size = 34}) {
+  Widget _avatar(String? rawUrl,
+      {double size = 34, IconData fallback = Icons.person}) {
     return Container(
       width: size,
       height: size,
@@ -1397,19 +1318,20 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
           width: size,
           height: size,
           placeholder:
-              Icon(Icons.person, size: size * 0.62, color: Colors.white38),
+              Icon(fallback, size: size * 0.62, color: Colors.white38),
         ),
       ),
     );
   }
 
-  Widget _intDropdown({
-    required int value,
-    required List<int> items,
-    required ValueChanged<int>? onChanged,
-    required String Function(int) label,
+  // 「屬於哪一組」下拉：value 為組名（空字串 = 未分組）。
+  Widget _groupDropdown({
+    required String value,
+    required List<String> usernames,
+    required ValueChanged<String>? onChanged,
   }) {
-    final safe = items.contains(value) ? value : (items.isEmpty ? 0 : items.first);
+    final items = ['', ...usernames];
+    final safe = items.contains(value) ? value : '';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
@@ -1418,14 +1340,14 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
         border: Border.all(color: Colors.white24),
       ),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton<int>(
+        child: DropdownButton<String>(
           value: safe,
           dropdownColor: _panel,
           isDense: true,
           style: const TextStyle(color: Colors.white, fontSize: 14),
           items: [
-            for (final g in items)
-              DropdownMenuItem(value: g, child: Text(label(g))),
+            for (final u in items)
+              DropdownMenuItem(value: u, child: Text(u.isEmpty ? '未分組' : u)),
           ],
           onChanged: onChanged == null
               ? null
