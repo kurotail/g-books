@@ -133,7 +133,14 @@ func (s *StudentSvc) SetStudents(accessToken, username string, studentIDs []uint
 		results = append(results, model.StudentAssignResult{StudentID: id, Status: http.StatusOK})
 	}
 
-	if err := s.users.SetUserStudents(target, valid); err != nil {
+	tu, err := s.users.GetUserByUsername(target)
+	if err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return nil, http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
+		}
+		return nil, http.StatusInternalServerError, err
+	}
+	if err := s.users.SetUserStudents(tu.ID, valid); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
 			return nil, http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
 		}

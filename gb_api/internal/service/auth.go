@@ -40,10 +40,10 @@ func newJTI() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (s *AuthSvc) newAccessToken(username string) (string, error) {
+func (s *AuthSvc) newAccessToken(userID uint) (string, error) {
 	t := time.Now()
 	return signToken(&model.Claims{
-		Username:  username,
+		UserID:    userID,
 		TokenType: "access",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(t.Add(config.AccessTokenTTL)),
@@ -52,14 +52,14 @@ func (s *AuthSvc) newAccessToken(username string) (string, error) {
 	}, config.JwtKey)
 }
 
-func (s *AuthSvc) newRefreshToken(username string) (token, jti string, err error) {
+func (s *AuthSvc) newRefreshToken(userID uint) (token, jti string, err error) {
 	jti, err = newJTI()
 	if err != nil {
 		return "", "", err
 	}
 	t := time.Now()
 	token, err = signToken(&model.Claims{
-		Username:  username,
+		UserID:    userID,
 		TokenType: "refresh",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
@@ -75,12 +75,12 @@ func (s *AuthSvc) newRefreshToken(username string) (token, jti string, err error
 
 // genTokenPair returns a fresh access/refresh token pair plus the refresh
 // token's jti (its key in the refresh-token store).
-func (s *AuthSvc) genTokenPair(username string) (accessToken, refreshToken, jti string, err error) {
-	accessToken, err = s.newAccessToken(username)
+func (s *AuthSvc) genTokenPair(userID uint) (accessToken, refreshToken, jti string, err error) {
+	accessToken, err = s.newAccessToken(userID)
 	if err != nil {
 		return "", "", "", err
 	}
-	refreshToken, jti, err = s.newRefreshToken(username)
+	refreshToken, jti, err = s.newRefreshToken(userID)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -96,7 +96,13 @@ func (s *AuthSvc) LoginByName(creds model.Credential) ([]byte, int, error) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("帳號或密碼錯誤")
 	}
 
-	accessToken, refreshToken, jti, err := s.genTokenPair(creds.Username)
+	// Tokens carry the user's immutable id, so a later username change does not
+	// invalidate them. Look it up now that the credentials are confirmed.
+	user, err := s.users.GetUserByUsername(creds.Username)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	accessToken, refreshToken, jti, err := s.genTokenPair(user.ID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -157,7 +163,18 @@ func (s *AuthSvc) SetProfilePic(accessToken, username, url string) (int, error) 
 	if target != caller.Username && caller.Role < model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("權限不足")
 	}
-	if err := s.users.SetUserProfilePic(target, url); err != nil {
+	targetID := caller.ID
+	if target != caller.Username {
+		tu, err := s.users.GetUserByUsername(target)
+		if err != nil {
+			if errors.Is(err, apperr.ErrUserNotFound) {
+				return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
+			}
+			return http.StatusInternalServerError, err
+		}
+		targetID = tu.ID
+	}
+	if err := s.users.SetUserProfilePic(targetID, url); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
 			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
 		}
@@ -172,7 +189,7 @@ func (s *AuthSvc) SetBuilding(accessToken string, buildingID uint) (int, error) 
 	if err != nil {
 		return status, err
 	}
-	if err := s.users.SetUserBuilding(caller.Username, buildingID); err != nil {
+	if err := s.users.SetUserBuilding(caller.ID, buildingID); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
 			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", caller.Username)
 		}
@@ -181,15 +198,13 @@ func (s *AuthSvc) SetBuilding(accessToken string, buildingID uint) (int, error) 
 	return http.StatusOK, nil
 }
 
-// SetUsername renames the calling user's own account. The rename cascades to the
-// user's items/slots/roster; the caller's existing tokens reference the old name and
-// will stop working, so they must log in again.
+// SetUsername renames the calling user's own account.  no re-login is required.
 func (s *AuthSvc) SetUsername(accessToken, newUsername string) (int, error) {
 	caller, status, err := getCaller(s.users, accessToken)
 	if err != nil {
 		return status, err
 	}
-	if err := s.users.RenameUser(caller.Username, newUsername); err != nil {
+	if err := s.users.RenameUser(caller.ID, newUsername); err != nil {
 		if errors.Is(err, apperr.ErrUserExists) {
 			return http.StatusConflict, err
 		}
@@ -214,7 +229,7 @@ func (s *AuthSvc) SetPassword(accessToken, oldPassword, newPassword string) (int
 	if !ok {
 		return http.StatusUnauthorized, fmt.Errorf("目前密碼錯誤")
 	}
-	if err := s.users.SetUserPassword(caller.Username, newPassword); err != nil {
+	if err := s.users.SetUserPassword(caller.ID, newPassword); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
 			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", caller.Username)
 		}
@@ -232,10 +247,17 @@ func (s *AuthSvc) DeleteUser(accessToken, username string) (int, error) {
 	if caller.Role < model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("權限不足")
 	}
-	if username == caller.Username {
+	target, err := s.users.GetUserByUsername(username)
+	if err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
+		}
+		return http.StatusInternalServerError, err
+	}
+	if target.ID == caller.ID {
 		return http.StatusForbidden, fmt.Errorf("無法刪除自己的帳號")
 	}
-	ok, err := s.users.DeleteUser(username)
+	ok, err := s.users.DeleteUser(target.ID)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -268,7 +290,7 @@ func (s *AuthSvc) RefreshTokens(refreshTokenStr string) ([]byte, int, error) {
 		return nil, http.StatusUnauthorized, fmt.Errorf("refresh token invalid")
 	}
 
-	accessToken, newRefresh, jti, err := s.genTokenPair(claims.Username)
+	accessToken, newRefresh, jti, err := s.genTokenPair(claims.UserID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}

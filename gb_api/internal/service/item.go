@@ -23,8 +23,8 @@ func NewItemSvc(r repo.ItemRepo, inv repo.InventoryRepo, users repo.UserRepo, bu
 }
 
 // ownsItem reports whether the user holds itemID loose in their inventory.
-func (s *ItemSvc) ownsItem(username string, itemID uint) (bool, error) {
-	ids, err := s.inv.QueryInv(username)
+func (s *ItemSvc) ownsItem(userID, itemID uint) (bool, error) {
+	ids, err := s.inv.QueryInv(userID)
 	if err != nil {
 		return false, err
 	}
@@ -36,14 +36,10 @@ func (s *ItemSvc) ownsItem(username string, itemID uint) (bool, error) {
 	return false, nil
 }
 
-// slotAllowsType reports whether the user's building permits an item of itemType
-// in slotID (per the building's TypeAllowedSlot). A user with no building, or a
+// slotAllowsType reports whether user u's building permits an item of itemType in
+// slotID (per the building's TypeAllowedSlot). A user with no building, or a
 // building that no longer exists, allows nothing.
-func (s *ItemSvc) slotAllowsType(username string, slotID, itemType uint) (bool, error) {
-	u, err := s.users.GetUser(username)
-	if err != nil {
-		return false, err
-	}
+func (s *ItemSvc) slotAllowsType(u *model.User, slotID, itemType uint) (bool, error) {
 	if u.BuildingID == 0 {
 		return false, nil
 	}
@@ -67,13 +63,22 @@ func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, 
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	caller, err := s.users.GetUser(claims.Username)
+	caller, err := s.users.GetUserByID(claims.UserID)
 	if err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return nil, http.StatusUnauthorized, fmt.Errorf("使用者不存在")
+		}
 		return nil, http.StatusInternalServerError, err
 	}
 	full := caller.Role >= model.RoleTeacher || caller.Username == username
 
-	invIDs, err := s.inv.QueryInv(username)
+	// Resolve the queried user to an id; an unknown username is a 404.
+	targetID, status, err := resolveUserID(s.users, username)
+	if err != nil {
+		return nil, status, err
+	}
+
+	invIDs, err := s.inv.QueryInv(targetID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -90,7 +95,7 @@ func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, 
 		}
 	}
 
-	slotMap, err := s.inv.QuerySlot(username)
+	slotMap, err := s.inv.QuerySlot(targetID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -143,7 +148,7 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, username string, itemID, slot
 	if caller.Username != username {
 		return http.StatusForbidden, fmt.Errorf("無法操作其他人的物品")
 	}
-	has, err := s.ownsItem(username, itemID)
+	has, err := s.ownsItem(caller.ID, itemID)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -157,14 +162,14 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, username string, itemID, slot
 	if !ok {
 		return http.StatusInternalServerError, fmt.Errorf("item %d 不存在", itemID)
 	}
-	allowed, err := s.slotAllowsType(username, slotID, it.Type)
+	allowed, err := s.slotAllowsType(caller, slotID, it.Type)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	if !allowed {
 		return http.StatusBadRequest, fmt.Errorf("slot %d 不允許類型 %d 的物品", slotID, it.Type)
 	}
-	slot, err := s.inv.QuerySlot(username)
+	slot, err := s.inv.QuerySlot(caller.ID)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -173,14 +178,14 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, username string, itemID, slot
 		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀，無法放置物品", slotID, -held)
 	}
 	if held > 0 {
-		if err := s.inv.AddInvItem(username, uint(held)); err != nil {
+		if err := s.inv.AddInvItem(caller.ID, uint(held)); err != nil {
 			return http.StatusInternalServerError, err
 		}
 	}
-	if err := s.inv.RemoveInvItem(username, itemID); err != nil {
+	if err := s.inv.RemoveInvItem(caller.ID, itemID); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if err := s.inv.SetSlot(username, slotID, int(itemID)); err != nil {
+	if err := s.inv.SetSlot(caller.ID, slotID, int(itemID)); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil
@@ -195,7 +200,7 @@ func (s *ItemSvc) TranSlot2Inv(accessToken string, username string, slotID uint)
 	if caller.Username != username {
 		return http.StatusForbidden, fmt.Errorf("無法操作其他人的物品")
 	}
-	slot, err := s.inv.QuerySlot(username)
+	slot, err := s.inv.QuerySlot(caller.ID)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
@@ -206,10 +211,10 @@ func (s *ItemSvc) TranSlot2Inv(accessToken string, username string, slotID uint)
 	if itemID < 0 {
 		return http.StatusBadRequest, fmt.Errorf("slot %d (item %d) 已損毀", slotID, -itemID)
 	}
-	if err := s.inv.AddInvItem(username, uint(itemID)); err != nil {
+	if err := s.inv.AddInvItem(caller.ID, uint(itemID)); err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if err := s.inv.SetSlot(username, slotID, 0); err != nil {
+	if err := s.inv.SetSlot(caller.ID, slotID, 0); err != nil {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, nil

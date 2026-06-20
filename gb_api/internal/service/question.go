@@ -93,7 +93,12 @@ func (s *QuestionSvc) GenerateTarget(accessToken string, targetUsername string, 
 		return nil, status, err
 	}
 
-	slots, err := s.inv.QuerySlot(targetUsername)
+	// Resolve the target user to an id; an unknown target is a 404.
+	targetID, status, err := resolveUserID(s.users, targetUsername)
+	if err != nil {
+		return nil, status, err
+	}
+	slots, err := s.inv.QuerySlot(targetID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -293,7 +298,13 @@ func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) (
 	switch qs.Kind {
 	case model.KindItem:
 		if correct {
-			if err := s.inv.AddInvItem(qs.Username, qs.ItemID); err != nil {
+			// Resolve the session owner to an id at grant time. If the user was
+			// deleted since the session was created, resolveUserID returns 404.
+			uid, status, err := resolveUserID(s.users, qs.Username)
+			if err != nil {
+				return nil, status, err
+			}
+			if err := s.inv.AddInvItem(uid, qs.ItemID); err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
 			resp.ItemID = qs.ItemID
@@ -316,7 +327,16 @@ func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) (
 }
 
 func (s *QuestionSvc) applyTarget(callerUsername string, t model.Target) (bool, error) {
-	slots, err := s.inv.QuerySlot(t.Username)
+	// Resolve the target user to an id; a vanished target means nothing to do
+	// (best-effort apply, so swallow not-found rather than erroring).
+	targetID, _, err := resolveUserID(s.users, t.Username)
+	if err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	slots, err := s.inv.QuerySlot(targetID)
 	if err != nil {
 		return false, err
 	}
@@ -331,7 +351,7 @@ func (s *QuestionSvc) applyTarget(callerUsername string, t model.Target) (bool, 
 	if !attack && v > 0 { // not broken, nothing to repair
 		return false, nil
 	}
-	if err := s.inv.SetSlot(t.Username, t.SlotID, -v); err != nil {
+	if err := s.inv.SetSlot(targetID, t.SlotID, -v); err != nil {
 		return false, err
 	}
 	return true, nil

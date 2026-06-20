@@ -216,6 +216,11 @@ func userAccountChecks(adminAccess, adminUsername, teacherAccess, runID string) 
 	st, _ = req("POST", "/api/users/username", rAccess, map[string]any{"username": renamedUser})
 	show("user renames self", st, 200, "")
 
+	// The access token minted before the rename carries the user's immutable id,
+	// so it must keep working afterward (no forced re-login).
+	st, body = req("GET", "/api/users", rAccess, nil)
+	show("old access token still valid after rename", st, 200, body)
+
 	st, body = req("POST", "/api/login", "", map[string]any{"username": renameUser, "password": "pw"})
 	show("login with old username after rename (rejected)", st, 401, body)
 

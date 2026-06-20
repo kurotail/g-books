@@ -3,7 +3,7 @@
 REST API server for g-books, built with Go's standard `net/http` library and JWT-based authentication.
 
 - **Runtime:** Go 1.26+
-- **Storage:** PostgreSQL (via `pgx`); schema and demo data loaded from `postgres/init.sql`, admin account seeded on startup
+- **Storage:** PostgreSQL (via `pgx`); schema loaded from `postgres/init.sql`, admin account seeded on startup
 - **Edge:** nginx reverse proxy terminating HTTPS on `443` (HTTP on `80` redirects to it)
 - **Auth scheme:** JWT (HS256) — short-lived access tokens + single-use rotating refresh tokens
 - **Real-time:** server-state changes are pushed to subscribers over a WebSocket (`GET /api/state/ws`, reached at `wss://localhost/api/state/ws`)
@@ -15,8 +15,8 @@ REST API server for g-books, built with Go's standard `net/http` library and JWT
 The stack runs as three containers via Docker Compose: a PostgreSQL database (`postgres`), the
 Go API (`api`, internal only), and an nginx reverse proxy (`nginx`) that terminates HTTPS and
 serves uploaded media. On a fresh database volume, `postgres` runs `postgres/init.sql`
-(mounted into `/docker-entrypoint-initdb.d`) to create the schema and load demo data. The API
-waits for `postgres` to be healthy, then seeds the admin account on startup.
+(mounted into `/docker-entrypoint-initdb.d`) to create the schema. The API waits for
+`postgres` to be healthy, then seeds the admin account on startup.
 
 **1. Generate a self-signed TLS certificate** (one time; written to `nginx/certs/`):
 
@@ -48,11 +48,19 @@ Configuration is read from `.env` (consumed by both the `postgres` and `api` con
 | `JWT_KEY` / `JWT_REFRESH_KEY` | 64-char hex signing keys for access / refresh tokens |
 | `UPLOAD_DIR`, `MAX_IMAGE_MB`, `MAX_AUDIO_MB` | Media upload directory and per-category size caps |
 
-Database state persists in the `pgdata` Docker volume across restarts. The schema and demo
-fixtures (sample buildings, questions, students, and `teacher1` / `student1` accounts with
-passwords `teacher123` / `student123`) are loaded from `postgres/init.sql` **only when the
-`pgdata` volume is first created**; edits to that file take effect after a `docker compose down -v`
-(which deletes the volume and its data). The admin account is seeded by the API on each boot.
+Database state persists in the `pgdata` Docker volume across restarts. The schema is loaded
+from `postgres/init.sql` **only when the `pgdata` volume is first created**; edits to that file
+take effect after a `docker compose down -v` (which deletes the volume and its data). The admin
+account is seeded by the API on each boot.
+
+Users are keyed by a stable numeric `id` (`users.id`, the primary key); `username` is a
+unique, mutable handle, and the `user_inventory` / `user_slots` / `user_students` tables
+reference `users(id)`. The API identifies users by `username` in request bodies and the
+`DELETE /api/users/{username}` path, while the **JWT carries the numeric `user_id`**. The `id`
+is **read-only**: it is returned in user objects (e.g. `GET /api/users`) but is server-assigned
+and accepted by no request body. Because tokens reference the `id`, renaming a user (which
+changes only the `username` column) leaves their items, slots, roster, **and existing access /
+refresh tokens** all valid — no re-login required.
 
 ---
 
@@ -92,7 +100,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `GET /api/users` | Bearer | List all users (username, role, building, profile picture, student roster) |
 | `POST /api/users/pfp` | Bearer (self or > Student) | Set a user's profile-picture link (empty `profile_pic_url` clears it) |
 | `POST /api/users/building` | Bearer | Set the caller's own building (`building_id` `0` clears it) |
-| `POST /api/users/username` | Bearer | Rename the caller's own account (forces re-login) |
+| `POST /api/users/username` | Bearer | Rename the caller's own account (existing tokens stay valid) |
 | `POST /api/users/password` | Bearer | Change the caller's own password (must supply the current one) |
 | `POST /api/users/students` | Bearer (> Student) | Replace a user's student roster by a given list; returns a `207` per-id result |
 | `DELETE /api/users/{username}` | Bearer (> Student) | Delete a user (cannot delete yourself) |
@@ -248,8 +256,8 @@ roster (ascending `student_id` order, empty when none)
 ```json
 {
   "users": [
-    { "username": "admin", "role": 2, "building_id": 1, "profile_pic_url": "/images/abc.jpg", "students": [1, 2] },
-    { "username": "alice", "role": 0, "building_id": 0, "profile_pic_url": "", "students": [] }
+    { "id": 1, "username": "admin", "role": 2, "building_id": 1, "profile_pic_url": "/images/abc.jpg", "students": [1, 2] },
+    { "id": 2, "username": "alice", "role": 0, "building_id": 0, "profile_pic_url": "", "students": [] }
   ]
 }
 ```
@@ -354,9 +362,9 @@ or `404` for an unknown one (with an `error`)
 ### `POST /api/users/username`
 
 Rename **the calling user's own** account. The new `username` must not already be taken.
-The rename cascades to everything keyed by the account (inventory, slots, student roster),
-but the caller's existing access/refresh tokens embed the **old** name and stop working — the
-user must **log in again** with the new username.
+Only the `username` changes; the account's numeric `id` is stable, so everything keyed by it
+(inventory, slots, student roster) is unaffected. Tokens carry that `id`, so the caller's
+existing access/refresh tokens **remain valid** — no re-login is required.
 
 **Request**
 
@@ -788,6 +796,7 @@ is exposed per item.
 |--------|-----------|
 | `400`  | Malformed JSON body, or a missing `username` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `404`  | The queried `username` does not exist |
 
 ---
 
@@ -946,6 +955,7 @@ Open a session against `target_slot_id` on `target_username`'s board. **Valid** 
 | `400`  | Malformed JSON body; `target_username` missing; `target_slot_id` missing; the target slot is empty; the target item has no question; or the target is invalid (own non-broken slot, or another user's broken slot) |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller is a Student and the server is not in `QUIZ2` state |
+| `404`  | `target_username` does not exist |
 
 ---
 
@@ -991,6 +1001,7 @@ allows it; a wrong answer omits it).
 |--------|-----------|
 | `400`  | Malformed JSON body, missing `session` or `answer`, or the session is unknown/already used/expired |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `404`  | The session's owner no longer exists (e.g. deleted mid-session) — item not granted |
 
 ---
 

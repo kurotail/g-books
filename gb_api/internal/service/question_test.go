@@ -25,7 +25,12 @@ func newQuestionSvc(role uint) (*QuestionSvc, *mock.QuestionRepo) {
 // its item repo.
 func newQuizSvc(role, buildingID uint, difficultyType map[uint][]uint, questions map[uint]model.Question) (*QuestionSvc, *mock.QuestionRepo, *mock.ItemRepo) {
 	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}, Questions: questions}
-	users := &mock.AuthRepo{Roles: map[string]uint{"u": role}, Buildings: map[string]uint{"u": buildingID}}
+	// "victim" is the attack-target user the QUIZ2 tests aim at; it must exist as a
+	// real user for the username->id resolution to find its slots.
+	users := &mock.AuthRepo{
+		Roles:     map[string]uint{"u": role, "victim": model.RoleStudent},
+		Buildings: map[string]uint{"u": buildingID},
+	}
 	buildings := &mock.BuildingRepo{Buildings: map[uint]model.Building{1: {ID: 1, DifficultyType: difficultyType}}}
 	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
 	return NewQuestionSvc(r, users, buildings, items, items, &mock.STTRepo{}), r, items
@@ -36,7 +41,7 @@ func idx(i uint) json.RawMessage { return model.IndexAnswer(i).Data }
 
 func accessTokenFor(t *testing.T, username string) string {
 	t.Helper()
-	tok, err := newTestAuthSvc().newAccessToken(username)
+	tok, err := newTestAuthSvc().newAccessToken(mock.IDFor(username))
 	if err != nil {
 		t.Fatalf("failed to mint access token: %v", err)
 	}

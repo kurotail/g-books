@@ -5,19 +5,19 @@ import (
 )
 
 type InventoryRepo interface {
-	QueryInv(username string) ([]uint, error)        // owned (unslotted) item ids, sorted
-	QuerySlot(username string) (map[uint]int, error) // slot_id -> signed item_id (negative = broken)
-	AddInvItem(username string, itemID uint) error
-	RemoveInvItem(username string, itemID uint) error
-	SetSlot(username string, slotID uint, itemID int) error // itemID 0 clears the slot
+	QueryInv(userID uint) ([]uint, error)        // owned (unslotted) item ids, sorted
+	QuerySlot(userID uint) (map[uint]int, error) // slot_id -> signed item_id (negative = broken)
+	AddInvItem(userID uint, itemID uint) error
+	RemoveInvItem(userID uint, itemID uint) error
+	SetSlot(userID uint, slotID uint, itemID int) error // itemID 0 clears the slot
 }
 
 type inventoryRepo struct{}
 
-func (_ *inventoryRepo) QueryInv(username string) ([]uint, error) {
+func (_ *inventoryRepo) QueryInv(userID uint) ([]uint, error) {
 	ctx := context.Background()
 	rows, err := pool.Query(ctx,
-		`SELECT item_id FROM user_inventory WHERE username = $1 ORDER BY item_id`, username,
+		`SELECT item_id FROM user_inventory WHERE user_id = $1 ORDER BY item_id`, userID,
 	)
 	if err != nil {
 		return nil, err
@@ -34,10 +34,10 @@ func (_ *inventoryRepo) QueryInv(username string) ([]uint, error) {
 	return ids, rows.Err()
 }
 
-func (_ *inventoryRepo) QuerySlot(username string) (map[uint]int, error) {
+func (_ *inventoryRepo) QuerySlot(userID uint) (map[uint]int, error) {
 	ctx := context.Background()
 	rows, err := pool.Query(ctx,
-		`SELECT slot_id, item_id FROM user_slots WHERE username = $1`, username,
+		`SELECT slot_id, item_id FROM user_slots WHERE user_id = $1`, userID,
 	)
 	if err != nil {
 		return nil, err
@@ -57,37 +57,37 @@ func (_ *inventoryRepo) QuerySlot(username string) (map[uint]int, error) {
 	return result, rows.Err()
 }
 
-func (_ *inventoryRepo) AddInvItem(username string, itemID uint) error {
+func (_ *inventoryRepo) AddInvItem(userID uint, itemID uint) error {
 	ctx := context.Background()
 	_, err := pool.Exec(ctx,
-		`INSERT INTO user_inventory (username, item_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-		username, itemID,
+		`INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		userID, itemID,
 	)
 	return err
 }
 
-func (_ *inventoryRepo) RemoveInvItem(username string, itemID uint) error {
+func (_ *inventoryRepo) RemoveInvItem(userID uint, itemID uint) error {
 	ctx := context.Background()
 	_, err := pool.Exec(ctx,
-		`DELETE FROM user_inventory WHERE username = $1 AND item_id = $2`, username, itemID,
+		`DELETE FROM user_inventory WHERE user_id = $1 AND item_id = $2`, userID, itemID,
 	)
 	// TODO: maybeDeleteItem(itemID) — once no user inventory and no slot references
 	// an item, delete it from items. Left as a no-op for now.
 	return err
 }
 
-func (_ *inventoryRepo) SetSlot(username string, slotID uint, itemID int) error {
+func (_ *inventoryRepo) SetSlot(userID uint, slotID uint, itemID int) error {
 	ctx := context.Background()
 	if itemID == 0 {
 		_, err := pool.Exec(ctx,
-			`DELETE FROM user_slots WHERE username = $1 AND slot_id = $2`, username, slotID,
+			`DELETE FROM user_slots WHERE user_id = $1 AND slot_id = $2`, userID, slotID,
 		)
 		return err
 	}
 	_, err := pool.Exec(ctx,
-		`INSERT INTO user_slots (username, slot_id, item_id) VALUES ($1, $2, $3)
-		 ON CONFLICT (username, slot_id) DO UPDATE SET item_id = EXCLUDED.item_id`,
-		username, slotID, itemID,
+		`INSERT INTO user_slots (user_id, slot_id, item_id) VALUES ($1, $2, $3)
+		 ON CONFLICT (user_id, slot_id) DO UPDATE SET item_id = EXCLUDED.item_id`,
+		userID, slotID, itemID,
 	)
 	return err
 }

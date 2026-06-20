@@ -8,7 +8,7 @@ type Credential struct {
 }
 
 type Claims struct {
-	Username  string `json:"username"`
+	UserID    uint   `json:"user_id"`    // immutable user id; survives username changes
 	TokenType string `json:"token_type"` // "access" or "refresh"
 	jwt.RegisteredClaims
 }
@@ -24,6 +24,7 @@ type RegisterRequest struct {
 }
 
 type User struct {
+	ID            uint   `json:"id"` // numeric primary key; read-only (server-assigned, never accepted as input)
 	Username      string `json:"username"`
 	Role          uint   `json:"role"`
 	BuildingID    uint   `json:"building_id"`     // 0 = no building assigned

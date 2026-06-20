@@ -12,7 +12,7 @@ import (
 
 func validAccessToken(t *testing.T) string {
 	t.Helper()
-	tok, err := newTestAuthSvc().newAccessToken("testuser")
+	tok, err := newTestAuthSvc().newAccessToken(mock.IDFor("testuser"))
 	if err != nil {
 		t.Fatalf("failed to mint access token: %v", err)
 	}
