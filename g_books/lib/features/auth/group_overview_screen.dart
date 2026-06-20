@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
@@ -153,7 +154,11 @@ class GroupOverviewScreen extends StatelessWidget {
         ),
       ),
     );
-    if (url != null) appState.setMemberAvatarUrl(id, url);
+    if (url == null) return;
+    final err = await appState.setMemberAvatarUrl(id, url);
+    if (err != null && context.mounted) {
+      Fluttertoast.showToast(msg: err, gravity: ToastGravity.BOTTOM);
+    }
   }
 
   Widget _bottomButton(BuildContext context, bool editMode) {

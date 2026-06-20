@@ -282,24 +282,32 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  /// 設定某位組員的個人頭像（小組總攬編輯後呼叫）。後端模式同步 `PUT /api/student/{id}`
-  /// （整筆覆蓋，需帶 name）。注意：後端目前僅教師 / 管理者可改名冊，學生組帳號會被擋
-  /// （403）→ 僅本機預覽、不持久化（待後端放寬「同組可改組內頭像」）。
-  void setMemberAvatarUrl(int studentId, String? url) {
+  /// 設定某位組員的個人頭像（小組總攬編輯後呼叫）。先做本機樂觀更新讓畫面即時反映，
+  /// 後端模式再同步 `PUT /api/student/{id}`（整筆覆蓋，帶現有 name + 新頭像）。成功回
+  /// null；失敗回錯誤訊息（本機預覽仍保留，由呼叫端提示「未存到後端」）。
+  /// 註：後端需放行「組帳號改自己 roster 內學生」此操作才會真正持久化；未放行則回 403。
+  Future<String?> setMemberAvatarUrl(int studentId, String? url) async {
     final i = _members.indexWhere((m) => m.id == studentId);
-    if (i < 0) return;
+    if (i < 0) return null;
     final old = _members[i];
     _members = List<RosterStudent>.from(_members)
       ..[i] = RosterStudent(id: old.id, name: old.name, avatarUrl: url);
-    if (_useBackend && _api != null) {
-      _api
-          .sendJson('PUT', '/api/student/$studentId', body: {
-            'name': old.name,
-            'profile_pic_url': url ?? '', // 空字串＝清除
-          })
-          .catchError((_) => null); // 非教師遭 403 等失敗：保留本機預覽
-    }
     notifyListeners();
+    if (_useBackend && _api != null) {
+      try {
+        await _api.sendJson('PUT', '/api/student/$studentId', body: {
+          'name': old.name,
+          'profile_pic_url': url ?? '', // 空字串＝清除
+        });
+      } on ApiException catch (e) {
+        return e.statusCode == 403
+            ? '沒有權限修改此頭像（需後端開放同組編輯）'
+            : '頭像儲存失敗（${e.statusCode}）';
+      } catch (_) {
+        return '頭像儲存失敗，請確認網路';
+      }
+    }
+    return null;
   }
 
   /// 設定小組頭像（組徽）。後端模式同步 `POST /api/users/pfp`（設自己，省略 username）。
