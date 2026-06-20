@@ -3,6 +3,7 @@
 REST API server for g-books, built with Go's standard `net/http` library and JWT-based authentication.
 
 - **Runtime:** Go 1.26+
+- **Storage:** PostgreSQL (via `pgx`); schema and demo data loaded from `postgres/init.sql`, admin account seeded on startup
 - **Edge:** nginx reverse proxy terminating HTTPS on `443` (HTTP on `80` redirects to it)
 - **Auth scheme:** JWT (HS256) — short-lived access tokens + single-use rotating refresh tokens
 - **Real-time:** server-state changes are pushed to subscribers over a WebSocket (`GET /api/state/ws`, reached at `wss://localhost/api/state/ws`)
@@ -11,7 +12,11 @@ REST API server for g-books, built with Go's standard `net/http` library and JWT
 
 ## Run
 
-The stack runs as two containers via Docker Compose: the Go API (`api`, internal only) and an nginx reverse proxy (`nginx`) that terminates HTTPS and serves uploaded media.
+The stack runs as three containers via Docker Compose: a PostgreSQL database (`postgres`), the
+Go API (`api`, internal only), and an nginx reverse proxy (`nginx`) that terminates HTTPS and
+serves uploaded media. On a fresh database volume, `postgres` runs `postgres/init.sql`
+(mounted into `/docker-entrypoint-initdb.d`) to create the schema and load demo data. The API
+waits for `postgres` to be healthy, then seeds the admin account on startup.
 
 **1. Generate a self-signed TLS certificate** (one time; written to `nginx/certs/`):
 
@@ -20,7 +25,8 @@ sh nginx/gen-certs.sh          # or, on Windows PowerShell:
 # powershell -ExecutionPolicy Bypass -File .\nginx\gen-certs.ps1
 ```
 
-**2. Start the stack:**
+**2. Configure environment** — copy/edit `.env` (see [Environment](#environment) below), then
+**3. Start the stack:**
 
 ```bash
 docker compose up --build
@@ -29,6 +35,24 @@ docker compose up --build
 The API is reached through nginx at **`https://localhost`** (e.g. `https://localhost/api/login`). Plain `http://localhost` 301-redirects to HTTPS. The API container's `8080` is not published to the host — only nginx talks to it over the internal network.
 
 > The certificate is self-signed, so clients will warn about an untrusted cert. Use `curl -k`, or trust `nginx/certs/server.crt` locally.
+
+### Environment
+
+Configuration is read from `.env` (consumed by both the `postgres` and `api` containers):
+
+| Env var | Purpose |
+|---------|---------|
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Credentials/name for the Postgres container |
+| `DATABASE_URL` | Connection string the API uses (host `postgres` is the compose service name) |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Admin account seeded on startup (default `admin` / `admin123`) so you can log in |
+| `JWT_KEY` / `JWT_REFRESH_KEY` | 64-char hex signing keys for access / refresh tokens |
+| `UPLOAD_DIR`, `MAX_IMAGE_MB`, `MAX_AUDIO_MB` | Media upload directory and per-category size caps |
+
+Database state persists in the `pgdata` Docker volume across restarts. The schema and demo
+fixtures (sample buildings, questions, students, and `teacher1` / `student1` accounts with
+passwords `teacher123` / `student123`) are loaded from `postgres/init.sql` **only when the
+`pgdata` volume is first created**; edits to that file take effect after a `docker compose down -v`
+(which deletes the volume and its data). The admin account is seeded by the API on each boot.
 
 ---
 
@@ -65,24 +89,27 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/login` | — | Exchange credentials for a token pair |
 | `POST /api/register` | Bearer (> Student) | Register a new user (Student or Teacher; Admins cannot be created) |
 | `POST /api/refresh` | — | Rotate a refresh token into a new token pair |
-| `GET /api/users` | Bearer | List all users (username, role, group, profile picture) |
+| `GET /api/users` | Bearer | List all users (username, role, building, profile picture, student roster) |
 | `POST /api/users/pfp` | Bearer (self or > Student) | Set a user's profile-picture link (empty `profile_pic_url` clears it) |
+| `POST /api/users/building` | Bearer | Set the caller's own building (`building_id` `0` clears it) |
+| `POST /api/users/username` | Bearer | Rename the caller's own account (forces re-login) |
+| `POST /api/users/password` | Bearer | Change the caller's own password (must supply the current one) |
+| `POST /api/users/students` | Bearer (> Student) | Replace a user's student roster by a given list; returns a `207` per-id result |
 | `DELETE /api/users/{username}` | Bearer (> Student) | Delete a user (cannot delete yourself) |
-| `POST /api/group/set` | Bearer (> Student) | Assign a user to a group (`group_id` `0` removes them) |
-| `POST /api/group/name` | Bearer (member or > Student) | Rename a group |
-| `POST /api/group/building` | Bearer (member or > Student) | Set a group's building (`building_id` `0` clears it) |
-| `POST /api/group/pfp` | Bearer (member or > Student) | Set a group's profile-picture link (empty `profile_pic_url` clears it) |
-| `DELETE /api/group/{id}` | Bearer (> Student) | Delete a group (former members are reset to no group) |
-| `GET /api/group` | Bearer | Read the caller's own group (includes members list) |
 | `POST /api/building` | Bearer (> Student) | Create a building |
 | `GET /api/building` | Bearer | List all buildings |
 | `GET /api/building/{id}` | Bearer | Read a building by ID |
 | `PUT /api/building/{id}` | Bearer (> Student) | Replace a building by ID |
-| `POST /api/item` | Bearer | Read all of a group's items (inventory + slots) |
+| `POST /api/student` | Bearer (> Student) | Create a student (client-supplied `student_id`) |
+| `GET /api/student` | Bearer | List all students |
+| `GET /api/student/{id}` | Bearer | Read a student by ID |
+| `PUT /api/student/{id}` | Bearer (> Student) | Replace a student by ID |
+| `DELETE /api/student/{id}` | Bearer (> Student) | Delete a student (cascades: removed from every user's roster) |
+| `POST /api/item` | Bearer | Read all of a user's items (inventory + slots) |
 | `POST /api/item/inv2slot` | Bearer (not Student in QUIZ2) | Move one item from inventory into a slot (swaps out any normal item already there) |
 | `POST /api/item/slot2inv` | Bearer (not Student in QUIZ2) | Return a slotted item to the inventory |
 | `POST /api/question/generate` | Bearer (QUIZ1) | Roll a new item + open a session to claim it (students QUIZ1-only) |
-| `POST /api/question/target` | Bearer (QUIZ2) | Open an attack/repair session against a group's slot (students QUIZ2-only) |
+| `POST /api/question/target` | Bearer (QUIZ2) | Open an attack/repair session against a user's slot (students QUIZ2-only) |
 | `POST /api/question/answer` | Bearer | Answer the held session: grant item, or break/repair the target |
 | `POST /api/question/upload` | Bearer (> Student) | Bulk-add questions to the pool; returns a `207` per-question result list |
 | `GET /api/question/search` | Bearer (> Student) | List the question pool, optionally filtered by difficulty/area |
@@ -107,8 +134,8 @@ Authenticate with username and password.
 
 ```json
 {
-  "username": "user",
-  "password": "password123"
+  "username": "admin",
+  "password": "admin123"
 }
 ```
 
@@ -134,9 +161,8 @@ Authenticate with username and password.
 
 Create a new user. The caller must present a valid access token and be a Teacher or
 Admin. Teachers and Admins may create Students (`0`) or Teachers (`1`);
-**Admins cannot be created via this endpoint**. An optional `group_id` places the
-new user in a group immediately; if omitted (or `0`) the user starts in no group —
-use `POST /api/group/set` to change it later.
+**Admins cannot be created via this endpoint**. A new user starts with no building —
+use `POST /api/users/building` to assign one later.
 
 Requires a valid access token:
 
@@ -144,14 +170,13 @@ Requires a valid access token:
 Authorization: Bearer <access_token>
 ```
 
-**Request** — `role` is `0` (Student) or `1` (Teacher); `group_id` is optional (`0` = no group)
+**Request** — `role` is `0` (Student) or `1` (Teacher)
 
 ```json
 {
   "username": "alice",
   "password": "password123",
-  "role": 0,
-  "group_id": 2
+  "role": 0
 }
 ```
 
@@ -198,12 +223,13 @@ Exchange a valid refresh token for a new token pair. The submitted token is inva
 
 ---
 
-## Users & Groups
+## Users
 
-Each user has a `group_id`: `0` means **no group**, any value `> 0` is a real
-group (groups are created on demand the first time they are referenced).
-`GET /api/users` lists every account; the group endpoints read and change
-membership.
+Each user directly owns their game state: a `building_id` (`0` means **no building**),
+plus an inventory and slots (see [Inventory](#inventory)) and a **student roster** — the set
+of [student](#students) IDs assigned to them (see
+[`POST /api/users/students`](#post-apiusersstudents)). `GET /api/users` lists every account;
+the other user endpoints set a user's picture, building, or student roster, or delete an account.
 
 All endpoints require a valid access token:
 
@@ -215,14 +241,15 @@ Authorization: Bearer <access_token>
 
 List all users. Any authenticated user may call it.
 
-**Response `200 OK`** — `group_id` is `0` for users not in any group;
-`profile_pic_url` is empty when no picture is set
+**Response `200 OK`** — `building_id` is `0` for users with no building;
+`profile_pic_url` is empty when no picture is set; `students` is the assigned student
+roster (ascending `student_id` order, empty when none)
 
 ```json
 {
   "users": [
-    { "username": "user",  "role": 1, "group_id": 1, "profile_pic_url": "/images/abc.jpg" },
-    { "username": "alice", "role": 0, "group_id": 0, "profile_pic_url": "" }
+    { "username": "admin", "role": 2, "building_id": 1, "profile_pic_url": "/images/abc.jpg", "students": [1, 2] },
+    { "username": "alice", "role": 0, "building_id": 0, "profile_pic_url": "", "students": [] }
   ]
 }
 ```
@@ -261,6 +288,116 @@ is stored and returned verbatim (typically a URL returned by `POST /api/image`).
 
 ---
 
+### `POST /api/users/building`
+
+Set **the calling user's own** building. A `building_id` of `0` clears the
+assignment. The building drives item generation and the slot type rules (see
+[Buildings](#buildings) and [Inventory](#inventory)).
+
+**Request** — `building_id` is required (`0` = none)
+
+```json
+{ "building_id": 1 }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `building_id` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+### `POST /api/users/students`
+
+Replace a target user's **student roster** with the given list of `student_id`s.
+**Teachers and Admins only.** `username` is **required** (the target user). The set is a
+**full replace**: the roster becomes exactly the valid ids from `student_ids`.
+
+Each id is checked against the [students](#students) table: known ids are assigned, unknown
+ids are reported and **skipped**. The response is therefore always a **`207 Multi-Status`**
+carrying one result per submitted id (duplicates are collapsed).
+
+**Request**
+
+```json
+{ "username": "teacher1", "student_ids": [1, 2, 999] }
+```
+
+**Response `207 Multi-Status`** — each result's `status` is `200` for an assigned student
+or `404` for an unknown one (with an `error`)
+
+```json
+{
+  "results": [
+    { "student_id": 1, "status": 200 },
+    { "student_id": 2, "status": 200 },
+    { "student_id": 999, "status": 404, "error": "學生不存在" }
+  ]
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `username` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | The target `username` does not exist |
+
+---
+
+### `POST /api/users/username`
+
+Rename **the calling user's own** account. The new `username` must not already be taken.
+The rename cascades to everything keyed by the account (inventory, slots, student roster),
+but the caller's existing access/refresh tokens embed the **old** name and stop working — the
+user must **log in again** with the new username.
+
+**Request**
+
+```json
+{ "username": "new_name" }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `username` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `409`  | The requested `username` is already taken |
+
+---
+
+### `POST /api/users/password`
+
+Change **the calling user's own** password. The current password must be supplied and
+correct (a valid token alone is not sufficient).
+
+**Request**
+
+```json
+{ "old_password": "current-secret", "new_password": "new-secret" }
+```
+
+**Response** — `200 OK` with an empty body on success.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, or a missing `old_password` / `new_password` |
+| `401`  | Missing/malformed `Authorization` header, an invalid/expired access token, or a wrong current password |
+
+---
+
 ### `DELETE /api/users/{username}`
 
 Delete a user account. **Teachers and Admins only.** A caller cannot delete the
@@ -279,147 +416,10 @@ account they are authenticated as.
 
 ---
 
-### `POST /api/group/set`
-
-Assign `username` to a group. **Teachers and Admins only.** A `group_id` of `0`
-removes the user from their group; any value `> 0` places them in that group.
-
-**Request**
-
-```json
-{ "username": "alice", "group_id": 2 }
-```
-
-**Response** — `200 OK` with an empty body on success.
-
-**Error responses**
-
-| Status | Condition |
-|--------|-----------|
-| `400`  | Malformed JSON body, or a missing `username` / `group_id` |
-| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller's role is Student or lower |
-| `404`  | The target `username` does not exist |
-
----
-
-### `POST /api/group/name`
-
-Rename a group. The caller must be a **member of the group**, or a **Teacher /
-Admin** (who may rename any group). A group with no name set reads back as
-`"Group <id>"` by default.
-
-**Request** — `group_id` must be greater than 0; `name` must be non-empty
-
-```json
-{ "group_id": 1, "name": "Red Team" }
-```
-
-**Response** — `200 OK` with an empty body on success.
-
-**Error responses**
-
-| Status | Condition |
-|--------|-----------|
-| `400`  | Malformed JSON body, a missing `name`, or `group_id` is missing / not greater than 0 |
-| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is neither a member of the group nor a Teacher/Admin |
-
----
-
-### `POST /api/group/building`
-
-Set a group's building. The caller must be a **member of the group**, or a
-**Teacher / Admin** (who may set any group's building). A `building_id` of `0`
-clears the assignment.
-
-**Request** — `group_id` must be greater than 0; `building_id` is required (`0` = none)
-
-```json
-{ "group_id": 1, "building_id": 3 }
-```
-
-**Response** — `200 OK` with an empty body on success.
-
-**Error responses**
-
-| Status | Condition |
-|--------|-----------|
-| `400`  | Malformed JSON body, a missing `building_id`, or `group_id` is missing / not greater than 0 |
-| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is neither a member of the group nor a Teacher/Admin |
-
----
-
-### `POST /api/group/pfp`
-
-Set a group's profile-picture link. The caller must be a **member of the
-group**, or a **Teacher / Admin** (who may set any group's picture). An empty
-`profile_pic_url` clears the picture. The link is stored and returned verbatim
-(typically a URL returned by `POST /api/image`).
-
-**Request** — `group_id` must be greater than 0
-
-```json
-{ "group_id": 1, "profile_pic_url": "/images/g1.png" }
-```
-
-**Response** — `200 OK` with an empty body on success.
-
-**Error responses**
-
-| Status | Condition |
-|--------|-----------|
-| `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
-| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is neither a member of the group nor a Teacher/Admin |
-
----
-
-### `DELETE /api/group/{id}`
-
-Delete a group. **Teachers and Admins only.** Any users that belonged to the
-group have their membership cleared (their `group_id` is reset to `0`). The
-group's name, building assignment, and profile picture are removed with it.
-
-**Response** — `200 OK` with an empty body on success.
-
-**Error responses**
-
-| Status | Condition |
-|--------|-----------|
-| `400`  | `id` is not a valid number, or is `0` |
-| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller's role is Student or lower |
-| `404`  | No such group (no stored group and no user references it) |
-
----
-
-### `GET /api/group`
-
-Return the calling user's own group, including the full members list. `name`
-defaults to `"Group <id>"` when unset; `building_id` is `0` when no building
-is assigned; `profile_pic_url` is empty when no picture is set.
-
-**Response `200 OK`**
-
-```json
-{ "group_id": 1, "name": "Group 1", "building_id": 0, "members": ["user", "alice"], "profile_pic_url": "" }
-```
-
-**Error responses**
-
-| Status | Condition |
-|--------|-----------|
-| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `404`  | The caller is not in any group |
-
----
-
 ## Buildings
 
-A **building** is a named layout that groups can be assigned to (see
-[`POST /api/group/building`](#post-apigroupbuilding)). Each building has:
+A **building** is a named layout that users can be assigned to (see
+[`POST /api/users/building`](#post-apiusersbuilding)). Each building has:
 
 - `name` — a display name; a building with no name set reads back as `"Building <id>"`.
 - `layout` — an opaque, frontend-specific JSON string, stored and returned **verbatim**
@@ -563,6 +563,144 @@ values are cleared (read back as empty). `name` is required.
 
 ---
 
+## Students
+
+A **student** is a lightweight record: `{ student_id, name, profile_pic_url }`. The
+`student_id` is the **primary key and is supplied by the client** on create (e.g. a
+school-assigned student number) — it is **not** auto-generated, and must be greater than `0`.
+`profile_pic_url` is an image link (typically a URL returned by [`POST /api/image`](#post-apiimage--post-apiaudio)),
+stored and returned verbatim; empty means no picture.
+
+Students are assigned to users via each user's [roster](#post-apiusersstudents). Deleting a
+student **cascades**: its id is removed from every user's roster.
+
+Create, update, and delete are **Teacher/Admin only**; any authenticated user may read.
+All endpoints require a valid access token:
+
+```
+Authorization: Bearer <access_token>
+```
+
+### `POST /api/student`
+
+Create a student under the **client-supplied** `student_id`. **Teachers and Admins only.**
+`student_id` (`> 0`) and `name` are required; `profile_pic_url` is optional.
+
+**Request**
+
+```json
+{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
+```
+
+**Response `200 OK`** — the created student
+
+```json
+{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, a missing/zero `student_id`, or a missing `name` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `409`  | A student with that `student_id` already exists |
+
+---
+
+### `GET /api/student`
+
+List every student. Any authenticated user may call it.
+
+**Response `200 OK`** — a JSON array of students
+
+```json
+[
+  { "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" },
+  { "student_id": 2, "name": "Bob", "profile_pic_url": "" }
+]
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+
+---
+
+### `GET /api/student/{id}`
+
+Read a single student by ID. Any authenticated user may call it.
+
+**Response `200 OK`**
+
+```json
+{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `404`  | No student with that `id` |
+
+---
+
+### `PUT /api/student/{id}`
+
+Replace an existing student. **Teachers and Admins only.** The body is a **full replace**
+of `name` and `profile_pic_url` (`student_id` is taken from the path, not the body);
+`name` is required.
+
+**Request**
+
+```json
+{ "name": "Alice", "profile_pic_url": "/images/new.jpg" }
+```
+
+**Response `200 OK`** — the updated student
+
+```json
+{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/new.jpg" }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}`, malformed JSON body, or a missing `name` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | No student with that `id` |
+
+---
+
+### `DELETE /api/student/{id}`
+
+Delete a student. **Teachers and Admins only.** The deletion **cascades**: the `id` is
+also removed from every user's [student roster](#post-apiusersstudents).
+
+**Response `200 OK`**
+
+```json
+{ "deleted": true }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | A non-numeric `{id}` |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `404`  | No student with that `id` |
+
+---
+
 ## Inventory
 
 Items are **unique instances** stored in an internal `items` table — each is
@@ -572,9 +710,9 @@ pooled question (`0` = none). The items table is managed **internally** (no publ
 create/list API). *(An item with nothing referencing it should eventually be garbage
 collected; that cleanup is a TODO, not yet implemented.)*
 
-A group owns a set of these items, split between:
+A user owns a set of these items, split between:
 
-- **inventory** — the item IDs the group holds loose (not placed), and
+- **inventory** — the item IDs the user holds loose (not placed), and
 - **slots** — `slot_id → item`, where each slot holds at most one item.
 
 Inventory and slots are **disjoint**: an item is either loose in the inventory or sitting
@@ -598,31 +736,30 @@ All inventory endpoints require a valid access token:
 Authorization: Bearer <access_token>
 ```
 
-Every request body carries a `group_id`, which must be **greater than 0** (group
-`0` means "no group"); the relevant `item_id` / `slot_id` fields are listed per
-endpoint below.
+Every request body carries a `username` identifying whose board to act on (it must be
+non-empty); the relevant `item_id` / `slot_id` fields are listed per endpoint below.
 
 ### `POST /api/item`
 
-Return **all** of a group's items: its `inventory` (an array of items) and its `slots`
+Return **all** of a user's items: their `inventory` (an array of items) and their `slots`
 (`slot_id → item`).
 
 **Visibility** — a **student** sees the full `item_id` / `type` / `question_id` only when
-querying **their own** group; for any other group they see **only `type`** (the
+querying **their own** board; for any other user they see **only `type`** (the
 `item_id` and `question_id` fields are omitted). **Teachers and Admins** always see the
 full fields.
 
 **Request**
 
 ```json
-{ "group_id": 1 }
+{ "username": "alice" }
 ```
 
-**Response `200 OK`** (full view — own group, or teacher/admin)
+**Response `200 OK`** (full view — own board, or teacher/admin)
 
 ```json
 {
-  "group_id": 1,
+  "username": "alice",
   "inventory": [
     { "item_id": 1, "type": 10, "question_id": 1 },
     { "item_id": 2, "type": 20, "question_id": 2 }
@@ -633,12 +770,12 @@ full fields.
 }
 ```
 
-**Response `200 OK`** (restricted view — a student querying another group): only `type`
+**Response `200 OK`** (restricted view — a student querying another user): only `type`
 is exposed per item.
 
 ```json
 {
-  "group_id": 1,
+  "username": "alice",
   "inventory": [ { "type": 10 }, { "type": 20 } ],
   "slots": { "0": { "type": 10, "broken": false } }
 }
@@ -648,23 +785,24 @@ is exposed per item.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, or `group_id` is missing / not greater than 0 |
+| `400`  | Malformed JSON body, or a missing `username` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 
 ---
 
 ### `POST /api/item/inv2slot`
 
-Move the owned item `item_id` from the group's inventory into `slot_id`. The item's
-**Type must be allowed in that slot** by the group's building (the building's
+Move the owned item `item_id` from the user's inventory into `slot_id`. The item's
+**Type must be allowed in that slot** by the user's building (the building's
 `item_allowed_slot`); otherwise the move is rejected. The destination slot may already
 hold a **normal** item — it is **swapped** back into the inventory before the new item is
-placed. A slot holding a **broken** item cannot be replaced.
+placed. A slot holding a **broken** item cannot be replaced. A caller may only move items
+on **their own** board.
 
 **Request**
 
 ```json
-{ "group_id": 1, "item_id": 1, "slot_id": 1 }
+{ "username": "alice", "item_id": 1, "slot_id": 1 }
 ```
 
 **Response** — `200 OK` with an empty body on success.
@@ -673,22 +811,23 @@ placed. A slot holding a **broken** item cannot be replaced.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | `item_id` is not in the group's inventory |
-| `400`  | The item's `type` is not allowed in `slot_id` by the group's building |
+| `400`  | `item_id` is not in the user's inventory |
+| `400`  | The item's `type` is not allowed in `slot_id` by the user's building |
 | `400`  | The destination slot holds a **broken** item (已損毀) and cannot be replaced |
-| `403`  | A **student** caller while the server is in `QUIZ2` state |
+| `403`  | The `username` is not the caller's own, or a **student** caller while the server is in `QUIZ2` state |
 
 ---
 
 ### `POST /api/item/slot2inv`
 
-Return the item held in `slot_id` to the group's inventory and clear the slot. Only a
-**normal** item can be returned — a **broken** item cannot be moved back.
+Return the item held in `slot_id` to the user's inventory and clear the slot. Only a
+**normal** item can be returned — a **broken** item cannot be moved back. A caller may
+only move items on **their own** board.
 
 **Request**
 
 ```json
-{ "group_id": 1, "slot_id": 1 }
+{ "username": "alice", "slot_id": 1 }
 ```
 
 **Response** — `200 OK` with an empty body on success.
@@ -698,7 +837,7 @@ Return the item held in `slot_id` to the group's inventory and clear the slot. O
 | Status | Condition |
 |--------|-----------|
 | `400`  | The slot does not exist, is empty, or holds a **broken** item (已損毀) |
-| `403`  | A **student** caller while the server is in `QUIZ2` state |
+| `403`  | The `username` is not the caller's own, or a **student** caller while the server is in `QUIZ2` state |
 
 ---
 
@@ -706,7 +845,7 @@ Return the item held in `slot_id` to the group's inventory and clear the slot. O
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body; a required field (`item_id` / `slot_id`) is missing; `group_id` is missing or not greater than 0; or (for `inv2slot`) `item_id` is not greater than 0 |
+| `400`  | Malformed JSON body; a required field (`item_id` / `slot_id`) is missing; `username` is missing; or (for `inv2slot`) `item_id` is not greater than 0 |
 | `401`  | Missing or malformed `Authorization` header, or an invalid/expired access token |
 
 ---
@@ -718,14 +857,14 @@ The quiz drives the game loop. A **generate** endpoint opens a **single-use sess
 There are two generate endpoints, gated by the server state:
 
 - **`POST /api/question/generate`** (QUIZ1) — *earn an item*. Creates a brand-new item of a
-  random type (drawn from the caller-group's building `difficulty_type` for the requested
+  random type (drawn from the caller's building `difficulty_type` for the requested
   difficulty) tied to a random `area 1` question of that difficulty. Answering **correctly**
-  adds the item to the group's inventory.
-- **`POST /api/question/target`** (QUIZ2) — *attack / repair*. Targets a group's slot.
-  Answering **correctly** breaks an enemy's slotted item or repairs your own broken one.
+  adds the item to the caller's inventory.
+- **`POST /api/question/target`** (QUIZ2) — *attack / repair*. Targets a user's slot.
+  Answering **correctly** breaks another user's slotted item or repairs your own broken one.
 
-The caller's own group comes from their token; the caller must be in a group. The graded
-answer is never leaked in the generate response.
+The caller is identified by their token; generating an item requires the caller to have a
+building assigned. The graded answer is never leaked in the generate response.
 
 ### Server state machine
 
@@ -776,7 +915,7 @@ Roll a new item for the requested `difficulty` and open a session to claim it.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body or missing `difficulty`; caller is in no group; the group's building lists no type for the difficulty; or no `area 1` question matches the difficulty |
+| `400`  | Malformed JSON body or missing `difficulty`; the caller has no building; the building lists no type for the difficulty; or no `area 1` question matches the difficulty |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller is a Student and the server is not in `QUIZ1` state |
 
@@ -784,17 +923,17 @@ Roll a new item for the requested `difficulty` and open a session to claim it.
 
 ### `POST /api/question/target` — attack / repair (QUIZ2)
 
-Open a session against `target_slot_id` in `target_group_id`. **Valid** only when:
+Open a session against `target_slot_id` on `target_username`'s board. **Valid** only when:
 
-- **attack** — the target is **another** group and its slot item is **not broken**; the
+- **attack** — the target is **another** user and their slot item is **not broken**; the
   graded question is that item's own question, and a correct answer **breaks** it; or
-- **repair** — the target is the caller's **own** group and its slot item **is broken**; the
+- **repair** — the target is the caller's **own** board and the slot item **is broken**; the
   graded question is a random `area 2` question, and a correct answer **repairs** it.
 
 **Request**
 
 ```json
-{ "target_group_id": 2, "target_slot_id": 0 }
+{ "target_username": "alice", "target_slot_id": 0 }
 ```
 
 **Response `200 OK`** — `{ "session", "content" }`, same shape as above.
@@ -803,7 +942,7 @@ Open a session against `target_slot_id` in `target_group_id`. **Valid** only whe
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body; `target_group_id` missing / not greater than 0; `target_slot_id` missing; the target slot is empty; the target item has no question; or the target is invalid (own non-broken slot, or another group's broken slot) |
+| `400`  | Malformed JSON body; `target_username` missing; `target_slot_id` missing; the target slot is empty; the target item has no question; or the target is invalid (own non-broken slot, or another user's broken slot) |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller is a Student and the server is not in `QUIZ2` state |
 

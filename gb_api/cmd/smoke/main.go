@@ -1,14 +1,23 @@
-// tart the server (go run ./cmd/server) and then run
-// `go run ./cmd/smoke` to fire real HTTP requests at every route and print the
+// Start the server (go run ./cmd/server) and then run `go run ./cmd/smoke` to
+// fire real HTTP requests at every route described in README.md and print the
 // status code + response body so the behavior can be eyeballed.
+//
+// The script only assumes the seeded admin account (ADMIN_USERNAME /
+// ADMIN_PASSWORD, default admin/admin123) exists; every other fixture it needs
+// (a teacher, a student, a building, a question pool, ...) is created through
+// the API itself. Disposable usernames and ids are suffixed with a per-run
+// timestamp so the script can be re-run against the same (persistent) Postgres
+// database without colliding with a previous run's leftovers.
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
@@ -18,14 +27,56 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-const base = "http://localhost:8080"
-const wsBase = "ws://localhost:8080"
+// localhost:80 is just an nginx redirect stub to https in this deployment;
+// Go's client demotes POST to GET on 301/302, which breaks every POST route,
+// so default straight to the TLS listener.
+var base = getenv("SMOKE_BASE_URL", "https://localhost")
+var wsBase = getenv("SMOKE_WS_BASE_URL", toWsURL(base))
 
-var client = &http.Client{Timeout: 5 * time.Second}
+// client skips TLS certificate verification so the smoke script can run
+// against a server using a self-signed certificate (e.g. local HTTPS dev).
+var client = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	},
+}
 
 var checks, fails int
 
-// req sends Method Path with an optional bearer token and JSON body, returning
+// Item-generation constants tie the smoke building's difficulty_type map to
+// the question pool's area-1 questions so generate's random picks (single
+// candidate per difficulty) stay deterministic.
+const (
+	itemDifficulty1  = 1 // building difficulty_type "1" -> item type 10
+	itemDifficulty2  = 2 // building difficulty_type "2" -> item type 20
+	itemDiff1Answer  = 1 // correct choice index for the area-1/difficulty-1 question
+	itemDiff2Answer  = 0 // correct choice index for the area-1/difficulty-2 question
+	repairAreaAnswer = 0 // correct choice index for the area-2 (repair) question
+)
+
+func getenv(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// toWsURL derives the websocket base URL from the HTTP base URL by swapping
+// the scheme (http -> ws, https -> wss), so SMOKE_BASE_URL alone is enough to
+// point the whole script at an HTTPS server.
+func toWsURL(httpBase string) string {
+	switch {
+	case strings.HasPrefix(httpBase, "https://"):
+		return "wss://" + strings.TrimPrefix(httpBase, "https://")
+	case strings.HasPrefix(httpBase, "http://"):
+		return "ws://" + strings.TrimPrefix(httpBase, "http://")
+	default:
+		return httpBase
+	}
+}
+
+// req sends method+path with an optional bearer token and JSON body, returning
 // the status code and trimmed response body. Never panics on HTTP errors.
 func req(method, path, token string, body any) (int, string) {
 	var rdr io.Reader
@@ -52,6 +103,52 @@ func req(method, path, token string, body any) (int, string) {
 	return resp.StatusCode, strings.TrimSpace(string(b))
 }
 
+// reqMultipart sends a multipart/form-data POST. When includeFile is true the
+// payload is carried under the "file" field; otherwise an unrelated field is
+// sent instead, to exercise the missing-file error path.
+func reqMultipart(path, token, filename string, data []byte, includeFile bool) (int, string) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if includeFile {
+		fw, err := mw.CreateFormFile("file", filename)
+		if err != nil {
+			return -1, err.Error()
+		}
+		if _, err := fw.Write(data); err != nil {
+			return -1, err.Error()
+		}
+	} else {
+		_ = mw.WriteField("note", "no file field")
+	}
+	_ = mw.Close()
+
+	r, err := http.NewRequest("POST", base+path, &buf)
+	if err != nil {
+		return -1, err.Error()
+	}
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	if token != "" {
+		r.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(r)
+	if err != nil {
+		return -1, err.Error()
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, strings.TrimSpace(string(b))
+}
+
+// pngBytes is just the 8-byte PNG signature http.DetectContentType keys off
+// of; the upload path never decodes the image, so nothing past the header
+// matters.
+var pngBytes = []byte("\x89PNG\r\n\x1a\n")
+
+// wavBytes is the minimal RIFF/WAVE header http.DetectContentType recognizes
+// ("RIFF" + 4 masked size bytes + "WAVE"); the rest of a real WAV file is
+// never read by the upload path.
+var wavBytes = []byte("RIFF\x00\x00\x00\x00WAVE")
+
 // show prints one check, comparing the actual status against what we expect.
 func show(title string, status int, want int, body string) {
 	checks++
@@ -60,7 +157,7 @@ func show(title string, status int, want int, body string) {
 		mark = "XX"
 		fails++
 	}
-	fmt.Printf("[%s] %-46s -> %d (want %d)\n", mark, title, status, want)
+	fmt.Printf("[%s] %-58s -> %d (want %d)\n", mark, title, status, want)
 	if body != "" {
 		fmt.Printf("       %s\n", body)
 	}
@@ -78,188 +175,607 @@ func tokens(body string) (access, refresh string) {
 
 func section(name string) { fmt.Printf("\n=== %s ===\n", name) }
 
-// stateEvent mirrors the JSON pushed over the state WebSocket.
-type stateEvent struct {
-	State string `json:"state"`
+// userAccountChecks exercises profile-picture, username-rename, password-change,
+// and account-deletion against disposable accounts, so the teacher/student
+// tokens the later sections share are never invalidated along the way.
+func userAccountChecks(adminAccess, adminUsername, teacherAccess, runID string) {
+	pfpUser := "pfptarget-" + runID
+	renameUser := "renamer-" + runID
+	pwUser := "pwchanger-" + runID
+	gone1 := "throwaway1-" + runID
+	gone2 := "throwaway2-" + runID
+
+	req("POST", "/api/register", teacherAccess, map[string]any{"username": pfpUser, "password": "pw", "role": 0})
+	_, body := req("POST", "/api/login", "", map[string]any{"username": pfpUser, "password": "pw"})
+	pfpAccess, _ := tokens(body)
+
+	st, _ := req("POST", "/api/users/pfp", pfpAccess, map[string]any{"profile_pic_url": "/images/self.jpg"})
+	show("user sets own profile picture", st, 200, "")
+
+	st, body = req("POST", "/api/users/pfp", pfpAccess, map[string]any{"username": "anyone-else", "profile_pic_url": "/images/x.jpg"})
+	show("user sets another user's picture (forbidden)", st, 403, body)
+
+	st, _ = req("POST", "/api/users/pfp", teacherAccess, map[string]any{"username": pfpUser, "profile_pic_url": "/images/teacher-set.jpg"})
+	show("teacher sets another user's picture", st, 200, "")
+
+	st, body = req("POST", "/api/users/pfp", teacherAccess, map[string]any{"username": "no-such-user-" + runID, "profile_pic_url": "/images/x.jpg"})
+	show("set picture for unknown user (404)", st, 404, body)
+
+	// --- rename ---
+	req("POST", "/api/register", teacherAccess, map[string]any{"username": renameUser, "password": "pw", "role": 0})
+	_, body = req("POST", "/api/login", "", map[string]any{"username": renameUser, "password": "pw"})
+	rAccess, _ := tokens(body)
+
+	st, body = req("POST", "/api/users/username", rAccess, map[string]any{})
+	show("rename missing username (rejected)", st, 400, body)
+
+	st, body = req("POST", "/api/users/username", rAccess, map[string]any{"username": adminUsername})
+	show("rename to a taken username (conflict)", st, 409, body)
+
+	renamedUser := renameUser + "-renamed"
+	st, _ = req("POST", "/api/users/username", rAccess, map[string]any{"username": renamedUser})
+	show("user renames self", st, 200, "")
+
+	st, body = req("POST", "/api/login", "", map[string]any{"username": renameUser, "password": "pw"})
+	show("login with old username after rename (rejected)", st, 401, body)
+
+	st, body = req("POST", "/api/login", "", map[string]any{"username": renamedUser, "password": "pw"})
+	show("login with new username after rename", st, 200, body)
+
+	// --- password change ---
+	req("POST", "/api/register", teacherAccess, map[string]any{"username": pwUser, "password": "oldpw", "role": 0})
+	_, body = req("POST", "/api/login", "", map[string]any{"username": pwUser, "password": "oldpw"})
+	pAccess, _ := tokens(body)
+
+	st, body = req("POST", "/api/users/password", pAccess, map[string]any{"old_password": "wrong", "new_password": "newpw"})
+	show("change password with wrong current password (rejected)", st, 401, body)
+
+	st, _ = req("POST", "/api/users/password", pAccess, map[string]any{"old_password": "oldpw", "new_password": "newpw"})
+	show("change own password", st, 200, "")
+
+	st, body = req("POST", "/api/login", "", map[string]any{"username": pwUser, "password": "oldpw"})
+	show("login with old password after change (rejected)", st, 401, body)
+
+	st, body = req("POST", "/api/login", "", map[string]any{"username": pwUser, "password": "newpw"})
+	show("login with new password after change", st, 200, body)
+
+	// --- delete ---
+	req("POST", "/api/register", teacherAccess, map[string]any{"username": gone1, "password": "pw", "role": 0})
+
+	st, body = req("DELETE", "/api/users/"+gone1, pAccess, nil)
+	show("student deletes a user (forbidden)", st, 403, body)
+
+	st, body = req("DELETE", "/api/users/"+gone1, adminAccess, nil)
+	show("admin deletes a user", st, 200, body)
+
+	st, body = req("DELETE", "/api/users/"+gone1, adminAccess, nil)
+	show("delete already-deleted user (404)", st, 404, body)
+
+	st, body = req("DELETE", "/api/users/"+adminUsername, adminAccess, nil)
+	show("admin tries to delete self (forbidden)", st, 403, body)
+
+	req("POST", "/api/register", teacherAccess, map[string]any{"username": gone2, "password": "pw", "role": 0})
+	st, body = req("DELETE", "/api/users/"+gone2, teacherAccess, nil)
+	show("teacher deletes a user", st, 200, body)
 }
 
-// readEvent reads one JSON frame with a short deadline.
-func readEvent(conn *websocket.Conn) (stateEvent, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+// buildingChecks exercises the building CRUD endpoints and returns the id of
+// the building created, for later sections to assign/use.
+func buildingChecks(adminAccess, studentAccess string) uint {
+	itemAllowedSlot := map[string]any{"10": []int{0, 1}, "20": []int{2}}
+	difficultyType := map[string]any{"1": []int{10}, "2": []int{20}}
+
+	st, body := req("POST", "/api/building", adminAccess, map[string]any{
+		"name":              "Smoke Library",
+		"layout":            `{"w":3,"h":2}`,
+		"item_allowed_slot": itemAllowedSlot,
+		"difficulty_type":   difficultyType,
+	})
+	show("admin creates a building", st, 200, body)
+	var b struct {
+		BuildingID uint `json:"building_id"`
+	}
+	json.Unmarshal([]byte(body), &b)
+
+	st, body = req("POST", "/api/building", adminAccess, map[string]any{})
+	show("create building missing name (rejected)", st, 400, body)
+
+	st, body = req("POST", "/api/building", studentAccess, map[string]any{"name": "Nope"})
+	show("student creates a building (forbidden)", st, 403, body)
+
+	st, body = req("GET", "/api/building", adminAccess, nil)
+	show("list buildings", st, 200, body)
+
+	idPath := fmt.Sprintf("/api/building/%d", b.BuildingID)
+	st, body = req("GET", idPath, studentAccess, nil)
+	show("get building by id", st, 200, body)
+
+	st, body = req("GET", "/api/building/not-a-number", adminAccess, nil)
+	show("get building with non-numeric id (rejected)", st, 400, body)
+
+	st, body = req("GET", "/api/building/999999999", adminAccess, nil)
+	show("get unknown building id (404)", st, 404, body)
+
+	st, body = req("PUT", idPath, adminAccess, map[string]any{
+		"name":              "Smoke Library",
+		"layout":            `{"w":4,"h":2}`,
+		"item_allowed_slot": itemAllowedSlot,
+		"difficulty_type":   difficultyType,
+	})
+	show("admin updates building", st, 200, body)
+
+	st, body = req("PUT", idPath, studentAccess, map[string]any{"name": "Nope"})
+	show("student updates building (forbidden)", st, 403, body)
+
+	st, body = req("PUT", "/api/building/999999999", adminAccess, map[string]any{"name": "Ghost"})
+	show("update unknown building (404)", st, 404, body)
+
+	return b.BuildingID
+}
+
+// studentChecks exercises the student CRUD endpoints and the roster-assignment
+// endpoint, using a freshly minted student id so reruns never collide.
+func studentChecks(adminAccess, studentAccess, rosterTarget string) {
+	sid := uint(time.Now().UnixNano()%900000) + 100000
+	otherSid := sid + 1
+
+	st, body := req("POST", "/api/student", adminAccess, map[string]any{"student_id": sid, "name": "Alice"})
+	show("admin creates a student", st, 200, body)
+
+	st, body = req("POST", "/api/student", adminAccess, map[string]any{"student_id": sid, "name": "Alice"})
+	show("create duplicate student id (conflict)", st, 409, body)
+
+	st, body = req("POST", "/api/student", adminAccess, map[string]any{"name": "NoID"})
+	show("create student missing student_id (rejected)", st, 400, body)
+
+	st, body = req("POST", "/api/student", adminAccess, map[string]any{"student_id": otherSid})
+	show("create student missing name (rejected)", st, 400, body)
+
+	st, body = req("POST", "/api/student", studentAccess, map[string]any{"student_id": otherSid, "name": "Nope"})
+	show("student creates a student (forbidden)", st, 403, body)
+
+	st, body = req("GET", "/api/student", adminAccess, nil)
+	show("list students", st, 200, body)
+
+	sidPath := fmt.Sprintf("/api/student/%d", sid)
+	st, body = req("GET", sidPath, studentAccess, nil)
+	show("get student by id", st, 200, body)
+
+	st, body = req("GET", "/api/student/999999999", adminAccess, nil)
+	show("get unknown student id (404)", st, 404, body)
+
+	st, body = req("PUT", sidPath, adminAccess, map[string]any{"name": "Alice Updated"})
+	show("admin updates student", st, 200, body)
+
+	st, body = req("PUT", "/api/student/999999999", adminAccess, map[string]any{"name": "Ghost"})
+	show("update unknown student (404)", st, 404, body)
+
+	st, body = req("POST", "/api/users/students", adminAccess, map[string]any{
+		"username": rosterTarget, "student_ids": []uint{sid, 999999999},
+	})
+	show("assign roster (207 multi-status)", st, 207, body)
+
+	st, body = req("POST", "/api/users/students", adminAccess, map[string]any{"student_ids": []uint{sid}})
+	show("assign roster missing username (rejected)", st, 400, body)
+
+	st, body = req("DELETE", sidPath, adminAccess, nil)
+	show("admin deletes student", st, 200, body)
+
+	st, body = req("DELETE", sidPath, adminAccess, nil)
+	show("delete already-deleted student (404)", st, 404, body)
+
+	st, body = req("DELETE", fmt.Sprintf("/api/student/%d", otherSid), studentAccess, nil)
+	show("student deletes a student (forbidden)", st, 403, body)
+}
+
+// questionPoolChecks exercises question pool management (upload/search/get/
+// update/delete) and seeds the two area-1 questions (difficulty 1 and 2) plus
+// the area-2 question that stateItemsQuestions relies on for item generation
+// and slot repair.
+func questionPoolChecks(adminAccess, studentAccess string) {
+	st, body := req("POST", "/api/question/upload", adminAccess, map[string]any{
+		"questions": []map[string]any{
+			{ // area 1 / difficulty 1 -> drives item generation for type 10
+				"content": map[string]any{
+					"description": map[string]any{"type": "text", "data": "Smoke Q1: pick B"},
+					"choices":     map[string]any{"type": "text", "data": []string{"A", "B", "C", "D"}},
+				},
+				"answer":     map[string]any{"type": "index", "data": itemDiff1Answer},
+				"difficulty": itemDifficulty1,
+				"area":       1,
+			},
+			{ // area 1 / difficulty 2 -> drives item generation for type 20
+				"content": map[string]any{
+					"description": map[string]any{"type": "text", "data": "Smoke Q2: pick A"},
+					"choices":     map[string]any{"type": "text", "data": []string{"A", "B"}},
+				},
+				"answer":     map[string]any{"type": "index", "data": itemDiff2Answer},
+				"difficulty": itemDifficulty2,
+				"area":       1,
+			},
+			{ // area 2 -> drives the repair flow
+				"content": map[string]any{
+					"description": map[string]any{"type": "text", "data": "Smoke Q3 repair: pick A"},
+					"choices":     map[string]any{"type": "text", "data": []string{"A", "B"}},
+				},
+				"answer": map[string]any{"type": "index", "data": repairAreaAnswer},
+				"area":   2,
+			},
+			{ // invalid: empty description, should be rejected rather than fail the batch
+				"content": map[string]any{"description": map[string]any{"type": "text", "data": ""}},
+				"answer":  map[string]any{"type": "index", "data": 0},
+			},
+			{ // disposable, only used to exercise get/search/update/delete below
+				"content": map[string]any{
+					"description": map[string]any{"type": "text", "data": "Smoke Q5 disposable"},
+					"choices":     map[string]any{"type": "text", "data": []string{"A", "B"}},
+				},
+				"answer":     map[string]any{"type": "index", "data": 0},
+				"difficulty": 77,
+				"area":       77,
+			},
+		},
+	})
+	show("teacher uploads a question batch (207 multi-status)", st, 207, body)
+
+	var up struct {
+		Results []struct {
+			ID uint `json:"id"`
+		} `json:"results"`
+	}
+	json.Unmarshal([]byte(body), &up)
+	var disposableID uint
+	if len(up.Results) == 5 {
+		disposableID = up.Results[4].ID
+	}
+
+	st, body = req("POST", "/api/question/upload", studentAccess, map[string]any{"questions": []map[string]any{{}}})
+	show("student uploads questions (forbidden)", st, 403, body)
+
+	st, body = req("POST", "/api/question/upload", adminAccess, map[string]any{"questions": []map[string]any{}})
+	show("upload empty question list (rejected)", st, 400, body)
+
+	st, body = req("GET", "/api/question/search?difficulty=77&area=77", adminAccess, nil)
+	show("search questions by difficulty+area", st, 200, body)
+
+	st, body = req("GET", "/api/question/search?difficulty=not-a-number", adminAccess, nil)
+	show("search with invalid difficulty (rejected)", st, 400, body)
+
+	st, body = req("GET", "/api/question/search", studentAccess, nil)
+	show("student searches questions (forbidden)", st, 403, body)
+
+	disposablePath := fmt.Sprintf("/api/question/%d", disposableID)
+	st, body = req("GET", disposablePath, studentAccess, nil)
+	show("get question by id (any user)", st, 200, body)
+
+	st, body = req("GET", "/api/question/999999999", adminAccess, nil)
+	show("get unknown question id (404)", st, 404, body)
+
+	st, body = req("PUT", disposablePath, adminAccess, map[string]any{
+		"content": map[string]any{
+			"description": map[string]any{"type": "text", "data": "Smoke Q5 updated"},
+			"choices":     map[string]any{"type": "text", "data": []string{"A", "B"}},
+		},
+		"answer":     map[string]any{"type": "index", "data": 0},
+		"difficulty": 77,
+		"area":       77,
+	})
+	show("admin updates question", st, 200, "")
+
+	st, body = req("PUT", disposablePath, studentAccess, map[string]any{})
+	show("student updates question (forbidden)", st, 403, body)
+
+	st, body = req("PUT", "/api/question/999999999", adminAccess, map[string]any{
+		"content": map[string]any{"description": map[string]any{"type": "text", "data": "x"}},
+		"answer":  map[string]any{"type": "index", "data": 0},
+	})
+	show("update unknown question (404)", st, 404, body)
+
+	st, body = req("DELETE", disposablePath, adminAccess, nil)
+	show("admin deletes question", st, 200, body)
+
+	st, body = req("DELETE", disposablePath, adminAccess, nil)
+	show("delete already-deleted question (404)", st, 404, body)
+}
+
+// stateItemsQuestions exercises the server state machine together with the
+// item-generation, inventory-movement, and attack/repair question flows. The
+// teacher token bypasses every state gate; the student token is used to prove
+// the gates themselves (QUIZ1 for generate, QUIZ2 for target).
+func stateItemsQuestions(adminAccess, teacherAccess, teacherUsername, studentAccess, studentUsername string) {
+	st, body := req("GET", "/api/state", adminAccess, nil)
+	show("get state (default)", st, 200, body)
+
+	st, _ = req("POST", "/api/state", adminAccess, map[string]any{"state": "QUIZ1"})
+	show("admin sets state QUIZ1", st, 200, "")
+
+	st, body = req("POST", "/api/state", studentAccess, map[string]any{"state": "NORMAL"})
+	show("student tries to set state (forbidden)", st, 403, body)
+
+	st, body = req("POST", "/api/state", adminAccess, map[string]any{"state": "BOGUS"})
+	show("set invalid state value", st, 400, body)
+
+	var q struct {
+		Session string `json:"session"`
+	}
+	var ans struct {
+		ItemID uint `json:"item_id"`
+	}
+
+	// --- teacher earns a type-10 item (bypasses the QUIZ1 gate) ---
+	st, body = req("POST", "/api/question/generate", teacherAccess, map[string]any{"difficulty": itemDifficulty1})
+	show("teacher generates a type-10 item (difficulty 1)", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+
+	st, body = req("POST", "/api/question/answer", teacherAccess, map[string]any{"session": q.Session, "answer": itemDiff1Answer})
+	show("answer correctly -> item granted (item_id)", st, 200, body)
+	json.Unmarshal([]byte(body), &ans)
+	item10 := ans.ItemID
+
+	st, body = req("POST", "/api/question/answer", teacherAccess, map[string]any{"session": q.Session, "answer": itemDiff1Answer})
+	show("answer same session again (consumed)", st, 400, body)
+
+	st, body = req("POST", "/api/question/answer", teacherAccess, map[string]any{"answer": 0})
+	show("answer missing session", st, 400, body)
+
+	st, body = req("POST", "/api/question/generate", teacherAccess, map[string]any{"difficulty": 9})
+	show("generate item for a difficulty with no type (rejected)", st, 400, body)
+
+	// --- teacher earns a type-20 item too, for the "type not allowed" check below ---
+	st, body = req("POST", "/api/question/generate", teacherAccess, map[string]any{"difficulty": itemDifficulty2})
+	show("teacher generates a type-20 item (difficulty 2)", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+
+	st, body = req("POST", "/api/question/answer", teacherAccess, map[string]any{"session": q.Session, "answer": itemDiff2Answer})
+	show("answer correctly -> item granted (item_id)", st, 200, body)
+	json.Unmarshal([]byte(body), &ans)
+	item20 := ans.ItemID
+
+	// --- items ---
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": ""})
+	show("query items with empty username (rejected)", st, 400, body)
+
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": teacherUsername})
+	show("query own items (inventory + slots)", st, 200, body)
+
+	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": 0, "slot_id": 1})
+	show("inv2slot with item_id 0 (rejected)", st, 400, body)
+
+	st, _ = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": item10, "slot_id": 1})
+	show("move type-10 item into allowed slot 1", st, 200, "")
+
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": teacherUsername})
+	show("items after inv2slot", st, 200, body)
+
+	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": item20, "slot_id": 1})
+	show("move type-20 item into slot 1 (type not allowed)", st, 400, body)
+
+	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": 999999999, "slot_id": 1})
+	show("move item not in inventory (rejected)", st, 400, body)
+
+	st, body = req("POST", "/api/item/slot2inv", teacherAccess, map[string]any{"username": teacherUsername, "slot_id": 1})
+	show("move slot 1 back to inventory", st, 200, body)
+
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": teacherUsername})
+	show("items after slot2inv (item restored)", st, 200, body)
+
+	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername})
+	show("inv2slot missing item_id/slot_id", st, 400, body)
+
+	// --- student generate, gated by QUIZ1 ---
+	st, _ = req("POST", "/api/state", adminAccess, map[string]any{"state": "NORMAL"})
+	show("admin sets state NORMAL", st, 200, "")
+
+	st, body = req("POST", "/api/question/generate", studentAccess, map[string]any{"difficulty": itemDifficulty1})
+	show("student generates item outside QUIZ1 (blocked)", st, 403, body)
+
+	st, _ = req("POST", "/api/state", adminAccess, map[string]any{"state": "QUIZ1"})
+	show("admin sets state QUIZ1", st, 200, "")
+
+	st, body = req("POST", "/api/question/generate", studentAccess, map[string]any{"difficulty": itemDifficulty1})
+	show("student generates item during QUIZ1", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+
+	st, body = req("POST", "/api/question/answer", studentAccess, map[string]any{"session": q.Session, "answer": itemDiff1Answer})
+	show("student answers correctly -> item granted", st, 200, body)
+
+	st, body = req("POST", "/api/item", studentAccess, map[string]any{"username": studentUsername})
+	show("student queries own items", st, 200, body)
+
+	// --- attack/repair flow (QUIZ2) ---
+	st, _ = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": item10, "slot_id": 1})
+	show("re-slot the type-10 item for the attack/repair flow", st, 200, "")
+
+	st, _ = req("POST", "/api/state", adminAccess, map[string]any{"state": "QUIZ2"})
+	show("admin sets state QUIZ2", st, 200, "")
+
+	st, body = req("POST", "/api/question/target", studentAccess, map[string]any{"target_username": teacherUsername, "target_slot_id": 1})
+	show("student targets teacher's slot 1 (attack)", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+
+	st, body = req("POST", "/api/question/answer", studentAccess, map[string]any{"session": q.Session, "answer": itemDiff1Answer})
+	show("answer correctly -> break the item (success)", st, 200, body)
+
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": teacherUsername})
+	show("teacher items (slot 1 now broken)", st, 200, body)
+
+	st, body = req("POST", "/api/question/target", teacherAccess, map[string]any{"target_username": teacherUsername, "target_slot_id": 1})
+	show("teacher targets own broken slot (repair)", st, 200, body)
+	json.Unmarshal([]byte(body), &q)
+
+	st, body = req("POST", "/api/question/answer", teacherAccess, map[string]any{"session": q.Session, "answer": repairAreaAnswer})
+	show("answer correctly -> repair the item (success)", st, 200, body)
+
+	st, body = req("POST", "/api/question/target", teacherAccess, map[string]any{"target_username": teacherUsername, "target_slot_id": 1})
+	show("target own non-broken slot (invalid)", st, 400, body)
+
+	st, body = req("POST", "/api/question/generate", studentAccess, map[string]any{"difficulty": itemDifficulty1})
+	show("student generates item in QUIZ2 (blocked)", st, 403, body)
+
+	st, _ = req("POST", "/api/state", adminAccess, map[string]any{"state": "NORMAL"})
+	show("admin sets state NORMAL", st, 200, "")
+}
+
+// mediaChecks exercises image/audio upload, relying only on the magic-byte
+// signatures http.DetectContentType keys off of.
+func mediaChecks(token string) {
+	st, body := reqMultipart("/api/image", token, "smoke.png", pngBytes, true)
+	show("upload a PNG image", st, 201, body)
+
+	st, body = reqMultipart("/api/image", token, "smoke.txt", []byte("not an image"), true)
+	show("upload an unsupported image format (rejected)", st, 415, body)
+
+	st, body = reqMultipart("/api/image", token, "smoke.png", pngBytes, false)
+	show("upload image with no file field (rejected)", st, 400, body)
+
+	st, body = reqMultipart("/api/image", "", "smoke.png", pngBytes, true)
+	show("upload image without token", st, 401, body)
+
+	st, body = reqMultipart("/api/audio", token, "smoke.wav", wavBytes, true)
+	show("upload a WAV audio file", st, 201, body)
+
+	st, body = reqMultipart("/api/audio", token, "smoke.txt", []byte("not audio"), true)
+	show("upload an unsupported audio format (rejected)", st, 415, body)
+}
+
+// --- state websocket ---
+
+type stateEvent struct {
+	State     string     `json:"state"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	EndTime   *time.Time `json:"end_time,omitempty"`
+}
+
+func readEvent(ctx context.Context, c *websocket.Conn) (stateEvent, error) {
 	var ev stateEvent
-	err := wsjson.Read(ctx, conn, &ev)
+	err := wsjson.Read(ctx, c, &ev)
 	return ev, err
 }
 
-// wsChecks exercises the /api/state/ws endpoint: header auth, the on-connect
-// snapshot, live QUIZ2/NORMAL transitions, query-param auth, and rejection of
-// unauthenticated dials.
-func wsChecks(access, sAccess string) {
-	// Unauthenticated dial must be rejected before the upgrade (HTTP 401).
-	dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Second)
-	_, resp, err := websocket.Dial(dctx, wsBase+"/api/state/ws", nil)
-	dcancel()
-	gotStatus := -1
-	if resp != nil {
-		gotStatus = resp.StatusCode
-	}
-	checks++
-	if err != nil && gotStatus == http.StatusUnauthorized {
-		fmt.Printf("[OK] %-46s -> %d (want 401)\n", "ws dial without token rejected", gotStatus)
-	} else {
-		fails++
-		fmt.Printf("[XX] %-46s -> %d (want 401, err=%v)\n", "ws dial without token rejected", gotStatus, err)
-	}
-
-	// Authenticated dial via Authorization header.
-	dctx, dcancel = context.WithTimeout(context.Background(), 3*time.Second)
-	conn, _, err := websocket.Dial(dctx, wsBase+"/api/state/ws", &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + access}},
-	})
-	dcancel()
-	if err != nil {
-		checks++
-		fails++
-		fmt.Printf("[XX] %-46s -> err=%v\n", "ws dial with header token", err)
-		return
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	// On-connect snapshot (state was left at NORMAL by the prior section).
-	ev, err := readEvent(conn)
-	showWS("ws snapshot on connect (NORMAL)", ev, err, "NORMAL")
-
-	// Flip to QUIZ2 via REST and expect a pushed event.
-	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
-	show("set state QUIZ2 (to trigger ws)", st, 200, "")
-	ev, err = readEvent(conn)
-	showWS("ws receives QUIZ2 transition", ev, err, "QUIZ2")
-
-	// Flip back to NORMAL and expect another event.
-	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
-	show("set state NORMAL (to trigger ws)", st, 200, "")
-	ev, err = readEvent(conn)
-	showWS("ws receives NORMAL transition", ev, err, "NORMAL")
-
-	// A non-teacher token may still subscribe (same policy as GET /api/state),
-	// this time authenticating via the ?access_token= query fallback.
-	dctx, dcancel = context.WithTimeout(context.Background(), 3*time.Second)
-	sConn, _, err := websocket.Dial(dctx, wsBase+"/api/state/ws?access_token="+sAccess, nil)
-	dcancel()
-	if err != nil {
-		checks++
-		fails++
-		fmt.Printf("[XX] %-46s -> err=%v\n", "ws dial with query-param token", err)
-		return
-	}
-	defer sConn.Close(websocket.StatusNormalClosure, "")
-	ev, err = readEvent(sConn)
-	showWS("ws query-param auth snapshot", ev, err, "NORMAL")
-}
-
-// showWS prints one WebSocket check comparing the received event to expectations.
 func showWS(title string, ev stateEvent, err error, wantState string) {
 	checks++
-	if err == nil && ev.State == wantState {
-		fmt.Printf("[OK] %-46s -> {state:%s}\n", title, ev.State)
+	if err != nil {
+		fails++
+		fmt.Printf("[XX] %-58s -> error: %v\n", title, err)
 		return
 	}
-	fails++
-	fmt.Printf("[XX] %-46s -> {state:%s} (want {state:%s} err=%v)\n",
-		title, ev.State, wantState, err)
+	mark := "OK"
+	if wantState != "" && ev.State != wantState {
+		mark = "XX"
+		fails++
+	}
+	fmt.Printf("[%s] %-58s -> state=%s updated_at=%s\n", mark, title, ev.State, ev.UpdatedAt.Format(time.RFC3339))
 }
 
-// allReceived reads one frame from every connection and reports whether they
-// all carry wantState. It always drains every conn (no early return) so a single
-// slow/wrong subscriber does not leave the others' frames unread.
-func allReceived(conns []*websocket.Conn, wantState string) bool {
-	ok := true
-	for i, c := range conns {
-		ev, err := readEvent(c)
-		if err != nil || ev.State != wantState {
-			ok = false
-			fmt.Printf("       subscriber %d: got {state:%s} err=%v\n", i, ev.State, err)
-		}
-	}
-	return ok
-}
+// wsChecks connects to the state websocket, checks the initial snapshot, then
+// drives a couple of state transitions through the REST API and confirms they
+// are pushed to the socket. Assumes the state is NORMAL on entry and leaves it
+// NORMAL on exit.
+func wsChecks(access, sAccess string) {
+	st, body := req("GET", "/api/state/ws", "", nil)
+	show("connect to state ws without token (rejected)", st, 401, body)
 
-// wsFanout opens many student subscribers on /api/state/ws and verifies that a
-// single teacher-driven transition is broadcast to every one of them. All
-// subscribers share one student token — the endpoint authorizes any user, and a
-// token may back any number of independent connections.
-func wsFanout(access, sAccess string) {
-	const n = 10
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	// Establish a known NORMAL baseline before anyone subscribes, so every
-	// snapshot is NORMAL and the later flip to QUIZ2 is a real transition.
-	req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
-
-	conns := make([]*websocket.Conn, 0, n)
-	defer func() {
-		for _, c := range conns {
-			c.Close(websocket.StatusNormalClosure, "")
-		}
-	}()
-
-	snapOK := true
-	for i := range n {
-		dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Second)
-		c, _, err := websocket.Dial(dctx, wsBase+"/api/state/ws?access_token="+sAccess, nil)
-		dcancel()
-		if err != nil {
-			snapOK = false
-			fmt.Printf("       student %d dial err: %v\n", i, err)
-			break
-		}
-		conns = append(conns, c)
-		if ev, err := readEvent(c); err != nil || ev.State != "NORMAL" {
-			snapOK = false
-		}
-	}
-	checks++
-	if snapOK && len(conns) == n {
-		fmt.Printf("[OK] %-46s -> %d connected, all NORMAL snapshot\n", "fanout: students subscribe", n)
-	} else {
+	c, _, err := websocket.Dial(ctx, wsBase+"/api/state/ws?access_token="+sAccess, &websocket.DialOptions{HTTPClient: client})
+	if err != nil {
+		fmt.Printf("[XX] connect to state ws via query param -> error: %v\n", err)
 		fails++
-		fmt.Printf("[XX] %-46s -> %d/%d connected ok=%v\n", "fanout: students subscribe", len(conns), n, snapOK)
+		checks++
+		return
 	}
+	defer c.CloseNow()
 
-	// One teacher transition must reach every subscriber.
-	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
-	show("fanout: teacher sets QUIZ2", st, 200, "")
-	checks++
-	if allReceived(conns, "QUIZ2") {
-		fmt.Printf("[OK] %-46s -> all %d received QUIZ2\n", "fanout: every subscriber notified", len(conns))
-	} else {
-		fails++
-		fmt.Printf("[XX] %-46s -> not all %d received QUIZ2\n", "fanout: every subscriber notified", len(conns))
-	}
+	ev, err := readEvent(ctx, c)
+	showWS("initial snapshot over ws", ev, err, "NORMAL")
 
-	// And again on the way back to NORMAL.
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "QUIZ1"})
+	show("admin sets state QUIZ1", st, 200, "")
+
+	ev, err = readEvent(ctx, c)
+	showWS("ws push on transition to QUIZ1", ev, err, "QUIZ1")
+
 	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
-	show("fanout: teacher sets NORMAL", st, 200, "")
+	show("admin sets state NORMAL", st, 200, "")
+
+	ev, err = readEvent(ctx, c)
+	showWS("ws push on transition to NORMAL", ev, err, "NORMAL")
+
+	c.Close(websocket.StatusNormalClosure, "")
+}
+
+// allReceived blocks until every subscriber channel has produced at least one
+// event matching wantState, or the context expires.
+func allReceived(ctx context.Context, conns []*websocket.Conn, wantState string) bool {
+	for _, c := range conns {
+		ev, err := readEvent(ctx, c)
+		if err != nil || ev.State != wantState {
+			return false
+		}
+	}
+	return true
+}
+
+// wsFanout opens several state-websocket subscribers at once and checks that a
+// single state transition is broadcast to all of them.
+func wsFanout(access, sAccess string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var conns []*websocket.Conn
+	for i := range 3 {
+		c, _, err := websocket.Dial(ctx, wsBase+"/api/state/ws?access_token="+sAccess, &websocket.DialOptions{HTTPClient: client})
+		if err != nil {
+			fmt.Printf("[XX] open fanout subscriber %d -> error: %v\n", i, err)
+			fails++
+			checks++
+			return
+		}
+		defer c.CloseNow()
+		conns = append(conns, c)
+	}
+
+	// Drain each subscriber's initial snapshot before triggering the transition.
+	for _, c := range conns {
+		readEvent(ctx, c)
+	}
+
+	st, _ := req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
+	show("admin sets state QUIZ2", st, 200, "")
+
 	checks++
-	if allReceived(conns, "NORMAL") {
-		fmt.Printf("[OK] %-46s -> all %d received NORMAL\n", "fanout: every subscriber notified", len(conns))
+	if allReceived(ctx, conns, "QUIZ2") {
+		fmt.Printf("[OK] %-58s -> all %d subscribers received QUIZ2\n", "fanout to multiple ws subscribers", len(conns))
 	} else {
 		fails++
-		fmt.Printf("[XX] %-46s -> not all %d received NORMAL\n", "fanout: every subscriber notified", len(conns))
+		fmt.Printf("[XX] %-58s -> not all subscribers received QUIZ2\n", "fanout to multiple ws subscribers")
+	}
+
+	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
+	show("admin sets state NORMAL", st, 200, "")
+
+	for _, c := range conns {
+		c.Close(websocket.StatusNormalClosure, "")
 	}
 }
 
 func main() {
+	runID := fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000)
+
 	section("AUTH")
 
-	st, _ := req("POST", "/api/login", "", map[string]any{"username": "user", "password": "wrongpass"})
+	adminUsername := getenv("ADMIN_USERNAME", "admin")
+	adminPassword := getenv("ADMIN_PASSWORD", "admin123")
+
+	st, _ := req("POST", "/api/login", "", map[string]any{"username": adminUsername, "password": "wrong-" + adminPassword})
 	show("login with wrong password", st, 401, "")
 
-	st, body := req("POST", "/api/login", "", map[string]any{"username": "user", "password": "password123"})
-	show("login as seeded teacher (user)", st, 200, body)
+	st, body := req("POST", "/api/login", "", map[string]any{"username": adminUsername, "password": adminPassword})
+	show("login as seeded admin", st, 200, body)
 	access, refresh := tokens(body)
 	if access == "" {
-		fmt.Println("\nFATAL: could not obtain access token; is the server running on :8080?")
+		fmt.Printf("\nFATAL: could not obtain an access token for %q; is the server running at %s with that admin account?\n", adminUsername, base)
 		os.Exit(1)
 	}
 
@@ -271,158 +787,63 @@ func main() {
 
 	section("REGISTER (teacher-only)")
 
-	st, _ = req("POST", "/api/register", access, map[string]any{"username": "stud1", "password": "pw", "role": 0, "group_id": 2})
-	show("teacher registers a student into group 2", st, 201, "")
+	teacherUsername := "teacher1-" + runID
+	studentUsername := "stud1-" + runID
 
-	st, body = req("POST", "/api/register", access, map[string]any{"username": "stud1", "password": "pw", "role": 0})
+	st, _ = req("POST", "/api/register", access, map[string]any{"username": teacherUsername, "password": "pw", "role": 1})
+	show("admin registers a teacher", st, 201, "")
+
+	st, body = req("POST", "/api/register", access, map[string]any{"username": teacherUsername, "password": "pw", "role": 1})
 	show("register duplicate username", st, 409, body)
 
-	st, body = req("POST", "/api/register", access, map[string]any{"username": "admin1", "password": "pw", "role": 2})
-	show("teacher tries to create admin (role 2)", st, 403, body)
+	st, body = req("POST", "/api/register", access, map[string]any{"username": "admin1-" + runID, "password": "pw", "role": 2})
+	show("admin tries to create an admin (role 2, forbidden)", st, 403, body)
 
-	st, body = req("POST", "/api/register", access, map[string]any{"username": "noRole", "password": "pw"})
+	st, body = req("POST", "/api/register", access, map[string]any{"username": "norole-" + runID, "password": "pw"})
 	show("register missing role", st, 400, body)
 
-	st, body = req("POST", "/api/login", "", map[string]any{"username": "stud1", "password": "pw"})
-	show("login as new student stud1", st, 200, body)
+	st, body = req("POST", "/api/login", "", map[string]any{"username": teacherUsername, "password": "pw"})
+	show("login as new teacher", st, 200, body)
+	tAccess, _ := tokens(body)
+
+	st, _ = req("POST", "/api/register", tAccess, map[string]any{"username": studentUsername, "password": "pw", "role": 0})
+	show("teacher registers a student", st, 201, "")
+
+	st, body = req("POST", "/api/login", "", map[string]any{"username": studentUsername, "password": "pw"})
+	show("login as new student", st, 200, body)
 	sAccess, _ := tokens(body)
 
-	st, body = req("POST", "/api/register", sAccess, map[string]any{"username": "x", "password": "pw", "role": 0})
+	st, body = req("POST", "/api/register", sAccess, map[string]any{"username": "x-" + runID, "password": "pw", "role": 0})
 	show("student tries to register (forbidden)", st, 403, body)
 
-	section("GROUPS")
+	section("USER ACCOUNT MANAGEMENT")
+	userAccountChecks(access, adminUsername, tAccess, runID)
 
-	st, body = req("GET", "/api/group", access, nil)
-	show("teacher queries own group", st, 200, body)
+	section("BUILDING CRUD")
+	buildingID := buildingChecks(access, sAccess)
 
-	st, _ = req("POST", "/api/group/set", access, map[string]any{"username": "stud1", "group_id": 1})
-	show("teacher adds stud1 to group 1", st, 200, "")
+	section("STUDENT CRUD + ROSTER")
+	studentChecks(access, sAccess, teacherUsername)
 
-	st, body = req("GET", "/api/group", access, nil)
-	show("query own group (members now include stud1)", st, 200, body)
+	section("QUESTION POOL MANAGEMENT")
+	questionPoolChecks(access, sAccess)
 
-	st, _ = req("POST", "/api/group/set", access, map[string]any{"username": "stud1", "group_id": 0})
-	show("teacher removes stud1 from group (group_id 0)", st, 200, "")
+	section("ASSIGN BUILDING")
 
-	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 0})
-	show("query items of group 0 (rejected, must be > 0)", st, 400, body)
+	st, _ = req("POST", "/api/users/building", tAccess, map[string]any{"building_id": buildingID})
+	show("teacher assigns building to self", st, 200, "")
 
-	st, body = req("POST", "/api/group/set", sAccess, map[string]any{"username": "stud1", "group_id": 1})
-	show("student tries to set group (forbidden)", st, 403, body)
+	st, body = req("POST", "/api/users/building", tAccess, map[string]any{})
+	show("assign building missing building_id (rejected)", st, 400, body)
 
-	section("ITEMS")
+	st, _ = req("POST", "/api/users/building", sAccess, map[string]any{"building_id": buildingID})
+	show("student assigns building to self", st, 200, "")
 
-	// Assign building 1 to group 1 so the Type-allowed-slot rule applies
-	// (building 1 allows type 10 in slots 0,1 and type 20 in slot 2).
-	st, _ = req("POST", "/api/group/building", access, map[string]any{"group_id": 1, "building_id": 1})
-	show("assign building 1 to group 1", st, 200, "")
+	section("STATE + ITEMS + QUESTIONS")
+	stateItemsQuestions(access, tAccess, teacherUsername, sAccess, studentUsername)
 
-	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
-	show("query items of group 1 (inventory + slots)", st, 200, body)
-
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 0, "slot_id": 1})
-	show("inv2slot with item_id 0 (rejected)", st, 400, body)
-
-	st, _ = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 1, "slot_id": 1})
-	show("move item 1 (type 10) into allowed slot 1", st, 200, "")
-
-	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
-	show("items after inv2slot", st, 200, body)
-
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 2, "slot_id": 1})
-	show("move item 2 (type 20) into slot 1 (type not allowed)", st, 400, body)
-
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1, "item_id": 99, "slot_id": 1})
-	show("move item not in inventory (rejected)", st, 400, body)
-
-	st, body = req("POST", "/api/item/slot2inv", access, map[string]any{"group_id": 1, "slot_id": 1})
-	show("move slot 1 back to inventory", st, 200, body)
-
-	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
-	show("items after slot2inv (item 1 restored)", st, 200, body)
-
-	st, body = req("POST", "/api/item/inv2slot", access, map[string]any{"group_id": 1})
-	show("inv2slot missing item_id/slot_id", st, 400, body)
-
-	section("STATE + QUESTIONS")
-
-	st, body = req("GET", "/api/state", access, nil)
-	show("get state (default)", st, 200, body)
-
-	st, body = req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
-	show("teacher sets state QUIZ2", st, 200, body)
-
-	st, body = req("POST", "/api/state", sAccess, map[string]any{"state": "NORMAL"})
-	show("student tries to set state (forbidden)", st, 403, body)
-
-	st, body = req("POST", "/api/state", access, map[string]any{"state": "BOGUS"})
-	show("set invalid state value", st, 400, body)
-
-	var q struct {
-		Session string `json:"session"`
-	}
-
-	// --- item flow (NORMAL): generate a new item, answer correctly to earn it ---
-	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
-	show("teacher sets state NORMAL", st, 200, "")
-
-	st, body = req("POST", "/api/question/generate", access, map[string]any{"difficulty": 1})
-	show("teacher generates an item (difficulty 1)", st, 200, body)
-	json.Unmarshal([]byte(body), &q)
-
-	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 1})
-	show("answer correctly -> item granted (item_id)", st, 200, body)
-
-	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 1})
-	show("answer same session again (consumed)", st, 400, body)
-
-	st, body = req("POST", "/api/question/answer", access, map[string]any{"answer": 0})
-	show("answer missing session", st, 400, body)
-
-	st, body = req("POST", "/api/question/generate", access, map[string]any{"difficulty": 9})
-	show("generate item for a difficulty with no type (rejected)", st, 400, body)
-
-	// --- fetch a single question by id (any authenticated user) ---
-	st, body = req("GET", "/api/question/1", access, nil)
-	show("get question 1 by id (record incl. answer)", st, 200, body)
-
-	st, body = req("GET", "/api/question/9999", access, nil)
-	show("get unknown question id (404)", st, 404, body)
-
-	// --- attack/repair flow (QUIZ2) ---
-	st, _ = req("POST", "/api/register", access, map[string]any{"username": "quizzer", "password": "pw", "role": 0, "group_id": 2})
-	show("register attacker quizzer in group 2", st, 201, "")
-	_, body = req("POST", "/api/login", "", map[string]any{"username": "quizzer", "password": "pw"})
-	qAccess, _ := tokens(body)
-
-	st, _ = req("POST", "/api/state", access, map[string]any{"state": "QUIZ2"})
-	show("teacher sets state QUIZ2", st, 200, "")
-
-	// group-2 student attacks group-1 slot 0 (item 3, normal, carries a question)
-	st, body = req("POST", "/api/question/target", qAccess, map[string]any{"target_group_id": 1, "target_slot_id": 0})
-	show("group-2 student targets group-1 slot 0 (attack)", st, 200, body)
-	json.Unmarshal([]byte(body), &q)
-	st, body = req("POST", "/api/question/answer", qAccess, map[string]any{"session": q.Session, "answer": 1})
-	show("answer correctly -> break the item (success)", st, 200, body)
-
-	st, body = req("POST", "/api/item", access, map[string]any{"group_id": 1})
-	show("group 1 items (slot 0 now broken)", st, 200, body)
-
-	// teacher repairs their own now-broken slot (repair question is area 2, answer 0)
-	st, body = req("POST", "/api/question/target", access, map[string]any{"target_group_id": 1, "target_slot_id": 0})
-	show("teacher targets own broken slot (repair)", st, 200, body)
-	json.Unmarshal([]byte(body), &q)
-	st, body = req("POST", "/api/question/answer", access, map[string]any{"session": q.Session, "answer": 0})
-	show("answer correctly -> repair the item (success)", st, 200, body)
-
-	st, body = req("POST", "/api/question/target", access, map[string]any{"target_group_id": 1, "target_slot_id": 0})
-	show("target own non-broken slot (invalid)", st, 400, body)
-
-	st, body = req("POST", "/api/question/generate", qAccess, map[string]any{"difficulty": 1})
-	show("student generates item in QUIZ2 (blocked)", st, 403, body)
-
-	st, _ = req("POST", "/api/state", access, map[string]any{"state": "NORMAL"})
-	show("teacher sets state NORMAL", st, 200, "")
+	section("MEDIA UPLOADS")
+	mediaChecks(tAccess)
 
 	section("STATE WEBSOCKET")
 	wsChecks(access, sAccess)

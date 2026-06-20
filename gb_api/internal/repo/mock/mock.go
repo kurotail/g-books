@@ -3,7 +3,6 @@
 package mock
 
 import (
-	"fmt"
 	"maps"
 	"sort"
 	"sync"
@@ -19,8 +18,9 @@ var (
 	_ repo.UserRepo         = (*RoleRepo)(nil)
 	_ repo.RefreshTokenRepo = (*AuthRepo)(nil)
 	_ repo.ItemRepo         = (*ItemRepo)(nil)
-	_ repo.GroupRepo        = (*GroupRepo)(nil)
+	_ repo.InventoryRepo    = (*ItemRepo)(nil)
 	_ repo.BuildingRepo     = (*BuildingRepo)(nil)
+	_ repo.StudentRepo      = (*StudentRepo)(nil)
 	_ repo.QuestionRepo     = (*QuestionRepo)(nil)
 	_ repo.STTRepo          = (*STTRepo)(nil)
 )
@@ -28,8 +28,9 @@ var (
 type AuthRepo struct {
 	Users         map[string]string
 	Roles         map[string]uint
-	Groups        map[string]uint // username -> group; absent = no group
+	Buildings     map[string]uint // username -> building; absent/0 = no building
 	Pics          map[string]string
+	Students      map[string][]uint // username -> assigned student ids
 	RefreshTokens sync.Map
 }
 
@@ -64,7 +65,18 @@ func (m *AuthRepo) GetUser(username string) (model.User, error) {
 }
 
 func (m *AuthRepo) buildUser(username string) model.User {
-	return model.User{Username: username, Role: m.Roles[username], GroupID: m.Groups[username], ProfilePicURL: m.Pics[username]}
+	return model.User{Username: username, Role: m.Roles[username], BuildingID: m.Buildings[username], ProfilePicURL: m.Pics[username], Students: m.Students[username]}
+}
+
+func (m *AuthRepo) SetUserStudents(username string, studentIDs []uint) error {
+	if _, ok := m.Roles[username]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	if m.Students == nil {
+		m.Students = map[string][]uint{}
+	}
+	m.Students[username] = studentIDs
+	return nil
 }
 
 func (m *AuthRepo) SetUserProfilePic(username, url string) error {
@@ -78,7 +90,18 @@ func (m *AuthRepo) SetUserProfilePic(username, url string) error {
 	return nil
 }
 
-func (m *AuthRepo) CreateUser(username, password string, role, groupID uint) error {
+func (m *AuthRepo) SetUserBuilding(username string, buildingID uint) error {
+	if _, ok := m.Roles[username]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	if m.Buildings == nil {
+		m.Buildings = map[string]uint{}
+	}
+	m.Buildings[username] = buildingID
+	return nil
+}
+
+func (m *AuthRepo) CreateUser(username, password string, role uint) error {
 	if _, ok := m.Users[username]; ok {
 		return apperr.ErrUserExists
 	}
@@ -88,12 +111,50 @@ func (m *AuthRepo) CreateUser(username, password string, role, groupID uint) err
 	if m.Roles == nil {
 		m.Roles = map[string]uint{}
 	}
-	if m.Groups == nil {
-		m.Groups = map[string]uint{}
-	}
 	m.Users[username] = password
 	m.Roles[username] = role
-	m.Groups[username] = groupID
+	return nil
+}
+
+func (m *AuthRepo) SetUserPassword(username, plainPassword string) error {
+	if _, ok := m.Roles[username]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	if m.Users == nil {
+		m.Users = map[string]string{}
+	}
+	m.Users[username] = plainPassword
+	return nil
+}
+
+// RenameUser moves all of a user's entries from oldUsername to newUsername.
+func (m *AuthRepo) RenameUser(oldUsername, newUsername string) error {
+	if _, ok := m.Roles[oldUsername]; !ok {
+		return apperr.ErrUserNotFound
+	}
+	if _, ok := m.Roles[newUsername]; ok {
+		return apperr.ErrUserExists
+	}
+	move := func(dst, src map[string]string) {
+		if v, ok := src[oldUsername]; ok {
+			dst[newUsername] = v
+			delete(src, oldUsername)
+		}
+	}
+	move(m.Users, m.Users)
+	move(m.Pics, m.Pics)
+	if v, ok := m.Roles[oldUsername]; ok {
+		m.Roles[newUsername] = v
+		delete(m.Roles, oldUsername)
+	}
+	if v, ok := m.Buildings[oldUsername]; ok {
+		m.Buildings[newUsername] = v
+		delete(m.Buildings, oldUsername)
+	}
+	if v, ok := m.Students[oldUsername]; ok {
+		m.Students[newUsername] = v
+		delete(m.Students, oldUsername)
+	}
 	return nil
 }
 
@@ -103,7 +164,7 @@ func (m *AuthRepo) DeleteUser(username string) (bool, error) {
 	}
 	delete(m.Users, username)
 	delete(m.Roles, username)
-	delete(m.Groups, username)
+	delete(m.Buildings, username)
 	delete(m.Pics, username)
 	return true, nil
 }
@@ -117,9 +178,13 @@ func (m *RoleRepo) GetAllUsers() ([]model.User, error)            { return nil, 
 func (m *RoleRepo) GetUser(username string) (model.User, error) {
 	return model.User{Username: username, Role: m.Role}, nil
 }
-func (m *RoleRepo) CreateUser(_, _ string, _, _ uint) error { return nil }
-func (m *RoleRepo) SetUserProfilePic(_, _ string) error     { return nil }
-func (m *RoleRepo) DeleteUser(_ string) (bool, error)       { return true, nil }
+func (m *RoleRepo) CreateUser(_, _ string, _ uint) error     { return nil }
+func (m *RoleRepo) SetUserProfilePic(_, _ string) error      { return nil }
+func (m *RoleRepo) SetUserBuilding(_ string, _ uint) error   { return nil }
+func (m *RoleRepo) SetUserStudents(_ string, _ []uint) error { return nil }
+func (m *RoleRepo) SetUserPassword(_, _ string) error        { return nil }
+func (m *RoleRepo) RenameUser(_, _ string) error             { return nil }
+func (m *RoleRepo) DeleteUser(_ string) (bool, error)        { return true, nil }
 
 type ItemRepo struct {
 	Inv        map[uint]struct{}   // owned (unslotted) item ids
@@ -128,7 +193,7 @@ type ItemRepo struct {
 	NextItemID uint                // next id assigned by CreateItem
 }
 
-func (m *ItemRepo) QueryInv(_ uint) ([]uint, error) {
+func (m *ItemRepo) QueryInv(_ string) ([]uint, error) {
 	ids := make([]uint, 0, len(m.Inv))
 	for id := range m.Inv {
 		ids = append(ids, id)
@@ -137,7 +202,7 @@ func (m *ItemRepo) QueryInv(_ uint) ([]uint, error) {
 	return ids, nil
 }
 
-func (m *ItemRepo) QuerySlot(_ uint) (map[uint]int, error) {
+func (m *ItemRepo) QuerySlot(_ string) (map[uint]int, error) {
 	result := make(map[uint]int, len(m.Slot))
 	maps.Copy(result, m.Slot)
 	return result, nil
@@ -161,7 +226,7 @@ func (m *ItemRepo) CreateItem(itemType, questionID uint) (uint, error) {
 	return id, nil
 }
 
-func (m *ItemRepo) AddInvItem(_, itemID uint) error {
+func (m *ItemRepo) AddInvItem(_ string, itemID uint) error {
 	if m.Inv == nil {
 		m.Inv = map[uint]struct{}{}
 	}
@@ -169,12 +234,12 @@ func (m *ItemRepo) AddInvItem(_, itemID uint) error {
 	return nil
 }
 
-func (m *ItemRepo) RemoveInvItem(_, itemID uint) error {
+func (m *ItemRepo) RemoveInvItem(_ string, itemID uint) error {
 	delete(m.Inv, itemID)
 	return nil
 }
 
-func (m *ItemRepo) SetSlot(_, slotID uint, itemID int) error {
+func (m *ItemRepo) SetSlot(_ string, slotID uint, itemID int) error {
 	if itemID == 0 {
 		delete(m.Slot, slotID)
 	} else {
@@ -184,88 +249,6 @@ func (m *ItemRepo) SetSlot(_, slotID uint, itemID int) error {
 		m.Slot[slotID] = itemID
 	}
 	return nil
-}
-
-type GroupRepo struct {
-	UserGroups  map[string]uint
-	Names       map[uint]string
-	BuildingIDs map[uint]uint
-	Pics        map[uint]string
-}
-
-func (m *GroupRepo) SetUserGroup(username string, groupID uint) error {
-	m.UserGroups[username] = groupID
-	return nil
-}
-
-func (m *GroupRepo) GetGroup(groupID uint) (model.Group, error) {
-	members := make([]string, 0)
-	for username, gid := range m.UserGroups {
-		if gid == groupID {
-			members = append(members, username)
-		}
-	}
-	_, hasName := m.Names[groupID]
-	_, hasBuilding := m.BuildingIDs[groupID]
-	_, hasPic := m.Pics[groupID]
-	if !hasName && !hasBuilding && !hasPic && len(members) == 0 {
-		return model.Group{}, apperr.ErrGroupNotFound
-	}
-	name := fmt.Sprintf("Group %d", groupID)
-	if n, ok := m.Names[groupID]; ok && n != "" {
-		name = n
-	}
-	return model.Group{ID: groupID, Name: name, BuildingID: m.BuildingIDs[groupID], Members: members, ProfilePicURL: m.Pics[groupID]}, nil
-}
-
-func (m *GroupRepo) SetGroupName(groupID uint, name string) error {
-	if m.Names == nil {
-		m.Names = map[uint]string{}
-	}
-	m.Names[groupID] = name
-	return nil
-}
-
-func (m *GroupRepo) SetBuildingID(groupID uint, buildingID uint) error {
-	if m.BuildingIDs == nil {
-		m.BuildingIDs = map[uint]uint{}
-	}
-	m.BuildingIDs[groupID] = buildingID
-	return nil
-}
-
-func (m *GroupRepo) SetGroupProfilePic(groupID uint, url string) error {
-	if m.Pics == nil {
-		m.Pics = map[uint]string{}
-	}
-	m.Pics[groupID] = url
-	return nil
-}
-
-func (m *GroupRepo) DeleteGroup(groupID uint) (bool, error) {
-	found := false
-	if _, ok := m.Names[groupID]; ok {
-		found = true
-	}
-	if _, ok := m.BuildingIDs[groupID]; ok {
-		found = true
-	}
-	if _, ok := m.Pics[groupID]; ok {
-		found = true
-	}
-	for username, gid := range m.UserGroups {
-		if gid == groupID {
-			m.UserGroups[username] = 0
-			found = true
-		}
-	}
-	if !found {
-		return false, nil
-	}
-	delete(m.Names, groupID)
-	delete(m.BuildingIDs, groupID)
-	delete(m.Pics, groupID)
-	return true, nil
 }
 
 type BuildingRepo struct {
@@ -308,6 +291,53 @@ func (m *BuildingRepo) GetAllBuildings() ([]model.Building, error) {
 		out = append(out, b)
 	}
 	return out, nil
+}
+
+type StudentRepo struct {
+	Students map[uint]model.Student
+}
+
+func (m *StudentRepo) CreateStudent(id uint, name, profilePicURL string) error {
+	if m.Students == nil {
+		m.Students = map[uint]model.Student{}
+	}
+	if _, ok := m.Students[id]; ok {
+		return apperr.ErrStudentExists
+	}
+	m.Students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
+	return nil
+}
+
+func (m *StudentRepo) UpdateStudent(id uint, name, profilePicURL string) error {
+	if _, ok := m.Students[id]; !ok {
+		return apperr.ErrStudentNotFound
+	}
+	m.Students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
+	return nil
+}
+
+func (m *StudentRepo) GetStudent(id uint) (model.Student, error) {
+	s, ok := m.Students[id]
+	if !ok {
+		return model.Student{}, apperr.ErrStudentNotFound
+	}
+	return s, nil
+}
+
+func (m *StudentRepo) GetAllStudents() ([]model.Student, error) {
+	out := make([]model.Student, 0, len(m.Students))
+	for _, s := range m.Students {
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func (m *StudentRepo) DeleteStudent(id uint) error {
+	if _, ok := m.Students[id]; !ok {
+		return apperr.ErrStudentNotFound
+	}
+	delete(m.Students, id)
+	return nil
 }
 
 type QuestionRepo struct {

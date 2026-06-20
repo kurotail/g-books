@@ -18,22 +18,17 @@ import (
 type fixture struct {
 	auth         *handler.AuthHandler
 	item         *handler.ItemHandler
-	group        *handler.GroupHandler
 	question     *handler.QuestionHandler
 	state        *handler.StateHandler
 	authRepo     *mock.AuthRepo
-	groupRepo    *mock.GroupRepo
 	questionRepo *mock.QuestionRepo
 }
 
 func newFixture() *fixture {
-	// In production UserRepo and GroupRepo read/write the same users table; the
-	// shared map mirrors that so SetGroup is visible to QueryGroup.
-	groups := map[string]uint{"user": 1}
 	authRepo := &mock.AuthRepo{
-		Users:  map[string]string{"user": "pass"},
-		Roles:  map[string]uint{"user": model.RoleTeacher},
-		Groups: groups,
+		Users:     map[string]string{"user": "pass"},
+		Roles:     map[string]uint{"user": model.RoleTeacher},
+		Buildings: map[string]uint{"user": 1}, // user -> building 1
 	}
 	itemRepo := &mock.ItemRepo{
 		Inv:  map[uint]struct{}{1: {}, 2: {}},
@@ -45,10 +40,6 @@ func newFixture() *fixture {
 		},
 		// Allowed is nil: every slot accepts every type, so the move-flow test
 		// isn't coupled to a building.
-	}
-	groupRepo := &mock.GroupRepo{
-		UserGroups:  groups,
-		BuildingIDs: map[uint]uint{1: 1}, // group 1 -> building 1
 	}
 	buildingRepo := &mock.BuildingRepo{
 		Buildings: map[uint]model.Building{
@@ -67,12 +58,10 @@ func newFixture() *fixture {
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
-		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, authRepo, groupRepo, buildingRepo)),
-		group:        handler.NewGroupHandler(service.NewGroupSvc(groupRepo, authRepo)),
-		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, groupRepo, buildingRepo, itemRepo, &mock.STTRepo{})),
+		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, itemRepo, authRepo, buildingRepo)),
+		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, buildingRepo, itemRepo, itemRepo, &mock.STTRepo{})),
 		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
 		authRepo:     authRepo,
-		groupRepo:    groupRepo,
 		questionRepo: questionRepo,
 	}
 }

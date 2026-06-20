@@ -40,17 +40,6 @@ func getCaller(r repo.UserRepo, accessToken string) (*model.User, int, error) {
 	return &caller, http.StatusOK, nil
 }
 
-func authorizeGroupEdit(r repo.UserRepo, accessToken string, groupID uint) (int, error) {
-	caller, status, err := getCaller(r, accessToken)
-	if err != nil {
-		return status, err
-	}
-	if caller.GroupID != groupID && caller.Role < model.RoleTeacher {
-		return http.StatusForbidden, fmt.Errorf("權限不足")
-	}
-	return http.StatusOK, nil
-}
-
 func requireTeacher(r repo.UserRepo, accessToken string) (int, error) {
 	caller, status, err := getCaller(r, accessToken)
 	if err != nil {
@@ -84,7 +73,7 @@ func studentBlockedNotQuiz1(r repo.UserRepo, accessToken string) (*model.User, i
 	return caller, http.StatusOK, nil
 }
 
-func (s *ItemSvc) blockStudentQuiz2(r repo.UserRepo, accessToken string, groupID uint) (*model.User, int, error) {
+func (s *ItemSvc) blockStudentQuiz2(r repo.UserRepo, accessToken string) (*model.User, int, error) {
 	caller, status, err := getCaller(r, accessToken)
 	if err != nil {
 		return nil, status, err
@@ -93,4 +82,28 @@ func (s *ItemSvc) blockStudentQuiz2(r repo.UserRepo, accessToken string, groupID
 		return nil, http.StatusForbidden, fmt.Errorf("QUIZ 狀態下學生無法移動物品")
 	}
 	return caller, http.StatusOK, nil
+}
+
+// allowed type-value sets for question validation.
+var (
+	descTypes   = map[string]struct{}{model.DescText: {}, model.DescAudio: {}, model.DescVoice: {}}
+	answerTypes = map[string]struct{}{model.AnswerIndex: {}, model.AnswerVoice: {}}
+)
+
+// validateQuestionInput enforces that the content/answer carry only known type values
+// and a non-empty description. It does not check choice counts or index bounds.
+func validateQuestionInput(in model.QuestionInput) error {
+	if _, ok := descTypes[in.Content.Description.Type]; !ok {
+		return fmt.Errorf("不合法的 description type")
+	}
+	if in.Content.Description.Data == "" {
+		return fmt.Errorf("description 不可為空")
+	}
+	if in.Content.Choices != nil && in.Content.Choices.Type != model.ChoicesText {
+		return fmt.Errorf("不合法的 choices type")
+	}
+	if _, ok := answerTypes[in.Answer.Type]; !ok {
+		return fmt.Errorf("不合法的 answer type")
+	}
+	return nil
 }

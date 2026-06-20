@@ -20,6 +20,8 @@ var ErrUserNotFound = errors.New("使用者不存在")
 // ErrBuildingNotFound is returned when a lookup targets a building that does not exist.
 var ErrBuildingNotFound = errors.New("建築不存在")
 
-// ErrGroupNotFound is returned when a lookup targets a group that does not exist
-// (no stored group row and no user referencing it).
-var ErrGroupNotFound = errors.New("群組不存在")
+// ErrStudentNotFound is returned when a lookup targets a student that does not exist.
+var ErrStudentNotFound = errors.New("學生不存在")
+
+// ErrStudentExists is returned when creating a student whose id is already taken.
+var ErrStudentExists = errors.New("學生已存在")

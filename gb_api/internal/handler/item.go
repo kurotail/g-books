@@ -26,7 +26,7 @@ func bearerToken(r *http.Request) (string, error) {
 	return parts[1], nil
 }
 
-// QueryItems returns all of a group's items — its inventory and its slots.
+// QueryItems returns all of a user's items — their inventory and their slots.
 func (h *ItemHandler) QueryItems(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
@@ -38,15 +38,11 @@ func (h *ItemHandler) QueryItems(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	if req.GroupID == nil {
-		http.Error(w, "缺少 group_id", http.StatusBadRequest)
+	if req.Username == nil || *req.Username == "" {
+		http.Error(w, "缺少 username", http.StatusBadRequest)
 		return
 	}
-	if *req.GroupID == 0 {
-		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
-		return
-	}
-	data, status, err := h.svc.QueryItems(token, *req.GroupID)
+	data, status, err := h.svc.QueryItems(token, *req.Username)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -65,12 +61,8 @@ func (h *ItemHandler) TranInv2Slot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	if req.GroupID == nil {
-		http.Error(w, "缺少 group_id", http.StatusBadRequest)
-		return
-	}
-	if *req.GroupID == 0 {
-		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
+	if req.Username == nil || *req.Username == "" {
+		http.Error(w, "缺少 username", http.StatusBadRequest)
 		return
 	}
 	if req.ItemID == nil {
@@ -85,7 +77,7 @@ func (h *ItemHandler) TranInv2Slot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "item_id 必須大於 0", http.StatusBadRequest)
 		return
 	}
-	status, err := h.svc.TranInv2Slot(token, *req.GroupID, *req.ItemID, *req.SlotID)
+	status, err := h.svc.TranInv2Slot(token, *req.Username, *req.ItemID, *req.SlotID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -104,19 +96,15 @@ func (h *ItemHandler) TranSlot2Inv(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	if req.GroupID == nil {
-		http.Error(w, "缺少 group_id", http.StatusBadRequest)
-		return
-	}
-	if *req.GroupID == 0 {
-		http.Error(w, "group_id 必須大於 0", http.StatusBadRequest)
+	if req.Username == nil || *req.Username == "" {
+		http.Error(w, "缺少 username", http.StatusBadRequest)
 		return
 	}
 	if req.SlotID == nil {
 		http.Error(w, "缺少 slot_id", http.StatusBadRequest)
 		return
 	}
-	status, err := h.svc.TranSlot2Inv(token, *req.GroupID, *req.SlotID)
+	status, err := h.svc.TranSlot2Inv(token, *req.Username, *req.SlotID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

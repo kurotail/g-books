@@ -171,7 +171,7 @@ func TestItemHandler_MissingToken(t *testing.T) {
 		"QueryItems": f.item.QueryItems,
 	}
 	for name, fn := range cases {
-		rec := do(t, fn, "", map[string]any{"group_id": 1})
+		rec := do(t, fn, "", map[string]any{"username": "user"})
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
 		}
@@ -187,9 +187,9 @@ func TestItemHandler_MissingFields(t *testing.T) {
 		fn   http.HandlerFunc
 		body map[string]any
 	}{
-		{"TranInv2Slot no slot_id", f.item.TranInv2Slot, map[string]any{"group_id": 1, "item_id": 1}},
-		{"TranInv2Slot no item_id", f.item.TranInv2Slot, map[string]any{"group_id": 1, "slot_id": 5}},
-		{"TranSlot2Inv no slot_id", f.item.TranSlot2Inv, map[string]any{"group_id": 1}},
+		{"TranInv2Slot no slot_id", f.item.TranInv2Slot, map[string]any{"username": "user", "item_id": 1}},
+		{"TranInv2Slot no item_id", f.item.TranInv2Slot, map[string]any{"username": "user", "slot_id": 5}},
+		{"TranSlot2Inv no slot_id", f.item.TranSlot2Inv, map[string]any{"username": "user"}},
 	}
 	for _, c := range cases {
 		rec := do(t, c.fn, tok, c.body)
@@ -215,13 +215,13 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	tok := f.login(t)
 
 	// step 1: move item 1 from inventory to slot 5
-	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"group_id": 1, "item_id": 1, "slot_id": 5})
+	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"username": "user", "item_id": 1, "slot_id": 5})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step1 TranInv2Slot: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 2: item 1 left inventory and now sits in slot 5; item 3 still in slot 0
-	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"username": "user"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step2 QueryItems: expected 200, got %d", rec.Code)
 	}
@@ -241,13 +241,13 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 3: return item from slot 0 to inventory (slot 0 held item 3)
-	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 1, "slot_id": 0})
+	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"username": "user", "slot_id": 0})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step3 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 4: slot 0 gone, item 3 back in inventory, slot 5 unchanged
-	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"username": "user"})
 	inv = decodeInv(t, rec)
 	if _, ok := inv[3]; !ok {
 		t.Error("step4: expected item 3 back in inventory")
@@ -261,13 +261,13 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 5: return item 1 from slot 5 to inventory, clearing the slot
-	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 1, "slot_id": 5})
+	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"username": "user", "slot_id": 5})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step5 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 6: final state — slots empty, inventory holds items 1, 2, 3
-	rec = do(t, f.item.QueryItems, tok, map[string]any{"group_id": 1})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"username": "user"})
 	slot = decodeSlots(t, rec)
 	if len(slot) != 0 {
 		t.Errorf("step6: expected empty slot map, got %v", slot)
@@ -286,7 +286,7 @@ func TestItemHandler_TranInv2Slot_ItemNotInInventory(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"group_id": 1, "item_id": 99, "slot_id": 5})
+	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"username": "user", "item_id": 99, "slot_id": 5})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("item not owned: expected 400, got %d", rec.Code)
 	}
@@ -296,181 +296,52 @@ func TestItemHandler_TranSlot2Inv_NonExistentSlot(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.TranSlot2Inv, tok, map[string]any{"group_id": 1, "slot_id": 99})
+	rec := do(t, f.item.TranSlot2Inv, tok, map[string]any{"username": "user", "slot_id": 99})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("non-existent slot: expected 400, got %d", rec.Code)
 	}
 }
 
-func TestItemHandler_QueryItems_GroupZeroRejected(t *testing.T) {
+func TestItemHandler_QueryItems_MissingUsernameRejected(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.QueryItems, tok, map[string]any{"group_id": 0})
+	rec := do(t, f.item.QueryItems, tok, map[string]any{"username": ""})
 	if rec.Code != http.StatusBadRequest {
-		t.Errorf("group_id 0: expected 400, got %d", rec.Code)
+		t.Errorf("empty username: expected 400, got %d", rec.Code)
 	}
 }
 
-// ---- group handler ----
+// ---- auth handler: SetBuilding ----
 
-func TestGroupHandler_MissingToken(t *testing.T) {
-	f := newFixture()
-	cases := map[string]http.HandlerFunc{
-		"SetGroup":    f.group.SetGroup,
-		"SetName":     f.group.SetName,
-		"SetBuilding": f.group.SetBuilding,
-		"QueryGroup":  f.group.QueryGroup,
-	}
-	for name, fn := range cases {
-		rec := do(t, fn, "", map[string]any{"group_id": 1, "username": "user"})
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
-		}
-	}
-}
-
-func TestGroupHandler_SetGroup_MissingUsername(t *testing.T) {
+func TestAuthHandler_SetBuilding_Roundtrip(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 3})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("missing username: expected 400, got %d", rec.Code)
-	}
-}
-
-func TestGroupHandler_SetGroup_StudentForbidden(t *testing.T) {
-	f := newFixture()
-	f.authRepo.Roles["user"] = model.RoleStudent
-	tok := f.login(t)
-
-	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 3, "username": "user"})
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("student caller: expected 403, got %d", rec.Code)
-	}
-}
-
-func TestGroupHandler_SetName_MissingName(t *testing.T) {
-	f := newFixture()
-	tok := f.login(t)
-
-	rec := do(t, f.group.SetName, tok, map[string]any{"group_id": 1})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("missing name: expected 400, got %d", rec.Code)
-	}
-}
-
-func TestGroupHandler_SetNameThenQueryRoundtrip(t *testing.T) {
-	f := newFixture()
-	tok := f.login(t)
-
-	// "user" is a member of group 1 and renames it.
-	rec := do(t, f.group.SetName, tok, map[string]any{"group_id": 1, "name": "Red Team"})
+	rec := do(t, f.auth.SetBuilding, tok, map[string]any{"building_id": 5})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("SetName: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("SetBuilding: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-
-	rec = do(t, f.group.QueryGroup, tok, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
-	}
-	var gr model.Group
-	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
-		t.Fatalf("QueryGroup: invalid JSON: %v", err)
-	}
-	if gr.Name != "Red Team" {
-		t.Errorf("expected name %q, got %q", "Red Team", gr.Name)
+	if f.authRepo.Buildings["user"] != 5 {
+		t.Errorf("expected user building 5, got %d", f.authRepo.Buildings["user"])
 	}
 }
 
-func TestGroupHandler_SetBuilding_MissingBuildingID(t *testing.T) {
+func TestAuthHandler_SetBuilding_MissingBuildingID(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.group.SetBuilding, tok, map[string]any{"group_id": 1})
+	rec := do(t, f.auth.SetBuilding, tok, map[string]any{})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("missing building_id: expected 400, got %d", rec.Code)
 	}
 }
 
-func TestGroupHandler_SetBuildingThenQueryRoundtrip(t *testing.T) {
+func TestAuthHandler_SetBuilding_MissingToken(t *testing.T) {
 	f := newFixture()
-	tok := f.login(t)
-
-	// "user" is a member of group 1 and sets its building.
-	rec := do(t, f.group.SetBuilding, tok, map[string]any{"group_id": 1, "building_id": 5})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("SetBuilding: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	rec = do(t, f.group.QueryGroup, tok, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
-	}
-	var gr model.Group
-	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
-		t.Fatalf("QueryGroup: invalid JSON: %v", err)
-	}
-	if gr.BuildingID != 5 {
-		t.Errorf("expected building_id 5, got %d", gr.BuildingID)
-	}
-}
-
-func TestGroupHandler_SetThenQueryRoundtrip(t *testing.T) {
-	f := newFixture()
-	tok := f.login(t)
-
-	// teacher "user" reassigns itself to group 7
-	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 7, "username": "user"})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("SetGroup: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	// QueryGroup should now report group 7
-	rec = do(t, f.group.QueryGroup, tok, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
-	}
-	var gr model.Group
-	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
-		t.Fatalf("QueryGroup: invalid JSON: %v", err)
-	}
-	if gr.ID != 7 {
-		t.Errorf("expected group_id 7, got %d", gr.ID)
-	}
-}
-
-// SetGroup with group_id 0 removes the user from their group; QueryGroup then 404s.
-func TestGroupHandler_SetGroup_ZeroRemovesUser(t *testing.T) {
-	f := newFixture()
-	tok := f.login(t)
-
-	rec := do(t, f.group.SetGroup, tok, map[string]any{"group_id": 0, "username": "user"})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("SetGroup remove: expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	rec = do(t, f.group.QueryGroup, tok, nil)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("QueryGroup after remove: expected 404, got %d", rec.Code)
-	}
-}
-
-func TestGroupHandler_QueryGroup_IncludesMembers(t *testing.T) {
-	f := newFixture()
-	tok := f.login(t)
-
-	rec := do(t, f.group.QueryGroup, tok, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("QueryGroup: expected 200, got %d", rec.Code)
-	}
-	var gr model.Group
-	if err := json.Unmarshal(rec.Body.Bytes(), &gr); err != nil {
-		t.Fatalf("QueryGroup: invalid JSON: %v", err)
-	}
-	if len(gr.Members) != 1 || gr.Members[0] != "user" {
-		t.Errorf("expected members [user], got %v", gr.Members)
+	rec := do(t, f.auth.SetBuilding, "", map[string]any{"building_id": 5})
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("missing token: expected 401, got %d", rec.Code)
 	}
 }
 
@@ -585,7 +456,7 @@ func TestQuestionHandler_StudentTargetBlockedOutsideQuiz(t *testing.T) {
 	f.forceState(t, tok, model.StateNormal)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	gen := do(t, f.question.GenerateTarget, tok, map[string]any{"target_group_id": 2, "target_slot_id": 0})
+	gen := do(t, f.question.GenerateTarget, tok, map[string]any{"target_username": "other", "target_slot_id": 0})
 	if gen.Code != http.StatusForbidden {
 		t.Errorf("GenerateTarget as student in NORMAL: expected 403, got %d", gen.Code)
 	}

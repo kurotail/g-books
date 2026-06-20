@@ -19,11 +19,11 @@ import (
 
 func routes() (http.Handler, *handler.StateHandler) {
 	authHandler := handler.NewAuthHandler(service.NewAuthSvc(repo.InitUserRepo(), repo.InitRefreshTokenRepo()))
-	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitUserRepo(), repo.InitGroupRepo(), repo.InitBuildingRepo()))
-	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitGroupRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitSTTRepo()))
+	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitUserRepo(), repo.InitBuildingRepo()))
+	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitSTTRepo()))
 	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
-	groupHandler := handler.NewGroupHandler(service.NewGroupSvc(repo.InitGroupRepo(), repo.InitUserRepo()))
 	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
+	studentHandler := handler.NewStudentHandler(service.NewStudentSvc(repo.InitStudentRepo(), repo.InitUserRepo()))
 	mediaHandler := handler.NewMediaHandler(service.NewMediaSvc(config.UploadDir, config.MaxImageMB, config.MaxAudioMB))
 
 	mux := http.NewServeMux()
@@ -33,23 +33,26 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/refresh", authHandler.Refresh)
 	mux.HandleFunc("GET /api/users", authHandler.QueryUser)
 	mux.HandleFunc("POST /api/users/pfp", authHandler.SetProfilePic)
+	mux.HandleFunc("POST /api/users/building", authHandler.SetBuilding)
+	mux.HandleFunc("POST /api/users/students", studentHandler.SetStudents)
+	mux.HandleFunc("POST /api/users/username", authHandler.SetUsername)
+	mux.HandleFunc("POST /api/users/password", authHandler.SetPassword)
 	mux.HandleFunc("DELETE /api/users/{username}", authHandler.DeleteUser)
 
 	mux.HandleFunc("POST /api/item", itemHandler.QueryItems)
 	mux.HandleFunc("POST /api/item/inv2slot", itemHandler.TranInv2Slot)
 	mux.HandleFunc("POST /api/item/slot2inv", itemHandler.TranSlot2Inv)
 
-	mux.HandleFunc("POST /api/group/set", groupHandler.SetGroup)
-	mux.HandleFunc("POST /api/group/name", groupHandler.SetName)
-	mux.HandleFunc("POST /api/group/building", groupHandler.SetBuilding)
-	mux.HandleFunc("GET /api/group", groupHandler.QueryGroup)
-	mux.HandleFunc("POST /api/group/pfp", groupHandler.SetProfilePic)
-	mux.HandleFunc("DELETE /api/group/{id}", groupHandler.DeleteGroup)
-
 	mux.HandleFunc("POST /api/building", buildingHandler.Create)
 	mux.HandleFunc("GET /api/building", buildingHandler.List)
 	mux.HandleFunc("GET /api/building/{id}", buildingHandler.Get)
 	mux.HandleFunc("PUT /api/building/{id}", buildingHandler.Update)
+
+	mux.HandleFunc("POST /api/student", studentHandler.Create)
+	mux.HandleFunc("GET /api/student", studentHandler.List)
+	mux.HandleFunc("GET /api/student/{id}", studentHandler.Get)
+	mux.HandleFunc("PUT /api/student/{id}", studentHandler.Update)
+	mux.HandleFunc("DELETE /api/student/{id}", studentHandler.Delete)
 
 	mux.HandleFunc("POST /api/question/generate", questionHandler.GenerateItem)
 	mux.HandleFunc("POST /api/question/target", questionHandler.GenerateTarget)
@@ -71,6 +74,14 @@ func routes() (http.Handler, *handler.StateHandler) {
 }
 
 func main() {
+	closeFunc, err := config.Init()
+	if err != nil {
+		logger.L.Error(err.Error())
+		logger.L.Error("failed to initialize database")
+		os.Exit(1)
+	}
+	defer closeFunc()
+
 	mux, stateHandler := routes()
 	server := &http.Server{
 		Addr:    ":8080",
