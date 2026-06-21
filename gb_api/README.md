@@ -988,11 +988,15 @@ Open a session against `target_slot_id` on `target_user_id`'s board. **Valid** o
 Answer the held session. The session is **deleted on use** and the action depends on
 its kind. The shape of `answer` depends on the question's answer type:
 
-- **index** questions — `answer` is the zero-based index of the chosen option (a number).
+- **index** questions — `answer` is the zero-based index of the chosen option (a single
+  number). It is graded correct if it is one of the question's accepted indexes.
 - **voice_response** questions — `answer` is the student's recorded answer: a WAV audio
   file, base64-encoded into a string. The server transcribes it (via a speech-to-text
-  backend) and compares the transcript, case-insensitively, to the question's expected
-  answer.
+  backend) and grades it correct if the transcript matches, case-insensitively, **any** of
+  the question's accepted transcripts.
+
+The student always submits a single value; the question's correct answer is a **set**
+(see the upload format below), and a submission passes if it matches at least one member.
 
 **Request** — multiple choice
 
@@ -1043,15 +1047,17 @@ Each question is `{ content, answer, difficulty, area }`:
   `voice_response`.
 - `content.choices` is `{ type, data }` with `type` `text` and `data` a list of option
   strings. It is present for multiple-choice questions and omitted for `voice_response`.
-- `answer` is `{ type, data }`, where `type` is `index` (then `data` is the zero-based
-  index of the correct choice, a number) or `voice_response` (then `data` is the expected
-  transcript, a string).
+- `answer` is `{ type, data }`, where `data` is always a non-empty **array** (a set of
+  accepted answers): for `type` `index`, an array of zero-based correct-choice indexes
+  (numbers); for `type` `voice_response`, an array of accepted transcripts (strings). A
+  student's single submission is graded correct if it matches any member.
 - `difficulty` and `area` are `uint` classifiers (default `0`): they drive which question
   the generate endpoints draw (item → `area 1` + the requested difficulty; repair →
   `area 2`) and also filter [search](#get-apiquestionsearch).
 
-Validation accepts only the type values listed above and requires a non-empty
-`description.data`.
+Validation accepts only the type values listed above, requires a non-empty
+`description.data`, and requires `answer.data` to be a non-empty array of the type its
+`answer.type` implies.
 
 ```
 Authorization: Bearer <access_token>
@@ -1059,8 +1065,9 @@ Authorization: Bearer <access_token>
 
 ### `POST /api/question/upload`
 
-Add a batch of questions in a single request. Invalid questions (unknown type values
-or an empty `description.data`) are skipped rather than failing the whole batch, so the
+Add a batch of questions in a single request. Invalid questions (unknown type values,
+an empty `description.data`, or an `answer.data` that is not a non-empty array) are
+skipped rather than failing the whole batch, so the
 response is a **`207 Multi-Status`** carrying one result per submitted question, in
 request order.
 
@@ -1076,17 +1083,17 @@ request order.
         "description": { "type": "text", "data": "2+2?" },
         "choices": { "type": "text", "data": ["3", "4"] }
       },
-      "answer": { "type": "index", "data": 1 },
+      "answer": { "type": "index", "data": [1, 3] },
       "difficulty": 1,
       "area": 2
     },
     {
       "content": { "description": { "type": "text", "data": "" } },
-      "answer": { "type": "index", "data": 0 }
+      "answer": { "type": "index", "data": [0] }
     },
     {
       "content": { "description": { "type": "audio", "data": "https://example.com/audio/q.mp3" } },
-      "answer": { "type": "voice_response", "data": "eighteen" }
+      "answer": { "type": "voice_response", "data": ["eighteen", "18"] }
     }
   ]
 }
@@ -1145,7 +1152,7 @@ GET /api/question/search?difficulty=1&area=2
         "description": { "type": "text", "data": "Capital of France?" },
         "choices": { "type": "text", "data": ["Paris", "Rome"] }
       },
-      "answer": { "type": "index", "data": 0 },
+      "answer": { "type": "index", "data": [0] },
       "difficulty": 1,
       "area": 2
     }
@@ -1184,7 +1191,7 @@ GET /api/question/1
     "description": { "type": "text", "data": "What is six times three?" },
     "choices": { "type": "text", "data": ["6", "18", "9", "12"] }
   },
-  "answer": { "type": "index", "data": 1 },
+  "answer": { "type": "index", "data": [1] },
   "difficulty": 1,
   "area": 1
 }
@@ -1213,7 +1220,7 @@ optional (default `0`).
     "description": { "type": "text", "data": "2+2?" },
     "choices": { "type": "text", "data": ["3", "4"] }
   },
-  "answer": { "type": "index", "data": 1 },
+  "answer": { "type": "index", "data": [1] },
   "difficulty": 1,
   "area": 2
 }

@@ -39,22 +39,24 @@ type Content struct {
 	Choices     *Choices    `json:"choices,omitempty"` // nil for voice_response
 }
 
-// Answer is the typed correct answer. For AnswerIndex, Data is a JSON number (the
-// correct choice index); for AnswerVoice, Data is a JSON string (the expected
-// transcript, compared case-insensitively to the STT output).
+// Answer is the typed correct answer. Data is a set:
+// for AnswerIndex, an array of accepted zero-based choice indexes; for AnswerVoice, an
+// array of accepted transcripts (compared case-insensitively to the STT output). The
+// student submits a single value, which is graded correct if it matches any member.
 type Answer struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
 }
 
-// IndexAnswer builds an AnswerIndex answer for the given zero-based choice index.
-func IndexAnswer(i uint) Answer {
-	b, _ := json.Marshal(i)
+// IndexAnswer builds an AnswerIndex answer accepting any of the given zero-based
+// choice indexes.
+func IndexAnswer(idx ...uint) Answer {
+	b, _ := json.Marshal(idx)
 	return Answer{Type: AnswerIndex, Data: b}
 }
 
-// VoiceAnswer builds an AnswerVoice answer whose expected transcript is text.
-func VoiceAnswer(text string) Answer {
+// VoiceAnswer builds an AnswerVoice answer accepting any of the given transcripts.
+func VoiceAnswer(text ...string) Answer {
 	b, _ := json.Marshal(text)
 	return Answer{Type: AnswerVoice, Data: b}
 }

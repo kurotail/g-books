@@ -36,8 +36,13 @@ func newQuizSvc(role, buildingID uint, difficultyType map[uint][]uint, questions
 	return NewQuestionSvc(r, users, buildings, items, items, &mock.STTRepo{}), r, items
 }
 
-// idx is the wire form of an index answer the student submits to Answer.
-func idx(i uint) json.RawMessage { return model.IndexAnswer(i).Data }
+// idx is the wire form of an index answer the student submits to Answer: a single
+// scalar index (the student always submits one value, even though the question's
+// correct answer is a set).
+func idx(i uint) json.RawMessage {
+	b, _ := json.Marshal(i)
+	return b
+}
 
 func accessTokenFor(t *testing.T, username string) string {
 	t.Helper()
@@ -467,9 +472,9 @@ func TestQuestionSvc_Update_Succeeds(t *testing.T) {
 		t.Fatalf("expected 200, got %d", status)
 	}
 	got := r.Questions[id]
-	var ans uint
+	var ans []uint
 	json.Unmarshal(got.Answer.Data, &ans)
-	if got.Content.Description.Data != "new" || ans != 2 {
+	if got.Content.Description.Data != "new" || len(ans) != 1 || ans[0] != 2 {
 		t.Errorf("expected question to be updated, got %+v", got)
 	}
 }
@@ -537,9 +542,9 @@ func TestQuestionSvc_Get_AnyRoleSucceeds(t *testing.T) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	var ans uint
+	var ans []uint
 	json.Unmarshal(rec.Answer.Data, &ans)
-	if rec.ID != id || rec.Content.Description.Data != "2+2?" || ans != 1 {
+	if rec.ID != id || rec.Content.Description.Data != "2+2?" || len(ans) != 1 || ans[0] != 1 {
 		t.Errorf("unexpected record: %+v", rec)
 	}
 	if rec.Difficulty != 1 || rec.Area != 2 {
@@ -626,6 +631,48 @@ func TestQuestionSvc_Answer_ItemWrongGrantsNothing(t *testing.T) {
 	}
 	if len(items.Inv) != 0 {
 		t.Error("a wrong answer must not grant the item")
+	}
+}
+
+// A question whose answer set holds several indexes grades any member correct and a
+// non-member incorrect.
+func TestQuestionSvc_Answer_ItemMultiIndexMatchesAnyMember(t *testing.T) {
+	newSession := func(r *mock.QuestionRepo) {
+		r.Sessions["sid"] = model.QuestionSession{
+			ExpiresAt: time.Now().Add(time.Minute),
+			UserID:    mock.IDFor("u"),
+			Kind:      model.KindItem,
+			ItemID:    42,
+			Question:  model.Question{Answer: model.IndexAnswer(1, 3)},
+		}
+	}
+
+	// Each accepted index grades correct.
+	for _, want := range []uint{1, 3} {
+		s, r, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
+		newSession(r)
+		data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(want))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var resp model.AnswerResponse
+		json.Unmarshal(data, &resp)
+		if !resp.Correct {
+			t.Errorf("index %d: expected correct against answer set {1,3}", want)
+		}
+	}
+
+	// A non-member grades incorrect.
+	s, r, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
+	newSession(r)
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(2))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var resp model.AnswerResponse
+	json.Unmarshal(data, &resp)
+	if resp.Correct {
+		t.Error("index 2: expected incorrect against answer set {1,3}")
 	}
 }
 
@@ -822,5 +869,23 @@ func TestQuestionSvc_Answer_VoiceResponseGradesViaSTT(t *testing.T) {
 	json.Unmarshal(data, &resp)
 	if resp.Correct {
 		t.Error("expected incorrect when the transcript does not match")
+	}
+
+	// An answer set with several accepted transcripts matches any member; here the
+	// transcript "nineteen" matches the second accepted value.
+	r.Sessions["sid3"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		UserID:    mock.IDFor("u"),
+		Kind:      model.KindItem,
+		ItemID:    44,
+		Question:  model.Question{Answer: model.VoiceAnswer("eighteen", "nineteen")},
+	}
+	data, _, err = s.Answer(accessTokenFor(t, "u"), "sid3", audio)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	json.Unmarshal(data, &resp)
+	if !resp.Correct {
+		t.Error("expected correct when the transcript matches any accepted value")
 	}
 }

@@ -810,9 +810,9 @@ func TestQuestionHandler_GetByID(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("Get: invalid JSON: %v", err)
 	}
-	var ans uint
+	var ans []uint
 	json.Unmarshal(got.Answer.Data, &ans)
-	if got.ID != id || got.Content.Description.Data != "2+2?" || ans != 1 {
+	if got.ID != id || got.Content.Description.Data != "2+2?" || len(ans) != 1 || ans[0] != 1 {
 		t.Errorf("unexpected record: %+v", got)
 	}
 

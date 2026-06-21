@@ -6,6 +6,7 @@ import (
 	"fmt"
 	mrand "math/rand"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -348,7 +349,7 @@ func (s *QuestionSvc) applyTarget(callerID uint, t model.Target) (bool, error) {
 func (s *QuestionSvc) grade(answer model.Answer, raw json.RawMessage) (bool, int, error) {
 	switch answer.Type {
 	case model.AnswerIndex:
-		var want uint
+		var want []uint
 		if err := json.Unmarshal(answer.Data, &want); err != nil {
 			return false, http.StatusInternalServerError, fmt.Errorf("題目答案格式錯誤")
 		}
@@ -356,9 +357,9 @@ func (s *QuestionSvc) grade(answer model.Answer, raw json.RawMessage) (bool, int
 		if err := json.Unmarshal(raw, &got); err != nil {
 			return false, http.StatusBadRequest, fmt.Errorf("不合法的 answer")
 		}
-		return got == want, http.StatusOK, nil
+		return slices.Contains(want, got), http.StatusOK, nil
 	case model.AnswerVoice:
-		var want string
+		var want []string
 		if err := json.Unmarshal(answer.Data, &want); err != nil {
 			return false, http.StatusInternalServerError, fmt.Errorf("題目答案格式錯誤")
 		}
@@ -370,7 +371,13 @@ func (s *QuestionSvc) grade(answer model.Answer, raw json.RawMessage) (bool, int
 		if err != nil {
 			return false, http.StatusInternalServerError, err
 		}
-		return strings.EqualFold(strings.TrimSpace(transcript), strings.TrimSpace(want)), http.StatusOK, nil
+		got := strings.TrimSpace(transcript)
+		for _, w := range want {
+			if strings.EqualFold(got, strings.TrimSpace(w)) {
+				return true, http.StatusOK, nil
+			}
+		}
+		return false, http.StatusOK, nil
 	default:
 		return false, http.StatusInternalServerError, fmt.Errorf("未知的答案類型")
 	}

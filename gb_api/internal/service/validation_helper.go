@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -109,6 +110,28 @@ func validateQuestionInput(in model.QuestionInput) error {
 	}
 	if _, ok := answerTypes[in.Answer.Type]; !ok {
 		return fmt.Errorf("不合法的 answer type")
+	}
+	if err := validateAnswerSet(in.Answer); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateAnswerSet enforces that the answer carries a non-empty JSON array of the
+// element type its answer type implies: indexes for AnswerIndex, transcripts for
+// AnswerVoice. This rejects both the legacy scalar shape and an empty set.
+func validateAnswerSet(answer model.Answer) error {
+	switch answer.Type {
+	case model.AnswerIndex:
+		var set []uint
+		if err := json.Unmarshal(answer.Data, &set); err != nil || len(set) == 0 {
+			return fmt.Errorf("answer 必須為非空的索引陣列")
+		}
+	case model.AnswerVoice:
+		var set []string
+		if err := json.Unmarshal(answer.Data, &set); err != nil || len(set) == 0 {
+			return fmt.Errorf("answer 必須為非空的字串陣列")
+		}
 	}
 	return nil
 }
