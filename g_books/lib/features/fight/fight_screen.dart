@@ -55,6 +55,10 @@ class _FightScreenState extends State<FightScreen> with TickerProviderStateMixin
   int _selfId = 0;
   late HeritageModel _heritage;
 
+  // App 內「我方已損毀」通知（需求 4）：偵測自己組新損毀的格時跳出，數秒後自動消失。
+  final List<_FightNotice> _notices = [];
+  int _noticeSeq = 0;
+
   @override
   void initState() {
     super.initState();
@@ -133,15 +137,45 @@ class _FightScreenState extends State<FightScreen> with TickerProviderStateMixin
   }
 
   void _onFightEvent(FightEvent e) async {
-    // 即時更新地圖：重新取全體狀態。（通知 UI / 進行中題目被搶於後續階段接上。）
+    // 收到 slot_update → 重新取全體狀態即時更新地圖。順帶比對自己組是否有新損毀的格，
+    // 有就跳「我方已損毀 XX 物件」通知（需求 4；後端 slot_update 不含攻擊者，故不顯示哪組）。
     final fight = context.read<FightService>();
+    final oldMine = _groupOf(_groups, _selfId);
     try {
       final groups = await fight.fetchAllGroups(
         selfUserId: _selfId,
         heritageId: _heritageId,
       );
-      if (mounted) setState(() => _groups = groups);
+      if (!mounted) return;
+      final newMine = _groupOf(groups, _selfId);
+      if (oldMine != null && newMine != null) {
+        for (final s in newMine.slots.values) {
+          if (!s.broken) continue;
+          final was = oldMine.slots[s.slotId];
+          if (was == null || !was.broken) {
+            final name = componentById(_heritageId, s.type)?.name ?? '元件';
+            _pushNotice('我方已損毀「$name」物件');
+          }
+        }
+      }
+      setState(() => _groups = groups);
     } catch (_) {}
+  }
+
+  FightGroup? _groupOf(List<FightGroup> groups, int userId) {
+    for (final g in groups) {
+      if (g.userId == userId) return g;
+    }
+    return null;
+  }
+
+  void _pushNotice(String text) {
+    final id = _noticeSeq++;
+    setState(() => _notices.add(_FightNotice(id, text)));
+    Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      setState(() => _notices.removeWhere((n) => n.id == id));
+    });
   }
 
   void _onTick() {
@@ -221,6 +255,7 @@ class _FightScreenState extends State<FightScreen> with TickerProviderStateMixin
         children: [
           _buildMap(),
           if (!_loading && !_timeUp) _buildHud(),
+          if (!_loading && !_timeUp && _notices.isNotEmpty) _buildNotices(),
           if (_timeUp) _buildTimeUp(),
           if (_leaderboard != null) _buildLeaderboard(),
           // 載入畫面疊在最上，淡出移除。
@@ -547,6 +582,63 @@ class _FightScreenState extends State<FightScreen> with TickerProviderStateMixin
     );
   }
 
+  // ── App 內「我方已損毀」通知（需求 4） ─────────────────────────────────────────
+  Widget _buildNotices() {
+    return Positioned(
+      top: 96,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [for (final n in _notices) _noticeCard(n)],
+        ),
+      ),
+    );
+  }
+
+  Widget _noticeCard(_FightNotice n) {
+    // 由上滑入 + 淡入。
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(n.id),
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      builder: (_, t, child) => Opacity(
+        opacity: t,
+        child: Transform.translate(offset: Offset(0, (1 - t) * -12), child: child),
+      ),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xF03A1512),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFE06A5A)),
+          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 6)],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.heart_broken_rounded,
+                color: Color(0xFFE06A5A), size: 20),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                n.text,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── 時間到 / 排行榜 ─────────────────────────────────────────────────────────────
   Widget _buildTimeUp() {
     return ColoredBox(
@@ -652,11 +744,18 @@ class _FightScreenState extends State<FightScreen> with TickerProviderStateMixin
                     fontSize: 16,
                     fontWeight: FontWeight.w600)),
           ),
-          Text('${e.hp} / ${e.hpMax}',
-              style: const TextStyle(
-                  color: Color(0xFFE7CF9A),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700)),
+          Row(
+            children: [
+              Text(e.hpMax > 0 ? '${e.hp} / ${e.hpMax}' : '${e.hp}',
+                  style: const TextStyle(
+                      color: Color(0xFFE7CF9A),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(width: 4),
+              const Text('血量',
+                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+            ],
+          ),
         ],
       ),
     );
@@ -718,6 +817,13 @@ class _FightScreenState extends State<FightScreen> with TickerProviderStateMixin
         backgroundColor: const Color(0xFF2A2420),
       ));
   }
+}
+
+/// 一則「我方已損毀」通知（id 供逾時移除比對）。
+class _FightNotice {
+  final int id;
+  final String text;
+  const _FightNotice(this.id, this.text);
 }
 
 /// 固定大小氣泡：頭像 + 組名 + 血量條（剩餘 / 上限）。敵我以邊框色區分。

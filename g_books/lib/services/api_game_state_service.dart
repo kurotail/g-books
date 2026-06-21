@@ -94,6 +94,10 @@ class ApiGameStateService implements GameStateService {
         (data) {
           try {
             final m = jsonDecode(data as String) as Map<String, dynamic>;
+            // 同一條 WS 也會推攻防戰的 `slot_update` 幀（`{type:"slot_update",user_id}`，
+            // 由 [FightService] 處理）。狀態幀無 `type` 欄位；非狀態幀一律略過，
+            // 否則會被當成缺 state → 誤判成 NORMAL，害遊戲階段亂跳。
+            if (m['type'] != null || m['state'] == null) return;
             _ctrl?.add(_parse(m));
           } catch (_) {/* 略過壞幀 */}
         },

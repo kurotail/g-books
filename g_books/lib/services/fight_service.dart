@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import '../data/component_data.dart' show componentsOf, componentById;
@@ -93,31 +95,16 @@ class FightGroup {
 }
 
 /// 戰況事件種類。
-enum FightEventKind { attack, repair }
-
-/// 一則戰況事件（對接 G1 的 WS 推播）。
+/// 戰況事件：對應後端 WS 的 `slot_update` 幀 `{ "type":"slot_update", "user_id": N }`。
+/// 後端只告知「哪位使用者的 slot 有變動」（移動 / 攻擊 / 修復皆會推），收到後前端
+/// refetch 該組（或全體）狀態以更新地圖。
+///
+/// ⚠️ 後端**未**提供「攻擊者是誰 / 打了哪格 / 哪個元件」。故 App 內被攻擊通知（需求 4）
+/// 只能由前端比對自己組的前後快照推出「我方某元件被攻破」，**無法得知是哪一組攻擊**。
 class FightEvent {
-  final FightEventKind kind;
-  final int actorUserId;
-  final String actorDisplayName;
-  final int targetUserId;
-  final int targetSlotId;
-
-  /// 被打 / 修復的元件 type（前端據此查元件名稱顯示通知）。
-  final int itemType;
-
-  /// 事件後該格是否損毀（attack→true、repair→false）。
-  final bool broken;
-
-  const FightEvent({
-    required this.kind,
-    required this.actorUserId,
-    required this.actorDisplayName,
-    required this.targetUserId,
-    required this.targetSlotId,
-    required this.itemType,
-    required this.broken,
-  });
+  /// slot 有變動的使用者（= slot_update 的 user_id）。
+  final int userId;
+  const FightEvent(this.userId);
 }
 
 /// 排行榜一列（對接 G3）。
@@ -156,9 +143,13 @@ abstract class FightService {
     required String heritageId,
   });
 
-  /// 本機套用一次攻擊 / 修復結果：Mock 用以同步世界地圖並推播事件；
-  /// Api 版為 no-op（真實狀態改變由後端完成，前端靠 refetch + WS 反映）。
-  Future<void> localApply(FightEvent event) async {}
+  /// 本機套用一次攻擊 / 修復結果（把某組某格設為 [broken]）：Mock 用以同步世界地圖
+  /// 並推播 slot_update；Api 版為 no-op（真實狀態改變由後端完成，靠 refetch + WS 反映）。
+  Future<void> localApply({
+    required int targetUserId,
+    required int slotId,
+    required bool broken,
+  }) async {}
 
   void dispose() {}
 }
@@ -274,33 +265,29 @@ class MockFightService implements FightService {
     if (candidates.isEmpty) return;
     final (gi, slot) = candidates[_rng.nextInt(candidates.length)];
     final target = cache[gi];
-    final attacker = cache[(gi + 1) % cache.length];
     final next = Map<int, FightSlot>.from(target.slots)
       ..[slot.slotId] = slot.copyWith(broken: true);
     cache[gi] = target.copyWithSlots(next);
-    _ctrl.add(FightEvent(
-      kind: FightEventKind.attack,
-      actorUserId: attacker.userId,
-      actorDisplayName: attacker.displayName,
-      targetUserId: target.userId,
-      targetSlotId: slot.slotId,
-      itemType: slot.type,
-      broken: true,
-    ));
+    // 仿後端 slot_update：只通知「該組 slot 有變動」，前端 refetch。
+    _ctrl.add(FightEvent(target.userId));
   }
 
   @override
-  Future<void> localApply(FightEvent event) async {
+  Future<void> localApply({
+    required int targetUserId,
+    required int slotId,
+    required bool broken,
+  }) async {
     final cache = _cache;
     if (cache == null) return;
-    final gi = cache.indexWhere((g) => g.userId == event.targetUserId);
+    final gi = cache.indexWhere((g) => g.userId == targetUserId);
     if (gi < 0) return;
-    final slot = cache[gi].slots[event.targetSlotId];
+    final slot = cache[gi].slots[slotId];
     if (slot == null) return;
     final next = Map<int, FightSlot>.from(cache[gi].slots)
-      ..[event.targetSlotId] = slot.copyWith(broken: event.broken);
+      ..[slotId] = slot.copyWith(broken: broken);
     cache[gi] = cache[gi].copyWithSlots(next);
-    if (!_ctrl.isClosed) _ctrl.add(event);
+    if (!_ctrl.isClosed) _ctrl.add(FightEvent(targetUserId));
   }
 
   @override
@@ -325,6 +312,13 @@ class ApiFightService implements FightService {
 
   final ApiClient _client;
 
+  // 攻防戰 slot_update WS（與 ApiGameStateService 各自連線到同一 /api/state/ws；
+  // 兩者用 `type` 欄位各取所需：本服務只處理 slot_update，狀態幀略過）。
+  StreamController<FightEvent>? _ctrl;
+  WebSocket? _ws;
+  bool _connecting = false;
+  bool _closed = false;
+
   @override
   Future<List<FightGroup>> fetchAllGroups({
     required int selfUserId,
@@ -343,7 +337,7 @@ class ApiFightService implements FightService {
     for (final u in users) {
       final uid = (u['id'] as num?)?.toInt() ?? 0;
       if (uid == 0) continue;
-      final slots = await _fetchSlots(uid);
+      final slots = await _fetchSlots(uid, selfUserId);
       groups.add(FightGroup(
         userId: uid,
         displayName: ((u['display_name'] as String?)?.trim().isNotEmpty ?? false)
@@ -360,9 +354,9 @@ class ApiFightService implements FightService {
     return groups;
   }
 
-  /// 取某組的 slot 狀態（type + broken）。學生查別組為受限視圖（無 item_id/question_id）。
-  /// 預留 G4：每格的 `attack_blocked`（對 caller 而言）尚未由後端提供，暫一律 false。
-  Future<Map<int, FightSlot>> _fetchSlots(int userId) async {
+  /// 取某組的 slot 狀態（type + broken + 對 [selfUserId] 而言是否被禁打）。
+  /// 學生查別組為受限視圖（無 item_id/question_id），但 `blocked_attackers` 兩種視圖都會回。
+  Future<Map<int, FightSlot>> _fetchSlots(int userId, int selfUserId) async {
     try {
       final m = await _client.sendJson('POST', '/api/item',
           body: {'user_id': userId}) as Map<String, dynamic>;
@@ -372,11 +366,15 @@ class ApiFightService implements FightService {
         final mm = v as Map<String, dynamic>;
         final slotId = int.tryParse(k) ?? -1;
         if (slotId < 0) return;
+        // blocked_attackers：被禁止攻擊這格的 user_id 清單（空時後端省略）。
+        // 對「我」而言被禁打 = 清單含 selfUserId（G4）。
+        final blocked = (mm['blocked_attackers'] as List? ?? const [])
+            .map((x) => (x as num).toInt());
         out[slotId] = FightSlot(
           slotId: slotId,
           type: (mm['type'] as num?)?.toInt() ?? 0,
           broken: mm['broken'] == true,
-          attackBlocked: mm['attack_blocked'] == true, // 預留 G4
+          attackBlocked: blocked.contains(selfUserId),
         );
       });
       return out;
@@ -387,9 +385,53 @@ class ApiFightService implements FightService {
 
   @override
   Stream<FightEvent> watchEvents() {
-    // 預留 G1：後端戰況 WS 事件尚未備妥。屆時於此連線 WS、解析事件後 add 進串流。
-    // 現階段回空串流（畫面僅靠進場 fetch 一次；接線後即時化）。
-    return const Stream<FightEvent>.empty();
+    _ctrl ??= StreamController<FightEvent>.broadcast(onListen: _connect);
+    return _ctrl!.stream;
+  }
+
+  // 連線 /api/state/ws，只取 `slot_update` 幀 → 推出 FightEvent(user_id)。
+  // 寫法比照 [ApiGameStateService]（共用 ApiClient 的自簽憑證 HttpClient、斷線重連）。
+  Future<void> _connect() async {
+    if (_closed || _connecting || _ws != null) return;
+    final token = _client.accessToken;
+    if (token == null) return;
+    _connecting = true;
+    final wsUrl = '${_client.baseUrl.replaceFirst('http', 'ws')}/api/state/ws'
+        '?access_token=${Uri.encodeQueryComponent(token)}';
+    try {
+      final ws =
+          await WebSocket.connect(wsUrl, customClient: _client.httpClient);
+      _connecting = false;
+      if (_closed) {
+        await ws.close();
+        return;
+      }
+      _ws = ws;
+      ws.listen(
+        (data) {
+          try {
+            final m = jsonDecode(data as String) as Map<String, dynamic>;
+            // 只處理攻防戰的 slot_update；狀態幀交給 ApiGameStateService。
+            if (m['type'] != 'slot_update') return;
+            final uid = (m['user_id'] as num?)?.toInt();
+            if (uid != null) _ctrl?.add(FightEvent(uid));
+          } catch (_) {/* 略過壞幀 */}
+        },
+        onDone: _scheduleReconnect,
+        onError: (_) => _scheduleReconnect(),
+        cancelOnError: true,
+      );
+    } catch (_) {
+      _connecting = false;
+      _scheduleReconnect();
+    }
+  }
+
+  void _scheduleReconnect() {
+    _ws = null;
+    if (_closed) return;
+    if (_ctrl == null || !_ctrl!.hasListener) return;
+    Future<void>.delayed(const Duration(seconds: 3), _connect);
   }
 
   @override
@@ -397,38 +439,79 @@ class ApiFightService implements FightService {
     required int selfUserId,
     required String heritageId,
   }) async {
-    // 預留 G3：優先打後端排行榜端點；未備妥則由全體狀態自算。
+    // G3：後端 GET /api/scores 回 `{scores:[{user_id, score}]}`（QUIZ2 結束時重算，
+    // score = 未損毀 slot 元件的題目難度加總 = 剩餘血量）。端點只給分數，故合併
+    // GET /api/users 補 display_name / 頭像，名次由前端排（需求 3 僅需剩餘血量）。
     try {
-      final m = await _client.getJson('/api/fight/leaderboard');
-      if (m is Map && m['results'] is List) {
-        return [
-          for (final r in (m['results'] as List))
-            LeaderboardEntry(
-              rank: ((r as Map)['rank'] as num?)?.toInt() ?? 0,
-              userId: (r['user_id'] as num?)?.toInt() ?? 0,
-              displayName: (r['display_name'] as String?) ?? '',
-              avatarUrl: () {
-                final p = (r['profile_pic_url'] as String?) ?? '';
-                return p.isEmpty ? null : p;
-              }(),
-              hp: (r['hp'] as num?)?.toInt() ?? 0,
-              hpMax: (r['hp_max'] as num?)?.toInt() ?? 0,
-            ),
-        ];
+      final scoresResp =
+          await _client.getJson('/api/scores') as Map<String, dynamic>;
+      final rows = (scoresResp['scores'] as List? ?? const [])
+          .cast<Map<String, dynamic>>();
+      if (rows.isEmpty) {
+        // 首次 QUIZ2 尚未結束 → 後備：用目前全體狀態自算。
+        final groups =
+            await fetchAllGroups(selfUserId: selfUserId, heritageId: heritageId);
+        return rankGroups(groups, heritageId);
       }
+      final meta = <int, ({String name, String? avatar, int role})>{};
+      try {
+        final usersResp =
+            await _client.getJson('/api/users') as Map<String, dynamic>;
+        for (final u in (usersResp['users'] as List? ?? const [])
+            .cast<Map<String, dynamic>>()) {
+          final id = (u['id'] as num?)?.toInt() ?? 0;
+          final p = (u['profile_pic_url'] as String?) ?? '';
+          meta[id] = (
+            name: ((u['display_name'] as String?)?.trim().isNotEmpty ?? false)
+                ? u['display_name'] as String
+                : (u['username'] as String? ?? ''),
+            avatar: p.isEmpty ? null : p,
+            role: (u['role'] as num?)?.toInt() ?? -1,
+          );
+        }
+      } catch (_) {}
+      final ranked = [
+        for (final r in rows)
+          (
+            userId: (r['user_id'] as num?)?.toInt() ?? 0,
+            score: (r['score'] as num?)?.toInt() ?? 0,
+          ),
+      ]
+        // 只留小組帳號（meta 找不到的保險起見也保留）。
+        ..removeWhere((e) => meta[e.userId] != null && meta[e.userId]!.role != 0)
+        ..sort((a, b) => b.score.compareTo(a.score));
+      return [
+        for (var i = 0; i < ranked.length; i++)
+          LeaderboardEntry(
+            rank: i + 1,
+            userId: ranked[i].userId,
+            displayName: meta[ranked[i].userId]?.name ?? '',
+            avatarUrl: meta[ranked[i].userId]?.avatar,
+            hp: ranked[i].score,
+            hpMax: 0, // 後端只給剩餘分數，無上限。
+          ),
+      ];
     } catch (_) {
-      // 後端尚未提供排行榜端點 → 後備自算。
+      final groups =
+          await fetchAllGroups(selfUserId: selfUserId, heritageId: heritageId);
+      return rankGroups(groups, heritageId);
     }
-    final groups =
-        await fetchAllGroups(selfUserId: selfUserId, heritageId: heritageId);
-    return rankGroups(groups, heritageId);
   }
 
   @override
-  Future<void> localApply(FightEvent event) async {
-    // Api 版 no-op：真實狀態改變由後端完成，前端靠 refetch + WS 反映。
+  Future<void> localApply({
+    required int targetUserId,
+    required int slotId,
+    required bool broken,
+  }) async {
+    // Api 版 no-op：真實狀態改變由後端完成，前端靠 refetch + WS slot_update 反映。
   }
 
   @override
-  void dispose() {}
+  void dispose() {
+    _closed = true;
+    _ws?.close();
+    _ws = null;
+    _ctrl?.close();
+  }
 }
