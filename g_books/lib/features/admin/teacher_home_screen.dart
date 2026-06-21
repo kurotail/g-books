@@ -8,6 +8,7 @@ import '../../data/heritage_data.dart';
 import '../../data/models/group_account.dart';
 import '../../data/models/heritage_model.dart';
 import '../../data/models/roster_student.dart';
+import '../../services/course_session_store.dart';
 import '../../services/game_state_service.dart';
 import '../../services/teacher_service.dart';
 import '../../state/app_state.dart';
@@ -34,6 +35,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
 
   late final TeacherService _teacher;
   late final GameStateService _gameSvc;
+  final CourseSessionStore _courseStore = CourseSessionStore();
+  String _username = ''; // 目前登入老師（上課場次以此為鍵）
 
   int _tab = 0;
   // 兩階段：課前準備（名冊 / 帳號 / 上課古蹟）→ 開始課程 → 課程控制（遊戲階段）。
@@ -70,8 +73,24 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     super.initState();
     _teacher = context.read<TeacherService>();
     _gameSvc = context.read<GameStateService>();
-    _refreshPhase();
+    _username = context.read<AppState>().currentStaff?.username ?? '';
+    _restoreCourse();
     _refreshData();
+  }
+
+  /// 重登還原：本機若有「本帳號開始且未結束」的上課場次，直接回到課程控制頁
+  /// （遊戲階段），不退回課前準備。登出不會清除場次，故重登後仍維持上課中。
+  /// 先確定上課狀態再載入階段，[_refreshPhase] 會在上課中時依後端剩餘時間接續倒數。
+  Future<void> _restoreCourse() async {
+    final active = await _courseStore.isActiveFor(_username);
+    if (!mounted) return;
+    if (active) {
+      setState(() {
+        _courseStarted = true;
+        _tab = 0;
+      });
+    }
+    await _refreshPhase();
   }
 
   @override
@@ -88,10 +107,23 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   }
 
   // ── 階段 ────────────────────────────────────────────────────────────────────
+  /// 取目前階段，並讓倒數一律以後端為準：上課中、採集/攻防且尚有剩餘時間 → 依後端
+  /// 剩餘時間（end_time − now）建立 / 對齊本機倒數；否則（平時或已到時）清除。每次
+  /// fetch 都重新對齊後端，故老師剛開始、重登接續、手動刷新與學生端的剩餘時間一致。
   Future<void> _refreshPhase() async {
     try {
       final s = await _gameSvc.fetch();
-      if (mounted) setState(() => _phase = s.phase);
+      if (!mounted) return;
+      final remaining = s.remaining(DateTime.now());
+      final running = _courseStarted && s.isQuiz && remaining > Duration.zero;
+      setState(() {
+        _phase = s.phase;
+        if (running) {
+          _startTimers(remaining);
+        } else {
+          _clearTimers();
+        }
+      });
     } catch (_) {}
   }
 
@@ -107,7 +139,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
       } else {
         final d = dur ?? Duration(minutes: _durationMin);
         await _teacher.setPhase(p, duration: d);
-        _startTimers(d);
+        // 不在本機自算倒數：setPhase 已把 end_time 寫進後端，倒數一律由下方
+        // _refreshPhase fetch 回來依後端剩餘時間建立（與學生端同步）。
         _toast('已開始「${_phaseName(p)}」（${d.inMinutes} 分）');
       }
       await _refreshPhase();
@@ -479,6 +512,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
       _courseStarted = true;
       _tab = 0;
     });
+    _courseStore.start(_username); // 記住場次，供登出重登還原
     _toast('課程已開始，進入課程控制');
   }
 
@@ -490,6 +524,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
       await _teacher.setPhase(GamePhase.normal);
     } catch (_) {}
     _clearTimers();
+    await _courseStore.end(); // 清掉本機場次，重登不再回到上課頁
     await _refreshPhase();
     if (!mounted) return;
     setState(() {

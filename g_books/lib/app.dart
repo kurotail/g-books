@@ -10,7 +10,7 @@ import 'features/heritage/heritage_selection_screen.dart';
 import 'features/heritage/my_heritage_screen.dart';
 import 'features/heritage/resource_collection_screen.dart';
 import 'features/admin/staff_login_screen.dart';
-import 'features/admin/admin_heritage_picker_screen.dart';
+import 'features/admin/admin_home_screen.dart';
 import 'features/admin/admin_editor_screen.dart';
 import 'features/admin/teacher_home_screen.dart';
 
@@ -50,7 +50,7 @@ class _GBooksAppState extends State<GBooksApp> {
         GoRoute(
           path: '/admin',
           pageBuilder: (_, state) =>
-              _fadePage(state, const AdminHeritagePickerScreen()),
+              _fadePage(state, const AdminHomeScreen()),
         ),
         GoRoute(
           path: '/admin/edit/:hid',

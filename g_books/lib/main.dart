@@ -13,6 +13,7 @@ import 'services/api_game_state_service.dart';
 import 'services/quiz_service.dart';
 import 'services/collection_progress_service.dart';
 import 'services/teacher_service.dart';
+import 'services/account_service.dart';
 import 'services/avatar_service.dart';
 import 'services/api_client.dart';
 import 'config/app_config.dart';
@@ -82,6 +83,10 @@ Future<void> main() async {
       ? ApiTeacherService(apiClient)
       : MockTeacherService(gameStateService as MockGameStateService);
 
+  // 管理者後台：教師帳號管理（role=1）。mock 版操作本機種子。
+  final AccountService accountService =
+      kUseBackend ? ApiAccountService(apiClient) : MockAccountService();
+
   final collectionProgressService = LocalCollectionProgressService();
   runApp(
     MultiProvider(
@@ -94,6 +99,7 @@ Future<void> main() async {
         Provider<GameStateService>.value(value: gameStateService),
         Provider<QuizService>.value(value: quizService),
         Provider<TeacherService>.value(value: teacherService),
+        Provider<AccountService>.value(value: accountService),
         Provider<CollectionProgressService>.value(
           value: collectionProgressService,
         ),
