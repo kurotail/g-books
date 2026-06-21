@@ -47,6 +47,7 @@ Configuration is read from `.env` (consumed by both the `postgres` and `api` con
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Admin account seeded on startup (default `admin` / `admin123`) so you can log in |
 | `JWT_KEY` / `JWT_REFRESH_KEY` | 64-char hex signing keys for access / refresh tokens |
 | `UPLOAD_DIR`, `MAX_IMAGE_MB`, `MAX_AUDIO_MB` | Media upload directory and per-category size caps |
+| `STT_BASE_URL` | Taigi speech-to-text service address (default `http://host.docker.internal:8964`, reaching the host from the API container) |
 
 Database state persists in the `pgdata` Docker volume across restarts. The schema is loaded
 from `postgres/init.sql` **only when the `pgdata` volume is first created**; edits to that file
@@ -1464,3 +1465,19 @@ Authorization: Bearer <access_token>
 | Refresh | 7 days | `JWT_REFRESH_KEY` | Single-use; rotated on every `/api/refresh` call |
 
 > **Note:** Signing keys are currently hardcoded constants. Replace with environment variables before deploying to production.
+
+### Go CLI (`cmd/stt`)
+
+The `cmd/stt` helper reads a WAV file and prints its transcript. It does **not** call
+this service directly — it goes through the gb-api server's
+[`POST /api/stt`](../README.md#post-apistt) endpoint, which proxies to this service. So
+the gb-api server must be running **as well as** this STT service, and the CLI logs in
+with `ADMIN_USERNAME` / `ADMIN_PASSWORD` (default `admin` / `admin123`) to obtain a
+token (the endpoint is Teacher/Admin only).
+
+```bash
+go run ./cmd/stt            # uses taigi_stt/audio.wav
+go run ./cmd/stt path/to/other.wav
+```
+
+Override the gb-api address with `STT_API_BASE_URL` (default `https://localhost`).
