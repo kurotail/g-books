@@ -13,7 +13,7 @@ class TeacherBuilding {
 }
 
 /// 教師控制台的後端操作抽象層。新模型「一組一帳號 + 班級名冊」：
-///   - 班級名冊（students 表）：每筆 `{學號, 姓名, 頭像}`，非登入帳號。
+///   - 班級名冊（students 表）：每筆 `{座號, 姓名, 頭像}`，非登入帳號。
 ///   - 小組帳號（user role=0）：username 即組名，持有指派的名冊成員與古蹟。
 ///
 /// 對應 `gb_api` 端點：
@@ -40,13 +40,19 @@ abstract class TeacherService {
   // ── 班級名冊（students 表）─────────────────────────────────────────────────
   Future<List<RosterStudent>> listRoster();
 
-  /// 新增名冊學生（學號為前端指定的主鍵）。學號已存在時拋例外。
-  Future<void> createStudent(
-      {required int id, required String name, String? avatarUrl});
+  /// 新增名冊學生（座號為前端指定的主鍵）。座號已存在時拋例外。
+  Future<void> createStudent({
+    required int id,
+    required String name,
+    String? avatarUrl,
+  });
 
-  /// 覆寫名冊學生的姓名 / 頭像（學號不可改）。
-  Future<void> updateStudent(
-      {required int id, required String name, String? avatarUrl});
+  /// 覆寫名冊學生的姓名 / 頭像（座號不可改）。
+  Future<void> updateStudent({
+    required int id,
+    required String name,
+    String? avatarUrl,
+  });
 
   /// 刪除名冊學生（後端會連動從各組 roster 移除）。
   Future<void> deleteStudent({required int id});
@@ -55,28 +61,59 @@ abstract class TeacherService {
   Future<List<GroupAccount>> listGroups();
 
   /// 建立小組登入帳號（username 即組名、role=0）。帳號已存在時拋例外。
-  Future<void> createGroup({required String username, required String password});
+  Future<void> createGroup({
+    required String username,
+    required String password,
+  });
 
   /// 刪除一個小組帳號。
   Future<void> deleteGroup({required String username});
 
   /// 全量設定某組的名冊成員（整組覆蓋）。
-  Future<void> setGroupStudents(
-      {required String username, required List<int> studentIds});
+  Future<void> setGroupStudents({
+    required String username,
+    required List<int> studentIds,
+  });
 
   /// 設定某組的組徽（空字串＝清除）。
   Future<void> setGroupAvatar({required String username, String? avatarUrl});
 
   /// 列出後端所有古蹟 building，供「上課古蹟」把 heritageId 解析成 building_id。
   Future<List<TeacherBuilding>> listBuildings();
+
+  // ── 題庫匯入（POST /api/question/upload）────────────────────────────────────
+  /// 上傳題目音檔（敘述 / 選項 / 語音作答參考），回傳 `/audio/..` URL。
+  Future<String> uploadQuestionAudio(List<int> bytes, String filename);
+
+  /// 批次上傳題目（payload 形狀同後端 QuestionInput）。回傳逐題結果（與送出順序對應）。
+  Future<List<QuestionUploadResult>> uploadQuestions(
+    List<Map<String, dynamic>> questions,
+  );
+}
+
+/// 單題上傳結果（對應後端 `POST /api/question/upload` 的 207 Multi-Status 每筆）。
+class QuestionUploadResult {
+  const QuestionUploadResult({
+    required this.index,
+    required this.status,
+    this.id,
+    this.error,
+  });
+
+  final int index;
+  final int status; // 201=建立成功、400=該題不合法
+  final int? id;
+  final String? error;
+
+  bool get created => status == 201;
 }
 
 /// 把 [GamePhase] 轉成後端的狀態字串。
 String gamePhaseToState(GamePhase p) => switch (p) {
-      GamePhase.quiz1 => 'QUIZ1',
-      GamePhase.quiz2 => 'QUIZ2',
-      GamePhase.normal => 'NORMAL',
-    };
+  GamePhase.quiz1 => 'QUIZ1',
+  GamePhase.quiz2 => 'QUIZ2',
+  GamePhase.normal => 'NORMAL',
+};
 
 /// 本機 mock：名冊 / 小組帳號由 [mockRoster] / [mockGroupAccounts] 種子化；切換階段
 /// 直接推給共用的 [MockGameStateService]（單機時學生畫面會立即反映，方便 demo）。
@@ -102,19 +139,25 @@ class MockTeacherService implements TeacherService {
   }
 
   @override
-  Future<void> createStudent(
-      {required int id, required String name, String? avatarUrl}) async {
+  Future<void> createStudent({
+    required int id,
+    required String name,
+    String? avatarUrl,
+  }) async {
     if (_roster.any((s) => s.id == id)) {
-      throw Exception('學號 $id 已存在');
+      throw Exception('座號 $id 已存在');
     }
     _roster.add(RosterStudent(id: id, name: name, avatarUrl: avatarUrl));
   }
 
   @override
-  Future<void> updateStudent(
-      {required int id, required String name, String? avatarUrl}) async {
+  Future<void> updateStudent({
+    required int id,
+    required String name,
+    String? avatarUrl,
+  }) async {
     final i = _roster.indexWhere((s) => s.id == id);
-    if (i < 0) throw Exception('學號 $id 不存在');
+    if (i < 0) throw Exception('座號 $id 不存在');
     _roster[i] = RosterStudent(id: id, name: name, avatarUrl: avatarUrl);
   }
 
@@ -143,8 +186,10 @@ class MockTeacherService implements TeacherService {
   }
 
   @override
-  Future<void> createGroup(
-      {required String username, required String password}) async {
+  Future<void> createGroup({
+    required String username,
+    required String password,
+  }) async {
     if (_groups.any((g) => g.username == username)) {
       throw Exception('帳號 $username 已存在');
     }
@@ -159,13 +204,16 @@ class MockTeacherService implements TeacherService {
   }
 
   @override
-  Future<void> setGroupStudents(
-      {required String username, required List<int> studentIds}) async {
+  Future<void> setGroupStudents({
+    required String username,
+    required List<int> studentIds,
+  }) async {
     final i = _groups.indexWhere((g) => g.username == username);
     if (i < 0) return;
     final g = _groups[i];
-    final valid = studentIds.where((id) => _roster.any((s) => s.id == id)).toList()
-      ..sort();
+    final valid =
+        studentIds.where((id) => _roster.any((s) => s.id == id)).toList()
+          ..sort();
     _groups[i] = GroupAccount(
       username: g.username,
       buildingId: g.buildingId,
@@ -175,8 +223,10 @@ class MockTeacherService implements TeacherService {
   }
 
   @override
-  Future<void> setGroupAvatar(
-      {required String username, String? avatarUrl}) async {
+  Future<void> setGroupAvatar({
+    required String username,
+    String? avatarUrl,
+  }) async {
     final i = _groups.indexWhere((g) => g.username == username);
     if (i < 0) return;
     final g = _groups[i];
@@ -189,8 +239,21 @@ class MockTeacherService implements TeacherService {
   }
 
   @override
-  Future<List<TeacherBuilding>> listBuildings() async =>
-      const [TeacherBuilding(id: 1, name: 'beigang_chaotian_temple')];
+  Future<List<TeacherBuilding>> listBuildings() async => const [
+    TeacherBuilding(id: 1, name: 'beigang_chaotian_temple'),
+  ];
+
+  @override
+  Future<String> uploadQuestionAudio(List<int> bytes, String filename) async =>
+      '/audio/mock_$filename';
+
+  @override
+  Future<List<QuestionUploadResult>> uploadQuestions(
+    List<Map<String, dynamic>> questions,
+  ) async => [
+    for (var i = 0; i < questions.length; i++)
+      QuestionUploadResult(index: i, status: 201, id: i + 1),
+  ];
 }
 
 /// 後端實作：教師端點皆需教師 JWT（由教師於 staff 登入時取得，存於共用 [ApiClient]）。
@@ -207,8 +270,7 @@ class ApiTeacherService implements TeacherService {
     if (phase != GamePhase.normal &&
         duration != null &&
         duration > Duration.zero) {
-      body['end_time'] =
-          DateTime.now().toUtc().add(duration).toIso8601String();
+      body['end_time'] = DateTime.now().toUtc().add(duration).toIso8601String();
     }
     await _client.sendJson('POST', '/api/state', body: body);
   }
@@ -225,22 +287,33 @@ class ApiTeacherService implements TeacherService {
   }
 
   @override
-  Future<void> createStudent(
-      {required int id, required String name, String? avatarUrl}) async {
-    await _client.sendJson('POST', '/api/student', body: {
-      'student_id': id,
-      'name': name,
-      'profile_pic_url': avatarUrl ?? '',
-    });
+  Future<void> createStudent({
+    required int id,
+    required String name,
+    String? avatarUrl,
+  }) async {
+    await _client.sendJson(
+      'POST',
+      '/api/student',
+      body: {
+        'student_id': id,
+        'name': name,
+        'profile_pic_url': avatarUrl ?? '',
+      },
+    );
   }
 
   @override
-  Future<void> updateStudent(
-      {required int id, required String name, String? avatarUrl}) async {
-    await _client.sendJson('PUT', '/api/student/$id', body: {
-      'name': name,
-      'profile_pic_url': avatarUrl ?? '',
-    });
+  Future<void> updateStudent({
+    required int id,
+    required String name,
+    String? avatarUrl,
+  }) async {
+    await _client.sendJson(
+      'PUT',
+      '/api/student/$id',
+      body: {'name': name, 'profile_pic_url': avatarUrl ?? ''},
+    );
   }
 
   @override
@@ -264,13 +337,15 @@ class ApiTeacherService implements TeacherService {
   }
 
   @override
-  Future<void> createGroup(
-      {required String username, required String password}) async {
-    await _client.sendJson('POST', '/api/register', body: {
-      'username': username,
-      'password': password,
-      'role': 0,
-    });
+  Future<void> createGroup({
+    required String username,
+    required String password,
+  }) async {
+    await _client.sendJson(
+      'POST',
+      '/api/register',
+      body: {'username': username, 'password': password, 'role': 0},
+    );
   }
 
   @override
@@ -278,23 +353,36 @@ class ApiTeacherService implements TeacherService {
     // RESTful：DELETE /api/users/{username}（帳號走路徑、無 body）。username 可能含
     // 中文，需 URL-encode 後放進路徑。
     await _client.sendJson(
-        'DELETE', '/api/users/${Uri.encodeComponent(username)}');
+      'DELETE',
+      '/api/users/${Uri.encodeComponent(username)}',
+    );
   }
 
   @override
-  Future<void> setGroupStudents(
-      {required String username, required List<int> studentIds}) async {
-    await _client.sendJson('POST', '/api/users/students',
-        body: {'username': username, 'student_ids': studentIds});
+  Future<void> setGroupStudents({
+    required String username,
+    required List<int> studentIds,
+  }) async {
+    await _client.sendJson(
+      'POST',
+      '/api/users/students',
+      body: {'username': username, 'student_ids': studentIds},
+    );
   }
 
   @override
-  Future<void> setGroupAvatar(
-      {required String username, String? avatarUrl}) async {
-    await _client.sendJson('POST', '/api/users/pfp', body: {
-      'username': username,
-      'profile_pic_url': avatarUrl ?? '', // 空字串＝清除
-    });
+  Future<void> setGroupAvatar({
+    required String username,
+    String? avatarUrl,
+  }) async {
+    await _client.sendJson(
+      'POST',
+      '/api/users/pfp',
+      body: {
+        'username': username,
+        'profile_pic_url': avatarUrl ?? '', // 空字串＝清除
+      },
+    );
   }
 
   @override
@@ -310,6 +398,31 @@ class ApiTeacherService implements TeacherService {
     ];
   }
 
+  @override
+  Future<String> uploadQuestionAudio(List<int> bytes, String filename) =>
+      _client.uploadAudio(bytes, filename);
+
+  @override
+  Future<List<QuestionUploadResult>> uploadQuestions(
+    List<Map<String, dynamic>> questions,
+  ) async {
+    final res = await _client.sendJson(
+      'POST',
+      '/api/question/upload',
+      body: {'questions': questions},
+    );
+    final results = (res is Map ? res['results'] as List? : null) ?? const [];
+    return [
+      for (final r in results)
+        QuestionUploadResult(
+          index: ((r as Map)['index'] as num?)?.toInt() ?? 0,
+          status: (r['status'] as num?)?.toInt() ?? 0,
+          id: (r['id'] as num?)?.toInt(),
+          error: r['error'] as String?,
+        ),
+    ];
+  }
+
   RosterStudent _studentOf(Map<String, dynamic> m) {
     final pic = (m['profile_pic_url'] as String?) ?? '';
     return RosterStudent(
@@ -321,10 +434,11 @@ class ApiTeacherService implements TeacherService {
 
   GroupAccount _groupOf(Map<String, dynamic> m) {
     final pic = (m['profile_pic_url'] as String?) ?? '';
-    final ids = ((m['students'] as List?) ?? const [])
-        .map((x) => (x as num).toInt())
-        .toList()
-      ..sort();
+    final ids =
+        ((m['students'] as List?) ?? const [])
+            .map((x) => (x as num).toInt())
+            .toList()
+          ..sort();
     return GroupAccount(
       username: (m['username'] as String?) ?? '',
       buildingId: (m['building_id'] as num?)?.toInt() ?? 0,

@@ -4,7 +4,7 @@ import 'models/staff_account.dart';
 
 // 新模型（一組一帳號 + 班級名冊）的 mock 種子，供 kUseBackend=false 離線開發。
 
-// 班級名冊：每筆 = 一位學生 {學號, 姓名, 頭像}（非登入帳號）。
+// 班級名冊：每筆 = 一位學生 {座號, 姓名, 頭像}（非登入帳號）。
 final mockRoster = <RosterStudent>[
   RosterStudent(id: 1, name: '王小明'),
   RosterStudent(id: 2, name: '李小花'),

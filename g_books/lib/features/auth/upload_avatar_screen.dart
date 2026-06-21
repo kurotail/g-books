@@ -22,7 +22,7 @@ enum _Stage { picking, cropping, previewing, uploading }
 class UploadAvatarScreen extends StatefulWidget {
   final AvatarTarget target;
 
-  /// 當 [target] 為 [AvatarTarget.member] 時，要編輯的組員學號（student_id）。
+  /// 當 [target] 為 [AvatarTarget.member] 時，要編輯的組員座號（student_id）。
   final int? memberId;
 
   const UploadAvatarScreen({super.key, required this.target, this.memberId});
@@ -265,8 +265,9 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
                 height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: AppColors.pillDark
-                      .withValues(alpha: isUploading ? 0.5 : 0.94),
+                  color: AppColors.pillDark.withValues(
+                    alpha: isUploading ? 0.5 : 0.94,
+                  ),
                   shape: BoxShape.circle,
                   boxShadow: const [
                     BoxShadow(
@@ -295,10 +296,7 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
               bottom: 0,
               width: 160,
               child: Center(
-                child: StepIndicator(
-                  steps: _setupSteps,
-                  currentStep: 1,
-                ),
+                child: StepIndicator(steps: _setupSteps, currentStep: 1),
               ),
             ),
           // main content：標題稍微下移、頭像與按鈕整組往畫面中央靠。

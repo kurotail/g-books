@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
@@ -20,6 +21,12 @@ import 'config/app_config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 讓 Image.network 也能載入後端自簽 HTTPS 的頭像（/images/..）。否則 API 雖可用
+  // （ApiClient 自己放行憑證），頭像圖片仍會因憑證驗證失敗而顯示不出。僅後端模式需要。
+  if (kUseBackend) {
+    HttpOverrides.global = BackendHttpOverrides();
+  }
 
   // 預解碼 logo 與各頁背景進快取，避免首次顯示時露出純色底（此時尚無 BuildContext）。
   await Future.wait([

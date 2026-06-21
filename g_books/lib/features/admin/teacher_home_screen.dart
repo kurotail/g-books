@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:archive/archive.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:provider/provider.dart';
@@ -10,11 +13,12 @@ import '../../data/models/heritage_model.dart';
 import '../../data/models/roster_student.dart';
 import '../../services/course_session_store.dart';
 import '../../services/game_state_service.dart';
+import '../../services/question_import.dart';
 import '../../services/teacher_service.dart';
 import '../../state/app_state.dart';
 
 /// 教師控制台。新模型「一組一帳號 + 班級名冊」：
-/// - 班級名冊：管理 students 表（學號 / 姓名 / 頭像），非登入帳號。
+/// - 班級名冊：管理 students 表（座號 / 姓名 / 頭像），非登入帳號。
 /// - 小組帳號：建立各組登入帳號（username 即組名）、指派名冊學生進組。
 /// - 上課古蹟：單一古蹟，學生登入時自動綁定，本頁只負責開始 / 結束課程與重置。
 /// 操作走 [TeacherService]，目前階段讀 [GameStateService]。
@@ -51,6 +55,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   DateTime? _phaseEndsAt; // 本機倒數結束時間
   Timer? _autoTimer; // 時間到自動回平時
   Timer? _ticker; // 每秒刷新倒數顯示
+  StreamSubscription<GameStateSnapshot>? _stateSub; // 後端階段推播（WS）
 
   // 班級名冊 + 小組帳號
   List<RosterStudent> _roster = const [];
@@ -60,7 +65,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   String _selectedHeritage = 'beigang_chaotian_temple';
   bool _resetting = false;
 
-  final _idCtrl = TextEditingController(); // 學號
+  final _idCtrl = TextEditingController(); // 座號
   final _nameCtrl = TextEditingController(); // 姓名
   final _csvCtrl = TextEditingController();
   final _groupUserCtrl = TextEditingController(); // 組帳號（組名）
@@ -68,12 +73,22 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
   final _searchCtrl = TextEditingController();
   String _search = '';
 
+  // 題庫匯入（ZIP）
+  bool _importingQuiz = false;
+  String? _importResult; // 匯入結果摘要（成功 / 失敗）
+  List<String> _importIssues = const []; // 逐列警告 / 失敗原因
+
   @override
   void initState() {
     super.initState();
     _teacher = context.read<TeacherService>();
     _gameSvc = context.read<GameStateService>();
     _username = context.read<AppState>().currentStaff?.username ?? '';
+    // 訂閱後端階段推播：時間到後端會自動回平時並推播，教師端據此即時對齊（不靠本機
+    // 計時器猜測），避免停留在已結束的階段。
+    _stateSub = _gameSvc.watch().listen((s) {
+      if (mounted) _applySnapshot(s);
+    });
     _restoreCourse();
     _refreshData();
   }
@@ -95,6 +110,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
 
   @override
   void dispose() {
+    _stateSub?.cancel();
     _autoTimer?.cancel();
     _ticker?.cancel();
     _idCtrl.dispose();
@@ -114,17 +130,24 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     try {
       final s = await _gameSvc.fetch();
       if (!mounted) return;
-      final remaining = s.remaining(DateTime.now());
-      final running = _courseStarted && s.isQuiz && remaining > Duration.zero;
-      setState(() {
-        _phase = s.phase;
-        if (running) {
-          _startTimers(remaining);
-        } else {
-          _clearTimers();
-        }
-      });
+      _applySnapshot(s);
     } catch (_) {}
+  }
+
+  /// 套用一份後端階段快照（fetch 或 WS 推播皆走此）：以後端為準更新階段，並依剩餘
+  /// 時間（end_time − now）建立 / 對齊 / 清除本機倒數。後端到時自動回平時並推播 →
+  /// 教師端在此收到 NORMAL，立即離開已結束的階段。
+  void _applySnapshot(GameStateSnapshot s) {
+    final remaining = s.remaining(DateTime.now());
+    final running = _courseStarted && s.isQuiz && remaining > Duration.zero;
+    setState(() {
+      _phase = s.phase;
+      if (running) {
+        _startTimers(remaining);
+      } else {
+        _clearTimers();
+      }
+    });
   }
 
   /// 平時：立即停止。採集 / 攻防：先由 [_onSelectPhase] 設定時長，再帶 [dur] 進來。
@@ -302,15 +325,14 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     _phaseEndsAt = null;
   }
 
-  /// 時間到：結算並自動回平時。（目前結算 = 結束該階段 + 回平時；詳細計分待後端定義。）
+  /// 本機倒數歸零：不在前端強制改階段，改為重新 fetch 後端權威狀態（後端到 end_time
+  /// 會自動回平時；若因時鐘誤差後端尚有剩餘時間，[_applySnapshot] 會用真正的剩餘時間
+  /// 續算，不會誤停）。WS 推播稍後也會補上 NORMAL。
   Future<void> _autoEnd() async {
     if (_phaseEndsAt == null) return;
     _clearTimers();
-    try {
-      await _teacher.setPhase(GamePhase.normal);
-    } catch (_) {}
     await _refreshPhase();
-    if (mounted) _toast('時間到，已結算並回到平時');
+    if (mounted) _toast('時間到，已重新讀取階段狀態');
   }
 
   Duration get _remaining {
@@ -353,7 +375,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     final name = _nameCtrl.text.trim();
     final id = int.tryParse(idText);
     if (id == null || id <= 0 || name.isEmpty) {
-      _toast('請輸入有效學號與姓名');
+      _toast('請輸入有效座號與姓名');
       return;
     }
     try {
@@ -361,7 +383,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
       _idCtrl.clear();
       _nameCtrl.clear();
       await _refreshData();
-      _toast('已新增 $name（學號 $id）');
+      _toast('已新增 $name（座號 $id）');
     } catch (e) {
       _toast('新增失敗：${_msg(e)}');
     }
@@ -385,7 +407,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
         skipped++;
         continue;
       }
-      if (parts.any((p) => p.contains('學號') || p.contains('姓名'))) continue;
+      if (parts.any((p) => p.contains('座號') || p.contains('姓名'))) continue;
       final firstIsId = RegExp(r'^\d+$').hasMatch(parts[0]);
       final idText = firstIsId ? parts[0] : parts[1];
       final name = firstIsId ? parts[1] : parts[0];
@@ -408,7 +430,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
 
   Future<void> _deleteStudent(RosterStudent s) async {
     final ok = await _confirm(
-        '刪除學生', '確定從名冊刪除「${s.name}（學號 ${s.id}）」？會一併從各組移除。', '刪除');
+        '刪除學生', '確定從名冊刪除「${s.name}（座號 ${s.id}）」？會一併從各組移除。', '刪除');
     if (ok != true) return;
     try {
       await _teacher.deleteStudent(id: s.id);
@@ -898,7 +920,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _header('班級名冊', '管理學生（學號 / 姓名 / 頭像）；學生由小組帳號登入，名冊本身非帳號',
+        _header('班級名冊', '管理學生（座號 / 姓名 / 頭像）；學生由小組帳號登入，名冊本身非帳號',
             trailing: _refreshBtn(_refreshData)),
         const SizedBox(height: 16),
         Expanded(
@@ -911,7 +933,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                 Row(
                   children: [
                     Expanded(
-                        flex: 2, child: _input(_idCtrl, '學號', number: true)),
+                        flex: 2, child: _input(_idCtrl, '座號', number: true)),
                     const SizedBox(width: 12),
                     Expanded(flex: 3, child: _input(_nameCtrl, '姓名')),
                     const SizedBox(width: 12),
@@ -925,7 +947,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('每行一位：學號,姓名（例：01,王小明）',
+                    const Text('每行一位：座號,姓名（例：01,王小明）',
                         style: TextStyle(color: Colors.white38, fontSize: 13)),
                     const SizedBox(height: 8),
                     _input(_csvCtrl, '01,王小明\n02,李小花',
@@ -975,7 +997,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                       style:
                           const TextStyle(color: Colors.white, fontSize: 15)),
                 ),
-                Text('學號 ${s.id}',
+                Text('座號 ${s.id}',
                     style:
                         const TextStyle(color: Colors.white38, fontSize: 13)),
                 const SizedBox(width: 12),
@@ -1114,7 +1136,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
           style: const TextStyle(color: Colors.white, fontSize: 15),
           onChanged: (v) => setState(() => _search = v),
           decoration: InputDecoration(
-            hintText: '搜尋姓名或學號…',
+            hintText: '搜尋姓名或座號…',
             hintStyle: const TextStyle(color: Colors.white30, fontSize: 14),
             prefixIcon: const Icon(Icons.search_rounded, color: Colors.white38),
             suffixIcon: q.isEmpty
@@ -1169,7 +1191,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
             child: Text(s.name,
                 style: const TextStyle(color: Colors.white, fontSize: 15)),
           ),
-          Text('學號 ${s.id}',
+          Text('座號 ${s.id}',
               style: const TextStyle(color: Colors.white38, fontSize: 13)),
           const SizedBox(width: 12),
           _groupDropdown(
@@ -1308,27 +1330,231 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     );
   }
 
-  // ── 題目匯入（預留）──────────────────────────────────────────────────────────
+  // ── 題目匯入（ZIP：quest.csv + audio/）─────────────────────────────────────
+  /// 選一個 .zip（內含 quest.csv 與 audio/），解析 → 上傳音檔 → 批次上傳題目。
+  Future<void> _pickAndImportQuiz() async {
+    if (_importingQuiz) return;
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip'],
+      withData: true,
+    );
+    if (picked == null) return; // 使用者取消
+    final bytes = picked.files.single.bytes;
+    if (bytes == null) {
+      _toast('讀取檔案失敗');
+      return;
+    }
+
+    setState(() {
+      _importingQuiz = true;
+      _importResult = null;
+      _importIssues = const [];
+    });
+    final issues = <String>[];
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      // 1) 找 quest.csv → 解析 → 分配 area。
+      final csvFile = _findInArchive(
+        archive,
+        (n) => n.toLowerCase().endsWith('quest.csv'),
+      );
+      if (csvFile == null) {
+        throw const FormatException('ZIP 內找不到 quest.csv');
+      }
+      final parsed = parseQuestCsv(utf8.decode(csvFile.content as List<int>));
+      assignAreas(parsed.rows);
+      issues.addAll(parsed.warnings);
+
+      // 2) 上傳所有被引用到的音檔，建立「相對路徑 → 已上傳 URL」對照。
+      final audioUrls = <String, String>{};
+      for (final ref in parsed.audioRefs) {
+        final entry = _findAudioEntry(archive, ref);
+        if (entry == null) {
+          issues.add('找不到音檔：$ref（請確認在 ZIP 的 audio/ 內）');
+          continue;
+        }
+        audioUrls[ref] = await _teacher.uploadQuestionAudio(
+          entry.content as List<int>,
+          _basename(ref),
+        );
+      }
+
+      // 3) 逐列建 payload；缺音檔或格式錯的列略過並記錄。
+      final payloads = <Map<String, dynamic>>[];
+      var voiceCount = 0;
+      for (final row in parsed.rows) {
+        try {
+          final p = buildQuestionPayload(row, (v) {
+            final url = audioUrls[v.trim()];
+            if (url == null) throw FormatException('音檔未上傳：$v');
+            return url;
+          });
+          if ((p['answer'] as Map)['type'] == 'voice_response') voiceCount++;
+          payloads.add(p);
+        } on FormatException catch (e) {
+          issues.add('第 ${row.line} 列略過：${e.message}');
+        }
+      }
+      if (payloads.isEmpty) {
+        throw const FormatException('沒有可上傳的題目');
+      }
+
+      // 4) 批次上傳。
+      final results = await _teacher.uploadQuestions(payloads);
+      final created = results.where((r) => r.created).length;
+      for (final r in results) {
+        if (!r.created) {
+          issues.add('上傳第 ${r.index} 題失敗（${r.status}）：${r.error ?? ''}');
+        }
+      }
+      final sb = StringBuffer('成功匯入 $created / ${payloads.length} 題');
+      if (voiceCount > 0) {
+        sb.write('\n（含 $voiceCount 題語音作答；後端尚未支援以參考音檔自動評分）');
+      }
+      if (mounted) setState(() => _importResult = sb.toString());
+    } catch (e) {
+      issues.add(e is FormatException ? e.message : '$e');
+      if (mounted) setState(() => _importResult = '匯入失敗');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _importingQuiz = false;
+          _importIssues = issues;
+        });
+      }
+    }
+  }
+
+  /// 在壓縮檔內找符合 [test] 且路徑最短的檔案（最短＝最接近根、最不易誤判）。
+  ArchiveFile? _findInArchive(Archive a, bool Function(String name) test) {
+    ArchiveFile? best;
+    var bestLen = 1 << 30;
+    for (final f in a.files) {
+      if (!f.isFile) continue;
+      final name = f.name.replaceAll('\\', '/');
+      if (test(name) && name.length < bestLen) {
+        best = f;
+        bestLen = name.length;
+      }
+    }
+    return best;
+  }
+
+  /// 依優先序把 quest.csv 的音檔欄位（相對 audio/ 的路徑）對到壓縮檔內的檔案。
+  ArchiveFile? _findAudioEntry(Archive a, String value) {
+    final v = value.trim().replaceAll('\\', '/');
+    final base = _basename(v);
+    for (final test in <bool Function(String)>[
+      (n) => n.endsWith('audio/$v'),
+      (n) => n == 'audio/$v',
+      (n) => n.endsWith('/$v'),
+      (n) => n == v,
+      (n) => _basename(n) == base,
+    ]) {
+      final f = _findInArchive(a, test);
+      if (f != null) return f;
+    }
+    return null;
+  }
+
+  String _basename(String p) {
+    final n = p.replaceAll('\\', '/');
+    final i = n.lastIndexOf('/');
+    return i < 0 ? n : n.substring(i + 1);
+  }
+
   Widget _questionsTab() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return ListView(
       children: [
-        _header('題目匯入', '尚未開放'),
+        _header('題目匯入', '從 ZIP 匯入題庫（quest.csv + audio/）'),
         const SizedBox(height: 16),
         _card(
-          '題庫匯入（開發中）',
+          '題庫 ZIP 匯入',
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                '之後可在此匯入題目（對應後端 POST /api/question/upload）：\n'
-                '題目敘述（文字 / 音檔 / 語音作答）、選項、答案、難度、area。',
-                style:
-                    TextStyle(color: Colors.white54, fontSize: 14, height: 1.6),
+                'ZIP 內需含 quest.csv 與 audio/ 資料夾。\n'
+                'quest.csv 欄位：題目, A, B, C, D, 答案, 難度（首列為欄名）。\n'
+                '• 一般選擇題：A~D 填文字、答案填 A/B/C/D\n'
+                '• 語音選項題：A~D 填音檔（如 A.wav）、答案填正確選項字母\n'
+                '• 語音作答題：A~D 留空、答案填參考音檔（如 q1.wav）\n'
+                '音檔放 audio/ 下，欄位填相對路徑（a.mp3 或 abc/b.mp3）。\n'
+                '各難度約 75% 進採集、25% 進攻防戰。',
+                style: TextStyle(
+                  color: Colors.white54,
+                  fontSize: 13.5,
+                  height: 1.7,
+                ),
               ),
-              const SizedBox(height: 14),
-              _primaryBtn('選擇題目檔案', () {}, enabled: false),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _primaryBtn(
+                    _importingQuiz ? '匯入中…' : '選擇題目 ZIP',
+                    _pickAndImportQuiz,
+                    enabled: !_importingQuiz && !_locked,
+                  ),
+                  if (_importingQuiz) ...[
+                    const SizedBox(width: 14),
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _gold,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              if (_importResult != null) ...[
+                const SizedBox(height: 16),
+                Text(
+                  _importResult!,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+              if (_importIssues.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '需注意（${_importIssues.length}）：',
+                  style: const TextStyle(
+                    color: _gold,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                for (final m in _importIssues.take(50))
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      '• $m',
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+              ],
             ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        _card(
+          '提醒',
+          const Text(
+            '匯入會「新增」題目到題庫（不會清除既有題目），重複匯入會產生重複題。\n'
+            '語音作答題目前可匯入，但後端尚未支援以參考音檔自動評分。',
+            style: TextStyle(color: Colors.white54, fontSize: 13.5, height: 1.6),
           ),
         ),
       ],

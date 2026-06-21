@@ -42,16 +42,16 @@ class AppState extends ChangeNotifier {
     ApiClient? apiClient,
     bool useBackend = false,
     StudentConfigLoader? configLoader,
-  })  : avatarService = avatarService ?? MockAvatarService(),
-        _api = apiClient,
-        _useBackend = useBackend,
-        _configLoader = configLoader;
+  }) : avatarService = avatarService ?? MockAvatarService(),
+       _api = apiClient,
+       _useBackend = useBackend,
+       _configLoader = configLoader;
 
   bool get isLoggedIn => _loggedIn;
   bool get isSetupComplete => _setupComplete;
   GroupModel? get currentGroup => _group;
 
-  /// 目前小組的全部組員（後端名冊，依學號遞增）。供小組總攬列出卡片用。
+  /// 目前小組的全部組員（後端名冊，依座號遞增）。供小組總攬列出卡片用。
   List<RosterStudent> get groupMembers => _members;
 
   /// 後端模式下、登入後依指派 building 解析出的古蹟 id（heritageId = building.name）。
@@ -62,7 +62,7 @@ class AppState extends ChangeNotifier {
   bool get isStaffLoggedIn => _currentStaff != null;
   StaffRole? get staffRole => _currentStaff?.role;
 
-  /// 依學號取得本組某位組員（小組總攬點卡片改頭像時用）。
+  /// 依座號取得本組某位組員（小組總攬點卡片改頭像時用）。
   RosterStudent? memberById(int id) {
     for (final m in _members) {
       if (m.id == id) return m;
@@ -183,9 +183,8 @@ class AppState extends ChangeNotifier {
     }
     final g = match.first;
     _group = GroupModel(id: 0, name: u, avatarUrl: g.avatarUrl);
-    _members = [
-      for (final id in g.studentIds) ?_rosterById(id),
-    ]..sort((a, b) => a.id.compareTo(b.id));
+    _members = [for (final id in g.studentIds) ?_rosterById(id)]
+      ..sort((a, b) => a.id.compareTo(b.id));
     _setupComplete = g.avatarUrl != null;
     _loggedIn = true;
     notifyListeners();
@@ -197,9 +196,9 @@ class AppState extends ChangeNotifier {
     final m = await _api!.getJson('/api/users') as Map<String, dynamic>;
     final users = (m['users'] as List?) ?? const [];
     return users.cast<Map<String, dynamic>>().firstWhere(
-          (x) => (x['username'] as String?) == u,
-          orElse: () => <String, dynamic>{},
-        );
+      (x) => (x['username'] as String?) == u,
+      orElse: () => <String, dynamic>{},
+    );
   }
 
   /// 確保本帳號已綁定到單一古蹟（[_kDefaultHeritageId]）。找出該 building 的 id，
@@ -219,8 +218,11 @@ class AppState extends ChangeNotifier {
         }
       }
       if (targetId > 0 && targetId != _buildingId) {
-        await api.sendJson('POST', '/api/users/building',
-            body: {'building_id': targetId});
+        await api.sendJson(
+          'POST',
+          '/api/users/building',
+          body: {'building_id': targetId},
+        );
         _buildingId = targetId;
       }
     } catch (_) {
@@ -267,9 +269,8 @@ class AppState extends ChangeNotifier {
           );
         }
       }
-      _members = [
-        for (final id in ids) ?all[id],
-      ]..sort((a, b) => a.id.compareTo(b.id));
+      _members = [for (final id in ids) ?all[id]]
+        ..sort((a, b) => a.id.compareTo(b.id));
     } catch (_) {
       _members = const [];
     }
@@ -295,10 +296,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     if (_useBackend && _api != null) {
       try {
-        await _api.sendJson('PUT', '/api/student/$studentId', body: {
-          'name': old.name,
-          'profile_pic_url': url ?? '', // 空字串＝清除
-        });
+        await _api.sendJson(
+          'PUT',
+          '/api/student/$studentId',
+          body: {
+            'name': old.name,
+            'profile_pic_url': url ?? '', // 空字串＝清除
+          },
+        );
       } on ApiException catch (e) {
         return e.statusCode == 403
             ? '沒有權限修改此頭像（需後端開放同組編輯）'
@@ -315,8 +320,11 @@ class AppState extends ChangeNotifier {
     _group?.avatarUrl = url;
     if (_useBackend && _api != null) {
       _api
-          .sendJson('POST', '/api/users/pfp',
-              body: {'profile_pic_url': url ?? ''})
+          .sendJson(
+            'POST',
+            '/api/users/pfp',
+            body: {'profile_pic_url': url ?? ''},
+          )
           .catchError((_) => null);
     }
     notifyListeners();
@@ -332,8 +340,11 @@ class AppState extends ChangeNotifier {
 
     if (_useBackend && _api != null) {
       try {
-        await _api.sendJson('POST', '/api/users/username',
-            body: {'username': newName});
+        await _api.sendJson(
+          'POST',
+          '/api/users/username',
+          body: {'username': newName},
+        );
       } on ApiException catch (e) {
         return e.statusCode == 409 ? '此組名已被使用，請換一個' : '命名失敗（${e.statusCode}）';
       } catch (_) {

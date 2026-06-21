@@ -17,8 +17,10 @@ import '../../data/models/heritage_model.dart';
 import '../../data/models/roster_student.dart';
 import '../../state/app_state.dart';
 import '../../state/heritage_board_controller.dart';
+import '../../services/api_client.dart' show resolveMediaUrl;
 import '../../services/game_state_service.dart';
 import '../../services/quiz_service.dart';
+import '../../services/question_import.dart' show isAudioPath;
 import '../../services/collection_progress_service.dart';
 import 'widgets/banner_intro.dart';
 import 'widgets/framed_component_tile.dart';
@@ -331,6 +333,15 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
     }
   }
 
+  /// 重錄：清掉已錄好的片段，回到「按壓麥克風作答」狀態，重新長按錄音。
+  Future<void> _reRecord() async {
+    try {
+      await _player.stop();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _recordedPath = null);
+  }
+
   Future<void> _playUrl(String url) async {
     try {
       await _player.stop();
@@ -588,7 +599,8 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
               style: TextStyle(color: Colors.white70, fontSize: 16)),
           const SizedBox(height: 18),
           GestureDetector(
-            onTap: () => _playUrl(q.prompt.data),
+            onTap: () =>
+                _playUrl(resolveMediaUrl(q.prompt.data) ?? q.prompt.data),
             child: Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
@@ -658,12 +670,21 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       children: [
         for (var i = 0; i < choices.length; i++) ...[
           if (i > 0) const SizedBox(height: 12),
-          _ChoiceTile(
-            index: i,
-            text: choices[i],
-            selected: _selected == i,
-            onTap: _submitting ? null : () => setState(() => _selected = i),
-          ),
+          () {
+            // 語音選項：選項字串本身是音檔 URL（後端以 text 型別存 /audio/.. URL）。
+            // 渲染成可播放的選項，學生聽過後再點選作答。
+            final raw = choices[i];
+            final audio = isAudioPath(raw);
+            final url = audio ? (resolveMediaUrl(raw) ?? raw) : null;
+            return _ChoiceTile(
+              index: i,
+              text: audio ? '選項 ${i + 1}' : raw,
+              audioUrl: url,
+              selected: _selected == i,
+              onTap: _submitting ? null : () => setState(() => _selected = i),
+              onPlay: url == null ? null : () => _playUrl(url),
+            );
+          }(),
         ],
         const SizedBox(height: 18),
         // 選了題目（拿到題）後即須作答，不提供離開鈕。
@@ -709,6 +730,12 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
                 icon: Icons.play_arrow_rounded,
                 label: '試聽',
                 onTap: () => _playFile(_recordedPath!),
+              ),
+              const SizedBox(width: 14),
+              _smallPill(
+                icon: Icons.refresh_rounded,
+                label: '重錄',
+                onTap: _submitting ? null : _reRecord,
               ),
               const SizedBox(width: 14),
             ],
@@ -761,7 +788,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
   Widget _smallPill({
     required IconData icon,
     required String label,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -1074,18 +1101,23 @@ class _DifficultyCard extends StatelessWidget {
 class _ChoiceTile extends StatelessWidget {
   final int index;
   final String text;
+  final String? audioUrl; // 非 null → 語音選項，顯示播放鈕
   final bool selected;
   final VoidCallback? onTap;
+  final VoidCallback? onPlay;
 
   const _ChoiceTile({
     required this.index,
     required this.text,
     required this.selected,
     required this.onTap,
+    this.audioUrl,
+    this.onPlay,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isAudio = audioUrl != null;
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -1127,6 +1159,26 @@ class _ChoiceTile extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   )),
             ),
+            // 語音選項：右側播放鈕（獨立點擊，不會觸發選取）。
+            if (isAudio) ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onPlay,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0x33D4A843),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFD4A843)),
+                  ),
+                  child: const Icon(Icons.play_arrow_rounded,
+                      color: Color(0xFFD4A843), size: 24),
+                ),
+              ),
+            ],
           ],
         ),
       ),

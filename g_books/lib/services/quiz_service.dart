@@ -86,8 +86,9 @@ abstract class QuizService {
   Future<QuizResult> submitAnswer(QuizAnswer answer);
 }
 
-/// 本機 mock：輪播三種題型（文字＋選擇 / 語音＋選擇 / 文字＋語音作答），確保每種
-/// 作答介面都能測到；難度只影響採集獎勵等級，不影響題型。正確選項以 session 暫存
+/// 本機 mock：輪播四種題型（文字＋文字選擇 / 語音敘述＋文字選擇 / 文字＋語音選擇 /
+/// 文字＋語音作答），確保每種作答介面都能測到；難度只影響採集獎勵等級，不影響題型。
+/// 正確選項以 session 暫存
 /// 供 [submitAnswer] 比對；語音作答因本機無法判定，一律視為正確（之後由後端判定）。
 /// mock 不回 item_id（採集獎勵由前端 [grantRandomOfLevel] 發），與後端 DTO 相容。
 class MockQuizService implements QuizService {
@@ -103,7 +104,7 @@ class MockQuizService implements QuizService {
     await Future<void>.delayed(_netDelay);
     final session =
         '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}_$_seq';
-    final kind = _seq % 3;
+    final kind = _seq % 4;
     _seq++;
 
     switch (kind) {
@@ -131,6 +132,25 @@ class MockQuizService implements QuizService {
           ),
           choices: const QuizChoices(
             data: ['媽祖', '關聖帝君', '土地公', '保生大帝'],
+          ),
+        );
+      case 2: // 文字題 + 語音選擇題（選項是音檔，播放後選正確念法）
+        _correctBySession[session] = 1;
+        return QuizQuestion(
+          session: session,
+          prompt: const QuizPrompt(
+            type: QuizMediaType.text,
+            data: '下列哪個是「媽祖」的正確台語念法？請播放各選項後選出。',
+          ),
+          choices: const QuizChoices(
+            // mock 選項音檔 url：本機無對應檔，播放會優雅失敗（toast 提示），
+            // 之後由後端提供真實 /audio url。
+            data: [
+              '/audio/mock_choice_a.mp3',
+              '/audio/mock_choice_b.mp3',
+              '/audio/mock_choice_c.mp3',
+              '/audio/mock_choice_d.mp3',
+            ],
           ),
         );
       default: // 文字題 + 語音作答（錄音）

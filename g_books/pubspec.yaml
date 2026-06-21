@@ -21,6 +21,8 @@ dependencies:
   flutter_markdown_plus: ^1.0.7
   record: ^6.0.0          # 資源採集語音作答：錄音
   audioplayers: ^6.1.0    # 語音題敘述 / 回放錄音作答
+  file_picker: ^8.1.6     # 教師端題庫匯入：選取 .zip
+  archive: ^3.6.1         # 教師端題庫匯入：解壓 quest.csv + audio/
 
 dev_dependencies:
   flutter_test:
@@ -58,5 +60,8 @@ flutter:
     - assets/heritages/beigang_chaotian_temple/components/
     # stub：內容待補，目前僅卡片 card.png
     - assets/heritages/anping_old_fort/
+
     - assets/heritages/chihkan_tower/
+    - assets/heritages/chihkan_tower/info_imgs/
+
     - assets/heritages/former_british_consular_residence/

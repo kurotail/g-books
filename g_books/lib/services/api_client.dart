@@ -25,6 +25,27 @@ String? resolveMediaUrl(String? raw) {
   return raw;
 }
 
+/// 讓 Flutter 預設網路堆疊（不經 [ApiClient] 的連線，主要是 [Image.network] 載入頭像
+/// `/images/..`）也能連上後端 nginx 的「自簽 HTTPS」。
+///
+/// [ApiClient] 只在自己的 [HttpClient] 放行自簽憑證，但頭像圖片由框架的預設 client 載入、
+/// 仍會驗證憑證 → 自簽會被拒，造成「上傳成功（走 ApiClient）卻不顯示頭像（走 Image.network）」。
+/// 在 `main()` 以 `HttpOverrides.global = BackendHttpOverrides();` 安裝即可解。
+///
+/// 只對後端主機（[kApiBaseUrl] 的 host）放行，其餘主機維持預設憑證驗證（信任範圍與
+/// [ApiClient] 一致；區網教學情境可接受，正式環境應改用受信任憑證）。
+class BackendHttpOverrides extends HttpOverrides {
+  BackendHttpOverrides() : _host = Uri.parse(kApiBaseUrl).host;
+
+  final String _host;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (cert, host, port) => host == _host;
+  }
+}
+
 /// 後端回非 2xx 時拋出；[message] 為後端的純文字錯誤內容（後端以 `http.Error` 回傳純文字）。
 class ApiException implements Exception {
   final int statusCode;
@@ -103,10 +124,22 @@ class ApiClient {
   /// 上傳圖片到 `POST /api/image`（multipart/form-data，欄位名 `file`）。回傳後端服務該
   /// 檔的相對 URL（如 `/images/xxx.jpg`，存進 building/頭像時即用此值）。401 會換 token
   /// 重試一次；非 2xx 拋 [ApiException]。
-  Future<String> uploadImage(List<int> bytes, String filename) async {
-    var (status, text) = await _rawMultipart(bytes, filename);
+  Future<String> uploadImage(List<int> bytes, String filename) =>
+      _uploadMedia('/api/image', bytes, filename);
+
+  /// 上傳音檔到 `POST /api/audio`（語音題敘述 / 語音選項 / 語音作答參考）。回傳該檔的相對
+  /// URL（如 `/audio/xxx.mp3`）。與 [uploadImage] 同走 multipart 欄位 `file`、共用 401 重試。
+  Future<String> uploadAudio(List<int> bytes, String filename) =>
+      _uploadMedia('/api/audio', bytes, filename);
+
+  Future<String> _uploadMedia(
+    String path,
+    List<int> bytes,
+    String filename,
+  ) async {
+    var (status, text) = await _rawMultipart(path, bytes, filename);
     if (status == 401 && await _refresh()) {
-      (status, text) = await _rawMultipart(bytes, filename);
+      (status, text) = await _rawMultipart(path, bytes, filename);
     }
     if (status < 200 || status >= 300) {
       throw ApiException(status, text.trim());
@@ -115,8 +148,12 @@ class ApiClient {
     return (m['url'] as String?) ?? '';
   }
 
-  Future<(int, String)> _rawMultipart(List<int> bytes, String filename) async {
-    final uri = Uri.parse('$_baseUrl/api/image');
+  Future<(int, String)> _rawMultipart(
+    String path,
+    List<int> bytes,
+    String filename,
+  ) async {
+    final uri = Uri.parse('$_baseUrl$path');
     final req = await _http.openUrl('POST', uri);
     final boundary = '----gbooks${DateTime.now().microsecondsSinceEpoch}';
     req.headers.set(
