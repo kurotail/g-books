@@ -23,7 +23,7 @@ type UserRepo interface {
 	SetUserBuilding(id uint, buildingID uint) error
 	SetUserStudents(id uint, studentIDs []uint) error
 	SetUserPassword(id uint, plainPassword string) error
-	RenameUser(id uint, newUsername string) error
+	SetUserDisplayName(id uint, displayName string) error
 	DeleteUser(id uint) (bool, error)
 }
 
@@ -44,7 +44,7 @@ func (_ *userRepo) ValidateCredentials(username, password string) (bool, error) 
 
 // selectUsers is the shared projection: a user row plus its sorted student roster.
 const selectUsers = `
-	SELECT u.id, u.username, u.role, u.building_id, u.profile_pic_url,
+	SELECT u.id, u.username, u.display_name, u.role, u.building_id, u.profile_pic_url,
 	       COALESCE(array_agg(us.student_id ORDER BY us.student_id)
 	                FILTER (WHERE us.student_id IS NOT NULL), '{}') AS students
 	FROM users u
@@ -53,7 +53,7 @@ const selectUsers = `
 func scanUser(row pgx.Row) (model.User, error) {
 	var u model.User
 	var students []int64
-	if err := row.Scan(&u.ID, &u.Username, &u.Role, &u.BuildingID, &u.ProfilePicURL, &students); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Role, &u.BuildingID, &u.ProfilePicURL, &students); err != nil {
 		return model.User{}, err
 	}
 	u.Students = make([]uint, len(students))
@@ -174,25 +174,10 @@ func (_ *userRepo) SetUserPassword(id uint, plainPassword string) error {
 	return updateUserField(`UPDATE users SET password = $2 WHERE id = $1`, id, hash)
 }
 
-// RenameUser changes a user's username. The id (and the child rows that reference
-// it) is unaffected. Returns ErrUserExists if newUsername is taken and
-// ErrUserNotFound if the id does not exist.
-func (_ *userRepo) RenameUser(id uint, newUsername string) error {
-	ctx := context.Background()
-	tag, err := pool.Exec(ctx,
-		`UPDATE users SET username = $2 WHERE id = $1`, id, newUsername,
-	)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
-		return apperr.ErrUserExists
-	}
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return apperr.ErrUserNotFound
-	}
-	return nil
+// SetUserDisplayName updates a user's mutable display name. The id (and the username
+// login handle) is unaffected. Returns ErrUserNotFound if the id does not exist.
+func (_ *userRepo) SetUserDisplayName(id uint, displayName string) error {
+	return updateUserField(`UPDATE users SET display_name = $2 WHERE id = $1`, id, displayName)
 }
 
 func (_ *userRepo) CreateUser(username, password string, role uint) error {
@@ -201,8 +186,9 @@ func (_ *userRepo) CreateUser(username, password string, role uint) error {
 	if err != nil {
 		return err
 	}
+	// display_name starts equal to the username so it is never blank until changed.
 	_, err = pool.Exec(ctx,
-		`INSERT INTO users (username, password, role) VALUES ($1, $2, $3)`,
+		`INSERT INTO users (username, password, role, display_name) VALUES ($1, $2, $3, $1)`,
 		username, hash, role,
 	)
 	var pgErr *pgconn.PgError

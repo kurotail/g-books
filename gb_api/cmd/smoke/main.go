@@ -200,7 +200,7 @@ func idOf(access, username string) uint {
 // tokens the later sections share are never invalidated along the way.
 func userAccountChecks(adminAccess, adminUsername, teacherAccess, runID string) {
 	pfpUser := "pfptarget-" + runID
-	renameUser := "renamer-" + runID
+	displayUser := "displayer-" + runID
 	pwUser := "pwchanger-" + runID
 	gone1 := "throwaway1-" + runID
 	gone2 := "throwaway2-" + runID
@@ -223,31 +223,39 @@ func userAccountChecks(adminAccess, adminUsername, teacherAccess, runID string) 
 	st, body = req("POST", "/api/users/pfp", teacherAccess, map[string]any{"user_id": 999999999, "profile_pic_url": "/images/x.jpg"})
 	show("set picture for unknown user (404)", st, 404, body)
 
-	// --- rename ---
-	req("POST", "/api/register", teacherAccess, map[string]any{"username": renameUser, "password": "pw", "role": 0})
-	_, body = req("POST", "/api/login", "", map[string]any{"username": renameUser, "password": "pw"})
+	// --- display name ---
+	req("POST", "/api/register", teacherAccess, map[string]any{"username": displayUser, "password": "pw", "role": 0})
+	_, body = req("POST", "/api/login", "", map[string]any{"username": displayUser, "password": "pw"})
 	rAccess, _ := tokens(body)
 
-	st, body = req("POST", "/api/users/username", rAccess, map[string]any{})
-	show("rename missing username (rejected)", st, 400, body)
+	st, body = req("POST", "/api/users/display_name", rAccess, map[string]any{})
+	show("set display name missing field (rejected)", st, 400, body)
 
-	st, body = req("POST", "/api/users/username", rAccess, map[string]any{"username": adminUsername})
-	show("rename to a taken username (conflict)", st, 409, body)
+	newDisplay := "Renamed Person"
+	st, _ = req("POST", "/api/users/display_name", rAccess, map[string]any{"display_name": newDisplay})
+	show("user sets own display name", st, 200, "")
 
-	renamedUser := renameUser + "-renamed"
-	st, _ = req("POST", "/api/users/username", rAccess, map[string]any{"username": renamedUser})
-	show("user renames self", st, 200, "")
-
-	// The access token minted before the rename carries the user's immutable id,
-	// so it must keep working afterward (no forced re-login).
+	// The access token carries the user's immutable id, so it keeps working.
 	st, body = req("GET", "/api/users", rAccess, nil)
-	show("old access token still valid after rename", st, 200, body)
+	show("access token still valid after display-name change", st, 200, body)
 
-	st, body = req("POST", "/api/login", "", map[string]any{"username": renameUser, "password": "pw"})
-	show("login with old username after rename (rejected)", st, 401, body)
+	// The username (login handle) is unchanged; only display_name was updated.
+	_, body = req("GET", "/api/users/"+displayUser, rAccess, nil)
+	var du struct {
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+	}
+	json.Unmarshal([]byte(body), &du)
+	checks++
+	if du.Username == displayUser && du.DisplayName == newDisplay {
+		fmt.Printf("[OK] %-58s -> username=%s display_name=%s\n", "display name updated, username unchanged", du.Username, du.DisplayName)
+	} else {
+		fails++
+		fmt.Printf("[XX] %-58s -> username=%s display_name=%s\n", "display name updated, username unchanged", du.Username, du.DisplayName)
+	}
 
-	st, body = req("POST", "/api/login", "", map[string]any{"username": renamedUser, "password": "pw"})
-	show("login with new username after rename", st, 200, body)
+	st, body = req("POST", "/api/login", "", map[string]any{"username": displayUser, "password": "pw"})
+	show("login with unchanged username still works", st, 200, body)
 
 	// --- password change ---
 	req("POST", "/api/register", teacherAccess, map[string]any{"username": pwUser, "password": "oldpw", "role": 0})

@@ -37,7 +37,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/users/pfp", authHandler.SetProfilePic)
 	mux.HandleFunc("POST /api/users/building", authHandler.SetBuilding)
 	mux.HandleFunc("POST /api/users/students", studentHandler.SetStudents)
-	mux.HandleFunc("POST /api/users/username", authHandler.SetUsername)
+	mux.HandleFunc("POST /api/users/display_name", authHandler.SetDisplayName)
 	mux.HandleFunc("POST /api/users/password", authHandler.SetPassword)
 	mux.HandleFunc("DELETE /api/users/{id}", authHandler.DeleteUser)
 
@@ -77,13 +77,16 @@ func routes() (http.Handler, *handler.StateHandler) {
 }
 
 func main() {
-	closeFunc, err := config.Init()
+	// Connect to Postgres, apply the schema, and seed the admin account.
+	initCtx, cancelInit := context.WithTimeout(context.Background(), 60*time.Second)
+	err := repo.Init(initCtx, config.DatabaseURL, config.AdminUsername, config.AdminPassword)
+	cancelInit()
 	if err != nil {
 		logger.L.Error(err.Error())
 		logger.L.Error("failed to initialize database")
 		os.Exit(1)
 	}
-	defer closeFunc()
+	defer repo.Close()
 
 	mux, stateHandler := routes()
 	server := &http.Server{

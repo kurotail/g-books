@@ -159,22 +159,22 @@ func (h *AuthHandler) SetProfilePic(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
-func (h *AuthHandler) SetUsername(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) SetDisplayName(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	var req model.SetUsernameRequest
+	var req model.SetDisplayNameRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	if req.Username == "" {
-		http.Error(w, "缺少 username", http.StatusBadRequest)
+	if req.DisplayName == "" {
+		http.Error(w, "缺少 display_name", http.StatusBadRequest)
 		return
 	}
-	status, err := h.svc.SetUsername(token, req.Username)
+	status, err := h.svc.SetDisplayName(token, req.DisplayName)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

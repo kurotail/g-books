@@ -1,8 +1,6 @@
 package config
 
 import (
-	"context"
-	"gb-api/internal/repo"
 	"time"
 )
 
@@ -25,16 +23,6 @@ var (
 	MaxAudioMB = intFromEnv("MAX_AUDIO_MB", 25)
 )
 
-type closeFunction func()
-
-func Init() (closeFunction, error) {
-	// Connect to Postgres, apply the schema, and seed the admin account
-	initCtx, cancelInit := context.WithTimeout(context.Background(), 60*time.Second)
-	if err := repo.Init(initCtx, DatabaseURL, AdminUsername, AdminPassword); err != nil {
-		cancelInit()
-		return func() {}, err
-	}
-	cancelInit()
-
-	return repo.Close, nil
-}
+// STTBaseURL is the address of the Taigi speech-to-text service. The API runs in a
+// container, so the default reaches a service on the Docker host via host.docker.internal.
+var STTBaseURL = stringFromEnv("STT_BASE_URL", "http://host.docker.internal:8964")

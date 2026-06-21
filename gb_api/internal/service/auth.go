@@ -208,16 +208,13 @@ func (s *AuthSvc) SetBuilding(accessToken string, buildingID uint) (int, error) 
 	return http.StatusOK, nil
 }
 
-// SetUsername renames the calling user's own account.  no re-login is required.
-func (s *AuthSvc) SetUsername(accessToken, newUsername string) (int, error) {
+// SetDisplayName updates the calling user's own display name.
+func (s *AuthSvc) SetDisplayName(accessToken, displayName string) (int, error) {
 	caller, status, err := getCaller(s.users, accessToken)
 	if err != nil {
 		return status, err
 	}
-	if err := s.users.RenameUser(caller.ID, newUsername); err != nil {
-		if errors.Is(err, apperr.ErrUserExists) {
-			return http.StatusConflict, err
-		}
+	if err := s.users.SetUserDisplayName(caller.ID, displayName); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
 			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", caller.Username)
 		}

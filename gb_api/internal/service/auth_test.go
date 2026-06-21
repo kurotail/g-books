@@ -80,63 +80,52 @@ func TestAuthSvc_SetPassword_Success(t *testing.T) {
 	}
 }
 
-func TestAuthSvc_SetUsername_Success(t *testing.T) {
+func TestAuthSvc_SetDisplayName_Success(t *testing.T) {
 	r := newMockAuthRepo()
 	s := NewAuthSvc(r, r)
 
-	status, err := s.SetUsername(tokenFor(t, "user"), "renamed")
+	status, err := s.SetDisplayName(tokenFor(t, "user"), "Alice Lee")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	if _, ok := r.Roles["renamed"]; !ok {
-		t.Error("expected user reachable under new name")
+	got, err := r.GetUserByID(mock.IDFor("user"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := r.Roles["user"]; ok {
-		t.Error("expected old name to be gone")
+	if got.DisplayName != "Alice Lee" {
+		t.Errorf("expected display_name %q, got %q", "Alice Lee", got.DisplayName)
+	}
+	if got.Username != "user" {
+		t.Errorf("expected username unchanged, got %q", got.Username)
 	}
 }
 
-// TestAuthSvc_TokenSurvivesRename verifies the whole point of id-based tokens: an
-// access token minted before a username change still authorizes afterward, with no
-// re-login, because it carries the user's immutable id rather than the name.
-func TestAuthSvc_TokenSurvivesRename(t *testing.T) {
+// TestAuthSvc_TokenSurvivesDisplayNameChange verifies the point of id-based tokens: an
+// access token still authorizes self-operations after a display-name change, because it
+// carries the user's immutable id.
+func TestAuthSvc_TokenSurvivesDisplayNameChange(t *testing.T) {
 	r := newMockAuthRepo()
 	s := NewAuthSvc(r, r)
 
-	token := tokenFor(t, "user") // minted before the rename
+	token := tokenFor(t, "user")
 
-	if status, err := s.SetUsername(token, "renamed"); err != nil || status != http.StatusOK {
-		t.Fatalf("rename failed: status=%d err=%v", status, err)
+	if status, err := s.SetDisplayName(token, "Alice Lee"); err != nil || status != http.StatusOK {
+		t.Fatalf("set display name failed: status=%d err=%v", status, err)
 	}
 
-	// Reuse the SAME token on an authenticated self-operation.
+	// Reuse the SAME token on another authenticated self-operation.
 	status, err := s.SetProfilePic(token, nil, "/images/after.png")
 	if err != nil {
-		t.Fatalf("expected token to remain valid after rename, got error: %v", err)
+		t.Fatalf("expected token to remain valid, got error: %v", err)
 	}
 	if status != http.StatusOK {
-		t.Fatalf("expected 200 after rename, got %d", status)
+		t.Fatalf("expected 200, got %d", status)
 	}
-	if r.Pics["renamed"] != "/images/after.png" {
-		t.Errorf("expected pic set on renamed account, got %q", r.Pics["renamed"])
-	}
-}
-
-func TestAuthSvc_SetUsername_Conflict(t *testing.T) {
-	r := newMockAuthRepo()
-	r.Users["taken"] = "pw"
-	r.Roles["taken"] = model.RoleStudent
-	s := NewAuthSvc(r, r)
-
-	status, err := s.SetUsername(tokenFor(t, "user"), "taken")
-	if err == nil {
-		t.Fatal("expected error renaming to an existing username")
-	}
-	if status != http.StatusConflict {
-		t.Fatalf("expected 409, got %d", status)
+	if r.Pics["user"] != "/images/after.png" {
+		t.Errorf("expected pic set on the account, got %q", r.Pics["user"])
 	}
 }
 

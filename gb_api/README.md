@@ -47,6 +47,7 @@ Configuration is read from `.env` (consumed by both the `postgres` and `api` con
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Admin account seeded on startup (default `admin` / `admin123`) so you can log in |
 | `JWT_KEY` / `JWT_REFRESH_KEY` | 64-char hex signing keys for access / refresh tokens |
 | `UPLOAD_DIR`, `MAX_IMAGE_MB`, `MAX_AUDIO_MB` | Media upload directory and per-category size caps |
+| `STT_BASE_URL` | Taigi speech-to-text service address (default `http://host.docker.internal:8964`, reaching the host from the API container) |
 
 Database state persists in the `pgdata` Docker volume across restarts. The schema is loaded
 from `postgres/init.sql` **only when the `pgdata` volume is first created**; edits to that file
@@ -54,15 +55,17 @@ take effect after a `docker compose down -v` (which deletes the volume and its d
 account is seeded by the API on each boot.
 
 Users are keyed by a stable numeric `id` (`users.id`, the primary key); `username` is a
-unique, mutable handle, and the `user_inventory` / `user_slots` / `user_students` tables
-reference `users(id)`. **Endpoints reference an existing user by `user_id`** — in request
-bodies (`user_id` / `target_user_id`) and the `DELETE /api/users/{id}` path — and the JWT
-carries the same `user_id`. `username` is used only where a name is defined or authenticated:
-`POST /api/login`, `POST /api/register`, and `POST /api/users/username` (rename). The `id` is
-**read-only**: it is returned in user objects (e.g. `GET /api/users`) but is server-assigned
-and accepted by no request body. Because everything references the `id`, renaming a user
-(which changes only the `username` column) leaves their items, slots, roster, **and existing
-access / refresh tokens** all valid — no re-login required.
+unique **login handle** (immutable via the API), and `display_name` is the mutable,
+user-facing name (changeable with `POST /api/users/display_name`). The
+`user_inventory` / `user_slots` / `user_students` tables reference `users(id)`.
+**Endpoints reference an existing user by `user_id`** — in request bodies
+(`user_id` / `target_user_id`) and the `DELETE /api/users/{id}` path — and the JWT
+carries the same `user_id`. `username` is used only where a name is authenticated:
+`POST /api/login` and `POST /api/register`. The `id` is **read-only**: it is returned in
+user objects (e.g. `GET /api/users`) but is server-assigned and accepted by no request body.
+Because everything references the `id`, changing a user's `display_name` leaves their items,
+slots, roster, **and existing access / refresh tokens** all valid. A new user's `display_name`
+starts equal to its `username`.
 
 ---
 
@@ -103,7 +106,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `GET /api/users/{username}` | Bearer | Look up a single user by username (resolve their `id`) |
 | `POST /api/users/pfp` | Bearer (self or > Student) | Set a user's profile-picture link (empty `profile_pic_url` clears it) |
 | `POST /api/users/building` | Bearer | Set the caller's own building (`building_id` `0` clears it) |
-| `POST /api/users/username` | Bearer | Rename the caller's own account (existing tokens stay valid) |
+| `POST /api/users/display_name` | Bearer | Set the caller's own display name |
 | `POST /api/users/password` | Bearer | Change the caller's own password (must supply the current one) |
 | `POST /api/users/students` | Bearer (> Student) | Replace a user's student roster by a given list; returns a `207` per-id result |
 | `DELETE /api/users/{id}` | Bearer (> Student) | Delete a user by id (cannot delete yourself) |
@@ -253,15 +256,16 @@ Authorization: Bearer <access_token>
 
 List all users. Any authenticated user may call it.
 
-**Response `200 OK`** — `building_id` is `0` for users with no building;
-`profile_pic_url` is empty when no picture is set; `students` is the assigned student
-roster (ascending `student_id` order, empty when none)
+**Response `200 OK`** — `display_name` is the mutable user-facing name (starts equal to the
+`username`); `building_id` is `0` for users with no building; `profile_pic_url` is empty when
+no picture is set; `students` is the assigned student roster (ascending `student_id` order,
+empty when none)
 
 ```json
 {
   "users": [
-    { "id": 1, "username": "admin", "role": 2, "building_id": 1, "profile_pic_url": "/images/abc.jpg", "students": [1, 2] },
-    { "id": 2, "username": "alice", "role": 0, "building_id": 0, "profile_pic_url": "", "students": [] }
+    { "id": 1, "username": "admin", "display_name": "admin", "role": 2, "building_id": 1, "profile_pic_url": "/images/abc.jpg", "students": [1, 2] },
+    { "id": 2, "username": "alice", "display_name": "Alice Lee", "role": 0, "building_id": 0, "profile_pic_url": "", "students": [] }
   ]
 }
 ```
@@ -283,7 +287,7 @@ in request bodies) without listing every user via `GET /api/users`.
 **Response `200 OK`** — the same user object as in the list:
 
 ```json
-{ "id": 2, "username": "alice", "role": 0, "building_id": 0, "profile_pic_url": "", "students": [] }
+{ "id": 2, "username": "alice", "display_name": "Alice Lee", "role": 0, "building_id": 0, "profile_pic_url": "", "students": [] }
 ```
 
 **Error responses**
@@ -384,17 +388,17 @@ or `404` for an unknown one (with an `error`)
 
 ---
 
-### `POST /api/users/username`
+### `POST /api/users/display_name`
 
-Rename **the calling user's own** account. The new `username` must not already be taken.
-Only the `username` changes; the account's numeric `id` is stable, so everything keyed by it
-(inventory, slots, student roster) is unaffected. Tokens carry that `id`, so the caller's
-existing access/refresh tokens **remain valid** — no re-login is required.
+Set **the calling user's own** display name. The `username` login handle and numeric `id`
+are unchanged, so everything keyed by the `id` (inventory, slots, student roster) and the
+caller's existing access/refresh tokens **remain valid** — no re-login is required. Display
+names are **not unique** (two users may share one).
 
 **Request**
 
 ```json
-{ "username": "new_name" }
+{ "display_name": "new_name" }
 ```
 
 **Response** — `200 OK` with an empty body on success.
@@ -403,9 +407,8 @@ existing access/refresh tokens **remain valid** — no re-login is required.
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, or a missing `username` |
+| `400`  | Malformed JSON body, or a missing `display_name` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `409`  | The requested `username` is already taken |
 
 ---
 
@@ -1464,3 +1467,19 @@ Authorization: Bearer <access_token>
 | Refresh | 7 days | `JWT_REFRESH_KEY` | Single-use; rotated on every `/api/refresh` call |
 
 > **Note:** Signing keys are currently hardcoded constants. Replace with environment variables before deploying to production.
+
+### Go CLI (`cmd/stt`)
+
+The `cmd/stt` helper reads a WAV file and prints its transcript. It does **not** call
+this service directly — it goes through the gb-api server's
+[`POST /api/stt`](../README.md#post-apistt) endpoint, which proxies to this service. So
+the gb-api server must be running **as well as** this STT service, and the CLI logs in
+with `ADMIN_USERNAME` / `ADMIN_PASSWORD` (default `admin` / `admin123`) to obtain a
+token (the endpoint is Teacher/Admin only).
+
+```bash
+go run ./cmd/stt            # uses taigi_stt/audio.wav
+go run ./cmd/stt path/to/other.wav
+```
+
+Override the gb-api address with `STT_API_BASE_URL` (default `https://localhost`).

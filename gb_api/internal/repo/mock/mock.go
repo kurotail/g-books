@@ -66,22 +66,12 @@ func regNameOf(id uint) (string, bool) {
 	return name, ok
 }
 
-// regRename repoints id at newName (used by RenameUser so a renamed user keeps its id).
-func regRename(id uint, newName string) {
-	regMu.Lock()
-	defer regMu.Unlock()
-	if old, ok := regNames[id]; ok {
-		delete(regIDs, old)
-	}
-	regNames[id] = newName
-	regIDs[newName] = id
-}
-
 type AuthRepo struct {
 	Users         map[string]string
 	Roles         map[string]uint
 	Buildings     map[string]uint // username -> building; absent/0 = no building
 	Pics          map[string]string
+	DisplayNames  map[string]string // username -> display name; absent = falls back to username
 	Students      map[string][]uint // username -> assigned student ids
 	RefreshTokens sync.Map
 }
@@ -130,7 +120,11 @@ func (m *AuthRepo) GetUserByID(id uint) (model.User, error) {
 }
 
 func (m *AuthRepo) buildUser(username string) model.User {
-	return model.User{ID: m.idFor(username), Username: username, Role: m.Roles[username], BuildingID: m.Buildings[username], ProfilePicURL: m.Pics[username], Students: m.Students[username]}
+	displayName, ok := m.DisplayNames[username]
+	if !ok {
+		displayName = username // matches the init-to-username default
+	}
+	return model.User{ID: m.idFor(username), Username: username, DisplayName: displayName, Role: m.Roles[username], BuildingID: m.Buildings[username], ProfilePicURL: m.Pics[username], Students: m.Students[username]}
 }
 
 // nameFor resolves a numeric id back to its username, returning ErrUserNotFound
@@ -209,37 +203,16 @@ func (m *AuthRepo) SetUserPassword(id uint, plainPassword string) error {
 	return nil
 }
 
-// RenameUser changes a user's username, keeping its id (and the username<->id
-// mapping) intact.
-func (m *AuthRepo) RenameUser(id uint, newUsername string) error {
-	oldUsername, err := m.nameFor(id)
+// SetUserDisplayName updates a user's mutable display name, keyed by its immutable id.
+func (m *AuthRepo) SetUserDisplayName(id uint, displayName string) error {
+	username, err := m.nameFor(id)
 	if err != nil {
 		return err
 	}
-	if _, ok := m.Roles[newUsername]; ok {
-		return apperr.ErrUserExists
+	if m.DisplayNames == nil {
+		m.DisplayNames = map[string]string{}
 	}
-	move := func(dst, src map[string]string) {
-		if v, ok := src[oldUsername]; ok {
-			dst[newUsername] = v
-			delete(src, oldUsername)
-		}
-	}
-	move(m.Users, m.Users)
-	move(m.Pics, m.Pics)
-	if v, ok := m.Roles[oldUsername]; ok {
-		m.Roles[newUsername] = v
-		delete(m.Roles, oldUsername)
-	}
-	if v, ok := m.Buildings[oldUsername]; ok {
-		m.Buildings[newUsername] = v
-		delete(m.Buildings, oldUsername)
-	}
-	if v, ok := m.Students[oldUsername]; ok {
-		m.Students[newUsername] = v
-		delete(m.Students, oldUsername)
-	}
-	regRename(id, newUsername)
+	m.DisplayNames[username] = displayName
 	return nil
 }
 
@@ -275,9 +248,9 @@ func (m *RoleRepo) CreateUser(_, _ string, _ uint) error     { return nil }
 func (m *RoleRepo) SetUserProfilePic(_ uint, _ string) error { return nil }
 func (m *RoleRepo) SetUserBuilding(_ uint, _ uint) error     { return nil }
 func (m *RoleRepo) SetUserStudents(_ uint, _ []uint) error   { return nil }
-func (m *RoleRepo) SetUserPassword(_ uint, _ string) error   { return nil }
-func (m *RoleRepo) RenameUser(_ uint, _ string) error        { return nil }
-func (m *RoleRepo) DeleteUser(_ uint) (bool, error)          { return true, nil }
+func (m *RoleRepo) SetUserPassword(_ uint, _ string) error    { return nil }
+func (m *RoleRepo) SetUserDisplayName(_ uint, _ string) error { return nil }
+func (m *RoleRepo) DeleteUser(_ uint) (bool, error)           { return true, nil }
 
 type ItemRepo struct {
 	Inv        map[uint]struct{}   // owned (unslotted) item ids

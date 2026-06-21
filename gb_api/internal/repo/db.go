@@ -52,7 +52,7 @@ func Init(ctx context.Context, dsn, adminUser, adminPass string) error {
 		return fmt.Errorf("repo: hash admin password: %w", err)
 	}
 	if _, err := p.Exec(ctx,
-		`INSERT INTO users (username, password, role) VALUES ($1, $2, $3)
+		`INSERT INTO users (username, password, role, display_name) VALUES ($1, $2, $3, $1)
 		 ON CONFLICT (username) DO NOTHING`,
 		adminUser, adminHash, model.RoleAdmin,
 	); err != nil {

@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
+
+	"gb-api/internal/config"
 )
 
 // STTRepo transcribes a spoken recording into text. It backs the voice_response
@@ -68,15 +69,11 @@ func (r *sttRepo) Transcribe(wavB64 string) (string, error) {
 	return out.Text, nil
 }
 
-// InitSTTRepo builds the STT client. STT_BASE_URL overrides the default local
-// service address; the model can be slow on CPU so the timeout is generous.
+// InitSTTRepo builds the STT client pointed at the process-level config.STTBaseURL;
+// the model can be slow on CPU so the timeout is generous.
 func InitSTTRepo() STTRepo {
-	baseURL := os.Getenv("STT_BASE_URL")
-	if baseURL == "" {
-		baseURL = "http://localhost:8964"
-	}
 	return &sttRepo{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL: strings.TrimRight(config.STTBaseURL, "/"),
 		client:  &http.Client{Timeout: 120 * time.Second},
 	}
 }
