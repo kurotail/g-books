@@ -20,8 +20,8 @@ dependencies:
   fluttertoast: ^9.1.0
   flutter_markdown_plus: ^1.0.7
   record: ^7.1.0          # 資源採集語音作答：錄音
-  audioplayers: ^6.1.0    # 語音題敘述 / 回放錄音作答
-  file_picker: ^11.0.2     # 教師端題庫匯入：選取 .zip
+  audioplayers: ^6.7.1    # 語音題敘述 / 回放錄音作答
+  file_picker: ^10.3.10    # 教師端題庫匯入：選取 .zip（留在 10.x：11.x 對 AGP9 改靠 built-in Kotlin，與仍用 KGP 的 audioplayers/fluttertoast 衝突；10.3.11 已被撤回）
   archive: ^4.0.9         # 教師端題庫匯入：解壓 quest.csv + audio/
 
 dev_dependencies:

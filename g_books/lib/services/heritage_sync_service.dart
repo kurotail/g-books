@@ -53,6 +53,9 @@ class HeritageBoardSnapshot {
 ///   - [fetchItems] ↔ `POST /api/item`
 ///   - [placeItem]  ↔ `POST /api/item/inv2slot`
 ///   - [removeItem] ↔ `POST /api/item/slot2inv`
+///
+/// 註：各方法的 `groupId` 即「本組帳號的後端 user_id」（一組一帳號＝一個 user）；後端
+/// 物品端點以 `user_id` 指涉board，故下方送出的 body 欄位名為 `user_id`。
 ///   - [watch]      ↔ 後端目前只有狀態 WS、無背包推播，故 API 實作回空串流；
 ///                    本機 mock 於變動時推播以模擬多裝置同步。
 ///
@@ -212,7 +215,7 @@ class ApiHeritageSyncService implements HeritageSyncService {
   @override
   Future<HeritageBoardSnapshot> fetchItems(int groupId) async {
     final m = await _client.sendJson('POST', '/api/item',
-        body: {'group_id': groupId}) as Map<String, dynamic>;
+        body: {'user_id': groupId}) as Map<String, dynamic>;
     final inventory = <OwnedItem>[
       for (final e in (m['inventory'] as List? ?? const []))
         OwnedItem(
@@ -243,7 +246,7 @@ class ApiHeritageSyncService implements HeritageSyncService {
   }) async {
     try {
       await _client.sendJson('POST', '/api/item/inv2slot',
-          body: {'group_id': groupId, 'item_id': itemId, 'slot_id': slotId});
+          body: {'user_id': groupId, 'item_id': itemId, 'slot_id': slotId});
       return true;
     } on ApiException catch (e) {
       if (e.statusCode == 403) throw const GroupChangedException();
@@ -257,7 +260,7 @@ class ApiHeritageSyncService implements HeritageSyncService {
   Future<bool> removeItem({required int groupId, required int slotId}) async {
     try {
       await _client.sendJson('POST', '/api/item/slot2inv',
-          body: {'group_id': groupId, 'slot_id': slotId});
+          body: {'user_id': groupId, 'slot_id': slotId});
       return true;
     } on ApiException catch (e) {
       if (e.statusCode == 403) throw const GroupChangedException();

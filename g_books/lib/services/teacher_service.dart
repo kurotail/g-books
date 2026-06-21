@@ -16,17 +16,20 @@ class TeacherBuilding {
 ///   - 班級名冊（students 表）：每筆 `{座號, 姓名, 頭像}`，非登入帳號。
 ///   - 小組帳號（user role=0）：username 即組名，持有指派的名冊成員與古蹟。
 ///
+/// 後端已把所有「指涉某使用者」的端點改用數字 `user_id`（不再用 username）；座號因後端
+/// students 表無對應欄，折進 `name` 以 `"座號_姓名"` 儲存（見 [encodeRosterName]）。
+///
 /// 對應 `gb_api` 端點：
 ///   - [setPhase]          ↔ `POST /api/state`
 ///   - [listRoster]        ↔ `GET /api/student`
-///   - [createStudent]     ↔ `POST /api/student`
+///   - [createStudent]     ↔ `POST /api/student`（student_id 由後端配發）
 ///   - [updateStudent]     ↔ `PUT /api/student/{id}`
 ///   - [deleteStudent]     ↔ `DELETE /api/student/{id}`
 ///   - [listGroups]        ↔ `GET /api/users`（取 role=0）
 ///   - [createGroup]       ↔ `POST /api/register`（role=0）
-///   - [deleteGroup]       ↔ `DELETE /api/users/{username}`
-///   - [setGroupStudents]  ↔ `POST /api/users/students`
-///   - [setGroupAvatar]    ↔ `POST /api/users/pfp`
+///   - [deleteGroup]       ↔ `DELETE /api/users/{user_id}`
+///   - [setGroupStudents]  ↔ `POST /api/users/students`（帶 user_id）
+///   - [setGroupAvatar]    ↔ `POST /api/users/pfp`（帶 user_id）
 ///   - [listBuildings]     ↔ `GET /api/building`
 ///
 /// Mock 版操作本機資料（並透過 [MockGameStateService] 切換階段，方便單機 demo）；
@@ -40,16 +43,17 @@ abstract class TeacherService {
   // ── 班級名冊（students 表）─────────────────────────────────────────────────
   Future<List<RosterStudent>> listRoster();
 
-  /// 新增名冊學生（座號為前端指定的主鍵）。座號已存在時拋例外。
+  /// 新增名冊學生。student_id 由後端配發；[seatNo] 為座號（顯示用，折進 name 儲存）。
   Future<void> createStudent({
-    required int id,
+    required int seatNo,
     required String name,
     String? avatarUrl,
   });
 
-  /// 覆寫名冊學生的姓名 / 頭像（座號不可改）。
+  /// 覆寫名冊學生的座號 / 姓名 / 頭像（[id] = 後端 student_id，不可改）。
   Future<void> updateStudent({
     required int id,
+    required int seatNo,
     required String name,
     String? avatarUrl,
   });
@@ -67,16 +71,16 @@ abstract class TeacherService {
   });
 
   /// 刪除一個小組帳號。
-  Future<void> deleteGroup({required String username});
+  Future<void> deleteGroup({required int userId});
 
-  /// 全量設定某組的名冊成員（整組覆蓋）。
+  /// 全量設定某組的名冊成員（整組覆蓋）。[userId] = 該組後端 user_id。
   Future<void> setGroupStudents({
-    required String username,
+    required int userId,
     required List<int> studentIds,
   });
 
-  /// 設定某組的組徽（空字串＝清除）。
-  Future<void> setGroupAvatar({required String username, String? avatarUrl});
+  /// 設定某組的組徽（空字串＝清除）。[userId] = 該組後端 user_id。
+  Future<void> setGroupAvatar({required int userId, String? avatarUrl});
 
   /// 列出後端所有古蹟 building，供「上課古蹟」把 heritageId 解析成 building_id。
   Future<List<TeacherBuilding>> listBuildings();
@@ -121,11 +125,16 @@ class MockTeacherService implements TeacherService {
   MockTeacherService(this._gameState) {
     _roster.addAll(mockRoster);
     _groups.addAll(mockGroupAccounts);
+    // 模擬後端自動配發：新 id 接在現有最大值之後。
+    _nextStudentId = _roster.fold(0, (m, s) => s.id > m ? s.id : m) + 1;
+    _nextGroupId = _groups.fold(0, (m, g) => g.id > m ? g.id : m) + 1;
   }
 
   final MockGameStateService _gameState;
   final List<RosterStudent> _roster = [];
   final List<GroupAccount> _groups = [];
+  int _nextStudentId = 1;
+  int _nextGroupId = 1;
 
   @override
   Future<void> setPhase(GamePhase phase, {Duration? duration}) async =>
@@ -140,25 +149,30 @@ class MockTeacherService implements TeacherService {
 
   @override
   Future<void> createStudent({
-    required int id,
+    required int seatNo,
     required String name,
     String? avatarUrl,
   }) async {
-    if (_roster.any((s) => s.id == id)) {
-      throw Exception('座號 $id 已存在');
-    }
-    _roster.add(RosterStudent(id: id, name: name, avatarUrl: avatarUrl));
+    // 後端不以座號為唯一鍵（id 由伺服器配發），故 mock 也不擋重複座號。
+    _roster.add(RosterStudent(
+      id: _nextStudentId++,
+      seatNo: seatNo,
+      name: name,
+      avatarUrl: avatarUrl,
+    ));
   }
 
   @override
   Future<void> updateStudent({
     required int id,
+    required int seatNo,
     required String name,
     String? avatarUrl,
   }) async {
     final i = _roster.indexWhere((s) => s.id == id);
-    if (i < 0) throw Exception('座號 $id 不存在');
-    _roster[i] = RosterStudent(id: id, name: name, avatarUrl: avatarUrl);
+    if (i < 0) throw Exception('學生不存在');
+    _roster[i] =
+        RosterStudent(id: id, seatNo: seatNo, name: name, avatarUrl: avatarUrl);
   }
 
   @override
@@ -169,6 +183,7 @@ class MockTeacherService implements TeacherService {
       final g = _groups[i];
       if (g.studentIds.contains(id)) {
         _groups[i] = GroupAccount(
+          id: g.id,
           username: g.username,
           buildingId: g.buildingId,
           avatarUrl: g.avatarUrl,
@@ -193,28 +208,31 @@ class MockTeacherService implements TeacherService {
     if (_groups.any((g) => g.username == username)) {
       throw Exception('帳號 $username 已存在');
     }
-    _groups.add(GroupAccount(username: username));
+    _groups.add(GroupAccount(id: _nextGroupId++, username: username));
     mockGroupPasswords[username] = password;
   }
 
   @override
-  Future<void> deleteGroup({required String username}) async {
-    _groups.removeWhere((g) => g.username == username);
-    mockGroupPasswords.remove(username);
+  Future<void> deleteGroup({required int userId}) async {
+    final i = _groups.indexWhere((g) => g.id == userId);
+    if (i < 0) return;
+    mockGroupPasswords.remove(_groups[i].username);
+    _groups.removeAt(i);
   }
 
   @override
   Future<void> setGroupStudents({
-    required String username,
+    required int userId,
     required List<int> studentIds,
   }) async {
-    final i = _groups.indexWhere((g) => g.username == username);
+    final i = _groups.indexWhere((g) => g.id == userId);
     if (i < 0) return;
     final g = _groups[i];
     final valid =
         studentIds.where((id) => _roster.any((s) => s.id == id)).toList()
           ..sort();
     _groups[i] = GroupAccount(
+      id: g.id,
       username: g.username,
       buildingId: g.buildingId,
       avatarUrl: g.avatarUrl,
@@ -224,13 +242,14 @@ class MockTeacherService implements TeacherService {
 
   @override
   Future<void> setGroupAvatar({
-    required String username,
+    required int userId,
     String? avatarUrl,
   }) async {
-    final i = _groups.indexWhere((g) => g.username == username);
+    final i = _groups.indexWhere((g) => g.id == userId);
     if (i < 0) return;
     final g = _groups[i];
     _groups[i] = GroupAccount(
+      id: g.id,
       username: g.username,
       buildingId: g.buildingId,
       avatarUrl: (avatarUrl == null || avatarUrl.isEmpty) ? null : avatarUrl,
@@ -288,16 +307,16 @@ class ApiTeacherService implements TeacherService {
 
   @override
   Future<void> createStudent({
-    required int id,
+    required int seatNo,
     required String name,
     String? avatarUrl,
   }) async {
+    // student_id 由後端配發；座號折進 name（"座號_姓名"）以保存。
     await _client.sendJson(
       'POST',
       '/api/student',
       body: {
-        'student_id': id,
-        'name': name,
+        'name': encodeRosterName(seatNo, name),
         'profile_pic_url': avatarUrl ?? '',
       },
     );
@@ -306,13 +325,17 @@ class ApiTeacherService implements TeacherService {
   @override
   Future<void> updateStudent({
     required int id,
+    required int seatNo,
     required String name,
     String? avatarUrl,
   }) async {
     await _client.sendJson(
       'PUT',
       '/api/student/$id',
-      body: {'name': name, 'profile_pic_url': avatarUrl ?? ''},
+      body: {
+        'name': encodeRosterName(seatNo, name),
+        'profile_pic_url': avatarUrl ?? '',
+      },
     );
   }
 
@@ -349,37 +372,33 @@ class ApiTeacherService implements TeacherService {
   }
 
   @override
-  Future<void> deleteGroup({required String username}) async {
-    // RESTful：DELETE /api/users/{username}（帳號走路徑、無 body）。username 可能含
-    // 中文，需 URL-encode 後放進路徑。
-    await _client.sendJson(
-      'DELETE',
-      '/api/users/${Uri.encodeComponent(username)}',
-    );
+  Future<void> deleteGroup({required int userId}) async {
+    // 後端以數字 user_id 指涉帳號：DELETE /api/users/{id}（走路徑、無 body）。
+    await _client.sendJson('DELETE', '/api/users/$userId');
   }
 
   @override
   Future<void> setGroupStudents({
-    required String username,
+    required int userId,
     required List<int> studentIds,
   }) async {
     await _client.sendJson(
       'POST',
       '/api/users/students',
-      body: {'username': username, 'student_ids': studentIds},
+      body: {'user_id': userId, 'student_ids': studentIds},
     );
   }
 
   @override
   Future<void> setGroupAvatar({
-    required String username,
+    required int userId,
     String? avatarUrl,
   }) async {
     await _client.sendJson(
       'POST',
       '/api/users/pfp',
       body: {
-        'username': username,
+        'user_id': userId,
         'profile_pic_url': avatarUrl ?? '', // 空字串＝清除
       },
     );
@@ -425,9 +444,11 @@ class ApiTeacherService implements TeacherService {
 
   RosterStudent _studentOf(Map<String, dynamic> m) {
     final pic = (m['profile_pic_url'] as String?) ?? '';
+    final (seat, name) = decodeRosterName((m['name'] as String?) ?? '');
     return RosterStudent(
       id: (m['student_id'] as num?)?.toInt() ?? 0,
-      name: (m['name'] as String?) ?? '',
+      seatNo: seat,
+      name: name,
       avatarUrl: pic.isEmpty ? null : pic,
     );
   }
@@ -440,6 +461,7 @@ class ApiTeacherService implements TeacherService {
             .toList()
           ..sort();
     return GroupAccount(
+      id: (m['id'] as num?)?.toInt() ?? 0,
       username: (m['username'] as String?) ?? '',
       buildingId: (m['building_id'] as num?)?.toInt() ?? 0,
       avatarUrl: pic.isEmpty ? null : pic,

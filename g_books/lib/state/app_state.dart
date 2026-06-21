@@ -27,7 +27,8 @@ class AppState extends ChangeNotifier {
 
   // ── 學生（小組）session ─────────────────────────────────────────────────────
   bool _loggedIn = false;
-  GroupModel? _group; // 登入的小組（name=username、avatarUrl=帳號 pfp）
+  int _userId = 0; // 後端 user_id（背包 / 物品端點皆以此指涉本帳號）
+  GroupModel? _group; // 登入的小組（id=user_id、name=username、avatarUrl=帳號 pfp）
   List<RosterStudent> _members = const []; // 本組名冊成員
   bool _setupComplete = false;
   int _buildingId = 0;
@@ -157,12 +158,14 @@ class AppState extends ChangeNotifier {
       }
 
       _password = p;
+      _userId = (me['id'] as num?)?.toInt() ?? 0;
       _buildingId = (me['building_id'] as num?)?.toInt() ?? 0;
       final pfp = (me['profile_pic_url'] as String?) ?? '';
       final studentIds = ((me['students'] as List?) ?? const [])
           .map((x) => (x as num).toInt())
           .toList();
-      _group = GroupModel(id: 0, name: u, avatarUrl: pfp.isEmpty ? null : pfp);
+      _group =
+          GroupModel(id: _userId, name: u, avatarUrl: pfp.isEmpty ? null : pfp);
       _setupComplete = pfp.isNotEmpty; // 已設組徽＝視為已完成首次設定
       _loggedIn = true;
 
@@ -182,7 +185,8 @@ class AppState extends ChangeNotifier {
       return '帳號或密碼錯誤';
     }
     final g = match.first;
-    _group = GroupModel(id: 0, name: u, avatarUrl: g.avatarUrl);
+    _userId = g.id;
+    _group = GroupModel(id: g.id, name: u, avatarUrl: g.avatarUrl);
     _members = [for (final id in g.studentIds) ?_rosterById(id)]
       ..sort((a, b) => a.id.compareTo(b.id));
     _setupComplete = g.avatarUrl != null;
@@ -262,9 +266,11 @@ class AppState extends ChangeNotifier {
           final m = (s as Map).cast<String, dynamic>();
           final id = (m['student_id'] as num?)?.toInt() ?? 0;
           final pic = (m['profile_pic_url'] as String?) ?? '';
+          final (seat, name) = decodeRosterName((m['name'] as String?) ?? '');
           all[id] = RosterStudent(
             id: id,
-            name: (m['name'] as String?) ?? '',
+            seatNo: seat,
+            name: name,
             avatarUrl: pic.isEmpty ? null : pic,
           );
         }
@@ -292,7 +298,8 @@ class AppState extends ChangeNotifier {
     if (i < 0) return null;
     final old = _members[i];
     _members = List<RosterStudent>.from(_members)
-      ..[i] = RosterStudent(id: old.id, name: old.name, avatarUrl: url);
+      ..[i] = RosterStudent(
+          id: old.id, seatNo: old.seatNo, name: old.name, avatarUrl: url);
     notifyListeners();
     if (_useBackend && _api != null) {
       try {
@@ -300,7 +307,8 @@ class AppState extends ChangeNotifier {
           'PUT',
           '/api/student/$studentId',
           body: {
-            'name': old.name,
+            // 座號折在 name 內，整筆覆蓋時要還原回 "座號_姓名" 以免遺失座號。
+            'name': encodeRosterName(old.seatNo, old.name),
             'profile_pic_url': url ?? '', // 空字串＝清除
           },
         );
@@ -372,6 +380,7 @@ class AppState extends ChangeNotifier {
 
   void logout() {
     _loggedIn = false;
+    _userId = 0;
     _group = null;
     _members = const [];
     _setupComplete = false;

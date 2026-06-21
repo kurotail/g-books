@@ -292,7 +292,7 @@ class _TeacherAccountsBodyState extends State<_TeacherAccountsBody> {
     final ok = await _confirm('刪除老師帳號', '確定刪除「${t.username}」？此操作無法復原。', '刪除');
     if (ok != true) return;
     try {
-      await _svc.deleteTeacher(username: t.username);
+      await _svc.deleteTeacher(userId: t.id);
       await _refresh();
       _toast('已刪除「${t.username}」');
     } catch (e) {
@@ -304,7 +304,7 @@ class _TeacherAccountsBodyState extends State<_TeacherAccountsBody> {
     final pwd = await _askPassword(t.username);
     if (pwd == null) return; // 取消
     try {
-      await _svc.resetTeacherPassword(username: t.username, newPassword: pwd);
+      await _svc.resetTeacherPassword(userId: t.id, newPassword: pwd);
       _toast('已重設「${t.username}」的密碼');
     } catch (e) {
       _toast('重設失敗：${_msg(e)}（此功能需後端開放管理者重設密碼）');

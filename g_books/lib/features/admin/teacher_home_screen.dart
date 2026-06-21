@@ -371,37 +371,79 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
 
   Future<void> _addStudent() async {
     if (_locked) return;
-    final idText = _idCtrl.text.trim();
+    final seatText = _idCtrl.text.trim();
     final name = _nameCtrl.text.trim();
-    final id = int.tryParse(idText);
-    if (id == null || id <= 0 || name.isEmpty) {
+    final seatNo = int.tryParse(seatText);
+    if (seatNo == null || seatNo <= 0 || name.isEmpty) {
       _toast('請輸入有效座號與姓名');
       return;
     }
     try {
-      await _teacher.createStudent(id: id, name: name);
+      await _teacher.createStudent(seatNo: seatNo, name: name);
       _idCtrl.clear();
       _nameCtrl.clear();
       await _refreshData();
-      _toast('已新增 $name（座號 $id）');
+      _toast('已新增 $name（座號 $seatNo）');
     } catch (e) {
       _toast('新增失敗：${_msg(e)}');
     }
   }
 
-  Future<void> _importCsv() async {
+  /// 貼上文字匯入（沿用文字框內容）。
+  Future<void> _importPastedRoster() async {
     if (_locked) return;
-    final lines = _csvCtrl.text
+    if (_csvCtrl.text.trim().isEmpty) {
+      _toast('請先貼上名單');
+      return;
+    }
+    // 貼上的文字沒有欄名列。
+    final (created, skipped) =
+        await _importRosterText(_csvCtrl.text, skipHeader: false);
+    _csvCtrl.clear();
+    await _refreshData();
+    _toast('匯入完成：新增 $created 筆，略過 $skipped 筆');
+  }
+
+  /// 上傳 CSV 檔匯入（欄位：座號,姓名）。與貼上匯入共用 [_importRosterText] 解析。
+  Future<void> _pickAndImportRosterCsv() async {
+    if (_locked) return;
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv', 'txt'],
+      withData: true,
+    );
+    if (picked == null) return; // 使用者取消
+    final bytes = picked.files.single.bytes;
+    if (bytes == null) {
+      _toast('讀取檔案失敗');
+      return;
+    }
+    // 容許 UTF-8 BOM。
+    var text = utf8.decode(bytes, allowMalformed: true);
+    if (text.startsWith('﻿')) text = text.substring(1);
+    // CSV 檔第一列固定是欄名（座號,姓名），略過。
+    final (created, skipped) = await _importRosterText(text, skipHeader: true);
+    await _refreshData();
+    _toast('匯入完成：新增 $created 筆，略過 $skipped 筆');
+  }
+
+  /// 解析「座號,姓名」名單文字並逐筆建立。回傳 (成功數, 略過數)。座號在前或姓名在前、
+  /// 逗號或 Tab 分隔皆可。[skipHeader] 為 true 時略過第一列（CSV 檔的欄名列）；貼上文字
+  /// 沒有欄名列，傳 false。另保留「整列含『座號/姓名』字樣即視為欄名」的防呆。
+  Future<(int created, int skipped)> _importRosterText(
+    String text, {
+    required bool skipHeader,
+  }) async {
+    final lines = text
         .split('\n')
         .map((l) => l.trim())
         .where((l) => l.isNotEmpty)
         .toList();
-    if (lines.isEmpty) {
-      _toast('請先貼上名單');
-      return;
-    }
     var created = 0, skipped = 0;
-    for (final line in lines) {
+    for (var li = (skipHeader && lines.isNotEmpty) ? 1 : 0;
+        li < lines.length;
+        li++) {
+      final line = lines[li];
       final parts = line.split(RegExp(r'[,\t]')).map((p) => p.trim()).toList();
       if (parts.length < 2) {
         skipped++;
@@ -409,28 +451,26 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
       }
       if (parts.any((p) => p.contains('座號') || p.contains('姓名'))) continue;
       final firstIsId = RegExp(r'^\d+$').hasMatch(parts[0]);
-      final idText = firstIsId ? parts[0] : parts[1];
+      final seatText = firstIsId ? parts[0] : parts[1];
       final name = firstIsId ? parts[1] : parts[0];
-      final id = int.tryParse(idText);
-      if (id == null || id <= 0 || name.isEmpty) {
+      final seatNo = int.tryParse(seatText);
+      if (seatNo == null || seatNo <= 0 || name.isEmpty) {
         skipped++;
         continue;
       }
       try {
-        await _teacher.createStudent(id: id, name: name);
+        await _teacher.createStudent(seatNo: seatNo, name: name);
         created++;
       } catch (_) {
         skipped++;
       }
     }
-    _csvCtrl.clear();
-    await _refreshData();
-    _toast('匯入完成：新增 $created 筆，略過 $skipped 筆');
+    return (created, skipped);
   }
 
   Future<void> _deleteStudent(RosterStudent s) async {
     final ok = await _confirm(
-        '刪除學生', '確定從名冊刪除「${s.name}（座號 ${s.id}）」？會一併從各組移除。', '刪除');
+        '刪除學生', '確定從名冊刪除「${s.name}（座號 ${s.seatNo}）」？會一併從各組移除。', '刪除');
     if (ok != true) return;
     try {
       await _teacher.deleteStudent(id: s.id);
@@ -466,7 +506,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
         await _confirm('刪除小組帳號', '確定刪除小組帳號「${g.username}」？名冊學生不受影響。', '刪除');
     if (ok != true) return;
     try {
-      await _teacher.deleteGroup(username: g.username);
+      await _teacher.deleteGroup(userId: g.id);
       await _refreshData();
       _toast('已刪除「${g.username}」');
     } catch (e) {
@@ -490,7 +530,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
           ids.remove(s.id);
         }
         ids.sort();
-        await _teacher.setGroupStudents(username: g.username, studentIds: ids);
+        await _teacher.setGroupStudents(userId: g.id, studentIds: ids);
       }
       await _refreshData();
     } catch (e) {
@@ -512,7 +552,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     try {
       for (final g in List<GroupAccount>.from(_groups)) {
         try {
-          await _teacher.deleteGroup(username: g.username);
+          await _teacher.deleteGroup(userId: g.id);
         } catch (_) {}
       }
       for (final s in List<RosterStudent>.from(_roster)) {
@@ -947,15 +987,33 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('每行一位：座號,姓名（例：01,王小明）',
+                    const Text('每行一位：座號,姓名（例：01,王小明）。可貼上文字，或上傳 .csv 檔。',
                         style: TextStyle(color: Colors.white38, fontSize: 13)),
                     const SizedBox(height: 8),
                     _input(_csvCtrl, '01,王小明\n02,李小花',
                         maxLines: 5, enabled: !_locked),
                     const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: _primaryBtn('匯入名單', _importCsv, enabled: !_locked),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed:
+                              _locked ? null : _pickAndImportRosterCsv,
+                          icon: const Icon(Icons.upload_file_rounded,
+                              size: 18, color: _gold),
+                          label: const Text('上傳 CSV 檔',
+                              style: TextStyle(
+                                  color: _gold, fontWeight: FontWeight.w700)),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: _gold),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 18, vertical: 14),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        _primaryBtn('匯入貼上名單', _importPastedRoster,
+                            enabled: !_locked),
+                      ],
                     ),
                   ],
                 ),
@@ -997,7 +1055,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
                       style:
                           const TextStyle(color: Colors.white, fontSize: 15)),
                 ),
-                Text('座號 ${s.id}',
+                Text('座號 ${s.seatNo}',
                     style:
                         const TextStyle(color: Colors.white38, fontSize: 13)),
                 const SizedBox(width: 12),
@@ -1125,7 +1183,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
     final filtered = q.isEmpty
         ? _roster
         : _roster
-            .where((s) => s.name.contains(q) || '${s.id}'.contains(q))
+            .where((s) => s.name.contains(q) || '${s.seatNo}'.contains(q))
             .toList();
     final usernames = [for (final g in _groups) g.username];
     return Column(
@@ -1191,7 +1249,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
             child: Text(s.name,
                 style: const TextStyle(color: Colors.white, fontSize: 15)),
           ),
-          Text('座號 ${s.id}',
+          Text('座號 ${s.seatNo}',
               style: const TextStyle(color: Colors.white38, fontSize: 13)),
           const SizedBox(width: 12),
           _groupDropdown(
