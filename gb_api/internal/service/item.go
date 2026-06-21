@@ -12,14 +12,15 @@ import (
 )
 
 type ItemSvc struct {
-	repo      repo.ItemRepo
+	item      repo.ItemRepo
 	inv       repo.InventoryRepo
 	users     repo.UserRepo
 	buildings repo.BuildingRepo
+	blocks    repo.BlockRepo
 }
 
-func NewItemSvc(r repo.ItemRepo, inv repo.InventoryRepo, users repo.UserRepo, buildings repo.BuildingRepo) *ItemSvc {
-	return &ItemSvc{repo: r, inv: inv, users: users, buildings: buildings}
+func NewItemSvc(r repo.ItemRepo, inv repo.InventoryRepo, users repo.UserRepo, buildings repo.BuildingRepo, blocks repo.BlockRepo) *ItemSvc {
+	return &ItemSvc{item: r, inv: inv, users: users, buildings: buildings, blocks: blocks}
 }
 
 // slotAllowsType reports whether user u's building permits an item of itemType.
@@ -78,9 +79,15 @@ func (s *ItemSvc) QueryItems(accessToken string, userID uint) ([]byte, int, erro
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
+	blocks, err := s.blocks.QuerySlotBlocks(userID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
 	slots := make(map[uint]model.SlotView, len(slotItems))
 	for slotID, si := range slotItems {
-		slots[slotID] = slotView(si.Item, si.Broken, full)
+		sv := slotView(si.Item, si.Broken, full)
+		sv.BlockedAttackers = blocks[slotID]
+		slots[slotID] = sv
 	}
 
 	data, err := json.Marshal(model.ItemsResponse{UserID: userID, Inventory: inventory, Slots: slots})

@@ -19,58 +19,6 @@ func NewQuestionHandler(s *service.QuestionSvc) *QuestionHandler {
 	return &QuestionHandler{svc: s}
 }
 
-// GenerateItem issues an item-earning session (NORMAL state).
-func (h *QuestionHandler) GenerateItem(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	var req model.GenerateItemRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	if req.Difficulty == nil {
-		http.Error(w, "缺少 difficulty", http.StatusBadRequest)
-		return
-	}
-	data, status, err := h.svc.GenerateItem(token, *req.Difficulty)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	writeJSON(w, data)
-}
-
-// GenerateTarget issues an attack/repair session against a user's slot (QUIZ state).
-func (h *QuestionHandler) GenerateTarget(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	var req model.GenerateTargetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	if req.TargetUserID == nil || *req.TargetUserID == 0 {
-		http.Error(w, "缺少 target_user_id", http.StatusBadRequest)
-		return
-	}
-	if req.TargetSlotID == nil {
-		http.Error(w, "缺少 target_slot_id", http.StatusBadRequest)
-		return
-	}
-	data, status, err := h.svc.GenerateTarget(token, *req.TargetUserID, *req.TargetSlotID)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	writeJSON(w, data)
-}
-
 // Upload appends a batch of teacher-supplied questions to the pool.
 func (h *QuestionHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
@@ -204,31 +152,4 @@ func (h *QuestionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(status)
-}
-
-func (h *QuestionHandler) Answer(w http.ResponseWriter, r *http.Request) {
-	token, err := bearerToken(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	var req model.AnswerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
-		return
-	}
-	if req.Session == "" {
-		http.Error(w, "缺少 session", http.StatusBadRequest)
-		return
-	}
-	if len(req.Answer) == 0 {
-		http.Error(w, "缺少 answer", http.StatusBadRequest)
-		return
-	}
-	data, status, err := h.svc.Answer(token, req.Session, req.Answer)
-	if err != nil {
-		http.Error(w, err.Error(), status)
-		return
-	}
-	writeJSON(w, data)
 }

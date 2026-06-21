@@ -786,6 +786,11 @@ querying **their own** board; for any other user they see **only `type`** (the
 `item_id` and `question_id` fields are omitted). **Teachers and Admins** always see the
 full fields.
 
+Each slot also carries `blocked_attackers` — the user ids currently barred from attacking that
+slot after a failed attack (cleared when the slot is repaired; see
+[`POST /api/question/target`](#post-apiquestiontarget--attack--repair-quiz2)). It is **omitted
+when empty** and shown in both the full and restricted views.
+
 **Request**
 
 ```json
@@ -802,7 +807,7 @@ full fields.
     { "item_id": 2, "type": 20, "question_id": 2 }
   ],
   "slots": {
-    "0": { "item_id": 3, "type": 10, "question_id": 1, "broken": false }
+    "0": { "item_id": 3, "type": 10, "question_id": 1, "broken": false, "blocked_attackers": [5] }
   }
 }
 ```
@@ -814,7 +819,7 @@ is exposed per item.
 {
   "user_id": 2,
   "inventory": [ { "type": 10 }, { "type": 20 } ],
-  "slots": { "0": { "type": 10, "broken": false } }
+  "slots": { "0": { "type": 10, "broken": false, "blocked_attackers": [5] } }
 }
 ```
 
@@ -968,6 +973,13 @@ Open a session against `target_slot_id` on `target_user_id`'s board. **Valid** o
 - **repair** — the target is the caller's **own** board and the slot item **is broken**; the
   graded question is a random `area 2` question, and a correct answer **repairs** it.
 
+**Attack cooldown** — each slot keeps a set of attackers barred from attacking it (its
+`blocked_attackers`, see [`POST /api/item`](#post-apiitem)). When a caller **fails** an attack
+(answers the attack question incorrectly), they are added to that set and may not open another
+attack session against the slot until it is **repaired** — repairing the slot clears the whole
+set. Returning the server to `NORMAL` (see [`POST /api/state`](#post-apistate)) also clears
+**every** slot's blocklist. A barred caller is rejected here with `403`.
+
 **Request**
 
 ```json
@@ -982,7 +994,7 @@ Open a session against `target_slot_id` on `target_user_id`'s board. **Valid** o
 |--------|-----------|
 | `400`  | Malformed JSON body; `target_user_id` missing; `target_slot_id` missing; the target slot is empty; the target item has no question; or the target is invalid (own non-broken slot, or another user's broken slot) |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is a Student and the server is not in `QUIZ2` state |
+| `403`  | Caller is a Student and the server is not in `QUIZ2` state, or the caller is barred from this slot after a failed attack (until it is repaired) |
 | `404`  | `target_user_id` does not exist |
 
 ---
@@ -1018,6 +1030,10 @@ The student always submits a single value; the question's correct answer is a **
 session's correct answer grants an item. `success` is set for **target** sessions and reports
 whether the break/repair actually happened (`false` if the slot's broken state no longer
 allows it; a wrong answer omits it).
+
+A **wrong** answer to an **attack** session bars the caller from re-attacking that slot until it
+is repaired (see the attack cooldown under
+[`POST /api/question/target`](#post-apiquestiontarget--attack--repair-quiz2)).
 
 ```json
 { "correct": true, "item_id": 5 }
@@ -1286,6 +1302,10 @@ that time passes — a background poller checks it about once a second. The end 
 must be in the future, and is ignored when the target state is `NORMAL`. Each
 request **overwrites** any previous schedule: omitting `end_time` (or setting
 `NORMAL`) clears it.
+
+Returning to `NORMAL` — whether by this endpoint or the scheduled auto-revert — also
+**clears every slot's attacker blocklist** (the `blocked_attackers` cooldown set by failed
+attacks; see [`POST /api/question/target`](#post-apiquestiontarget--attack--repair-quiz2)).
 
 **Request**
 

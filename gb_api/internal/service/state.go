@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"gb-api/internal/logger"
 	"gb-api/internal/model"
 	"gb-api/internal/repo"
 )
@@ -43,57 +44,6 @@ func stateSnapshot() model.StateResponse {
 	stateMu.RLock()
 	defer stateMu.RUnlock()
 	return snapshotLocked()
-}
-
-func setStateUntil(s model.ServerState, end time.Time) {
-	stateMu.Lock()
-	changed := state != s
-	endChanged := !endTime.Equal(end)
-	if changed {
-		state = s
-		updatedAt = time.Now()
-	}
-	endTime = end
-	snap := snapshotLocked()
-	stateMu.Unlock()
-	// Notify on a real transition or a (re)scheduled end time.
-	if changed || endChanged {
-		stateHub.broadcast(snap)
-	}
-}
-
-// revertIfDue transitions to NORMAL and clears the schedule when the end time
-func revertIfDue(now time.Time) {
-	stateMu.Lock()
-	if endTime.IsZero() || now.Before(endTime) {
-		stateMu.Unlock()
-		return
-	}
-	if state != model.StateNormal {
-		state = model.StateNormal
-		updatedAt = time.Now()
-	}
-	endTime = time.Time{}
-	snap := snapshotLocked()
-	stateMu.Unlock()
-	stateHub.broadcast(snap)
-}
-
-// StartStateScheduler launches a goroutine that polls the scheduled end time and
-// reverts the state to NORMAL once it passes. It runs until ctx is cancelled.
-func StartStateScheduler(ctx context.Context, interval time.Duration) {
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case t := <-ticker.C:
-				revertIfDue(t)
-			}
-		}
-	}()
 }
 
 // --- broadcast hub ---
@@ -136,11 +86,19 @@ func (h *hub) broadcast(s model.StateResponse) {
 // --- service ---
 
 type StateSvc struct {
-	users repo.UserRepo
+	users  repo.UserRepo
+	blocks repo.BlockRepo
 }
 
-func NewStateSvc(users repo.UserRepo) *StateSvc {
-	return &StateSvc{users: users}
+func NewStateSvc(users repo.UserRepo, blocks repo.BlockRepo) *StateSvc {
+	return &StateSvc{users: users, blocks: blocks}
+}
+
+// clearAttackBlocks wipes every slot's attacker block list
+func (s *StateSvc) clearAttackBlocks() {
+	if err := s.blocks.ClearAllAttackBlocks(); err != nil {
+		logger.L.Error("failed to clear slot attack blocks on NORMAL", "err", err)
+	}
 }
 
 func (s *StateSvc) GetState(accessToken string) ([]byte, int, error) {
@@ -169,7 +127,7 @@ func (s *StateSvc) SetState(accessToken string, st model.ServerState, endTime *t
 		}
 		end = *endTime
 	}
-	setStateUntil(st, end)
+	s.setStateUntil(st, end)
 	data, err := json.Marshal(stateSnapshot())
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
@@ -183,4 +141,59 @@ func (s *StateSvc) SubscribeState(accessToken string) (model.StateResponse, <-ch
 	}
 	events, unsub := stateHub.subscribe()
 	return stateSnapshot(), events, unsub, http.StatusOK, nil
+}
+
+func (s *StateSvc) setStateUntil(ns model.ServerState, end time.Time) {
+	stateMu.Lock()
+	changed := state != ns
+	endChanged := !endTime.Equal(end)
+	if changed {
+		state = ns
+		updatedAt = time.Now()
+	}
+	endTime = end
+	snap := snapshotLocked()
+	stateMu.Unlock()
+	// Returning to NORMAL clears every per-slot attack block.
+	if ns == model.StateNormal {
+		s.clearAttackBlocks()
+	}
+	// Notify on a real transition or a (re)scheduled end time.
+	if changed || endChanged {
+		stateHub.broadcast(snap)
+	}
+}
+
+// revertIfDue transitions to NORMAL and clears the schedule when the end time
+func (s *StateSvc) revertIfDue(now time.Time) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	if endTime.IsZero() || now.Before(endTime) {
+		stateMu.Unlock()
+		return
+	}
+	reverted := state != model.StateNormal
+	if reverted {
+		state = model.StateNormal
+		updatedAt = time.Now()
+		s.clearAttackBlocks()
+	}
+	endTime = time.Time{}
+	snap := snapshotLocked()
+	stateHub.broadcast(snap)
+}
+
+func (s *StateSvc) StartStateScheduler(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case t := <-ticker.C:
+				s.revertIfDue(t)
+			}
+		}
+	}()
 }

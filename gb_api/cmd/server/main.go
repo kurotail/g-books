@@ -17,11 +17,13 @@ import (
 	"gb-api/internal/service"
 )
 
-func routes() (http.Handler, *handler.StateHandler) {
+func routes() (http.Handler, *handler.StateHandler, *service.StateSvc) {
 	authHandler := handler.NewAuthHandler(service.NewAuthSvc(repo.InitUserRepo(), repo.InitRefreshTokenRepo()))
-	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitUserRepo(), repo.InitBuildingRepo()))
-	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitSTTRepo()))
-	stateHandler := handler.NewStateHandler(service.NewStateSvc(repo.InitUserRepo()))
+	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitBlockRepo()))
+	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo()))
+	triggerHandler := handler.NewTriggerHandler(service.NewTriggerSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitBlockRepo(), repo.InitSTTRepo()))
+	stateSvc := service.NewStateSvc(repo.InitUserRepo(), repo.InitBlockRepo())
+	stateHandler := handler.NewStateHandler(stateSvc)
 	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
 	studentHandler := handler.NewStudentHandler(service.NewStudentSvc(repo.InitStudentRepo(), repo.InitUserRepo()))
 	mediaHandler := handler.NewMediaHandler(service.NewMediaSvc(config.UploadDir, config.MaxImageMB, config.MaxAudioMB))
@@ -56,9 +58,9 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("PUT /api/student/{id}", studentHandler.Update)
 	mux.HandleFunc("DELETE /api/student/{id}", studentHandler.Delete)
 
-	mux.HandleFunc("POST /api/question/generate", questionHandler.GenerateItem)
-	mux.HandleFunc("POST /api/question/target", questionHandler.GenerateTarget)
-	mux.HandleFunc("POST /api/question/answer", questionHandler.Answer)
+	mux.HandleFunc("POST /api/question/generate", triggerHandler.GenerateItem)
+	mux.HandleFunc("POST /api/question/target", triggerHandler.GenerateTarget)
+	mux.HandleFunc("POST /api/question/answer", triggerHandler.Answer)
 	mux.HandleFunc("POST /api/question/upload", questionHandler.Upload)
 	mux.HandleFunc("GET /api/question/search", questionHandler.Search)
 	mux.HandleFunc("GET /api/question/{id}", questionHandler.Get)
@@ -73,7 +75,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/state", stateHandler.SetState)
 	mux.HandleFunc("GET /api/state/ws", stateHandler.StateSocket)
 
-	return logger.RequestLogger(mux), stateHandler
+	return logger.RequestLogger(mux), stateHandler, stateSvc
 }
 
 func main() {
@@ -88,16 +90,16 @@ func main() {
 	}
 	defer repo.Close()
 
-	mux, stateHandler := routes()
+	mux, stateHandler, stateSvc := routes()
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
 	}
 
-	// Poll the scheduled state end time and auto-revert to NORMAL; stops on shutdown.
+	// Poll the scheduled state end time and auto-revert to NORMAL
 	rootCtx, stopScheduler := context.WithCancel(context.Background())
 	defer stopScheduler()
-	service.StartStateScheduler(rootCtx, time.Second)
+	stateSvc.StartStateScheduler(rootCtx, time.Second)
 
 	go func() {
 		logger.L.Info("server started, port " + strings.TrimPrefix(server.Addr, ":"))

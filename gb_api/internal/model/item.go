@@ -39,12 +39,15 @@ type ItemView struct {
 	QuestionID uint `json:"question_id,omitempty"`
 }
 
-// SlotView is a slotted item, like ItemView plus whether the item is broken.
+// SlotView is a slotted item, like ItemView plus whether the item is broken and the
+// set of attacker user ids currently barred from attacking this slot (failed attackers,
+// cleared on repair); omitted when empty.
 type SlotView struct {
-	ItemID     uint `json:"item_id,omitempty"`
-	Type       uint `json:"type"`
-	QuestionID uint `json:"question_id,omitempty"`
-	Broken     bool `json:"broken"`
+	ItemID           uint   `json:"item_id,omitempty"`
+	Type             uint   `json:"type"`
+	QuestionID       uint   `json:"question_id,omitempty"`
+	Broken           bool   `json:"broken"`
+	BlockedAttackers []uint `json:"blocked_attackers,omitempty"`
 }
 
 type ItemsResponse struct {

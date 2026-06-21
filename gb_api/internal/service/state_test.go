@@ -16,9 +16,14 @@ func newRoleRepo(username string, role uint) *mock.AuthRepo {
 	return &mock.AuthRepo{Roles: map[string]uint{username: role}}
 }
 
+// stateCtl drives the global state machine in tests. The state vars are package-level,
+// so any StateSvc instance mutates the same state; this one is used wherever a test
+// just needs to set/revert state without caring about the block-clearing target.
+var stateCtl = NewStateSvc(&mock.AuthRepo{}, &mock.ItemRepo{})
+
 func TestStateSvc_SetState_TeacherTransitions(t *testing.T) {
-	t.Cleanup(func() { setStateUntil(model.StateNormal, time.Time{}) })
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher))
+	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{})
 
 	data, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateQuiz2, nil)
 	if err != nil {
@@ -40,8 +45,8 @@ func TestStateSvc_SetState_TeacherTransitions(t *testing.T) {
 }
 
 func TestStateSvc_SetState_EndTimeScheduledAndOverwritten(t *testing.T) {
-	t.Cleanup(func() { setStateUntil(model.StateNormal, time.Time{}) })
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher))
+	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{})
 
 	end1 := time.Now().Add(time.Hour).UTC().Round(time.Second)
 	data, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateQuiz2, &end1)
@@ -77,8 +82,8 @@ func TestStateSvc_SetState_EndTimeScheduledAndOverwritten(t *testing.T) {
 }
 
 func TestStateSvc_SetState_PastEndTimeRejected(t *testing.T) {
-	t.Cleanup(func() { setStateUntil(model.StateNormal, time.Time{}) })
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher))
+	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{})
 
 	past := time.Now().Add(-time.Minute)
 	_, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateQuiz2, &past)
@@ -91,20 +96,20 @@ func TestStateSvc_SetState_PastEndTimeRejected(t *testing.T) {
 }
 
 func TestRevertIfDue(t *testing.T) {
-	t.Cleanup(func() { setStateUntil(model.StateNormal, time.Time{}) })
+	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
 
 	// Not due: end time in the future is left untouched.
 	future := time.Now().Add(time.Hour)
-	setStateUntil(model.StateQuiz2, future)
-	revertIfDue(time.Now())
+	stateCtl.setStateUntil(model.StateQuiz2, future)
+	stateCtl.revertIfDue(time.Now())
 	if getState() != model.StateQuiz2 {
 		t.Fatalf("expected QUIZ2 to remain, got %q", getState())
 	}
 
 	// Due: end time in the past reverts to NORMAL and clears the schedule.
 	past := time.Now().Add(-time.Second)
-	setStateUntil(model.StateQuiz2, past)
-	revertIfDue(time.Now())
+	stateCtl.setStateUntil(model.StateQuiz2, past)
+	stateCtl.revertIfDue(time.Now())
 	if getState() != model.StateNormal {
 		t.Fatalf("expected NORMAL after revert, got %q", getState())
 	}
@@ -114,15 +119,43 @@ func TestRevertIfDue(t *testing.T) {
 	}
 
 	// No schedule: revert is a no-op.
-	setStateUntil(model.StateQuiz1, time.Time{})
-	revertIfDue(time.Now())
+	stateCtl.setStateUntil(model.StateQuiz1, time.Time{})
+	stateCtl.revertIfDue(time.Now())
 	if getState() != model.StateQuiz1 {
 		t.Errorf("expected QUIZ1 to remain with no schedule, got %q", getState())
 	}
 }
 
+// Returning to NORMAL — whether via an explicit SetState or the scheduled
+// auto-revert — wipes every slot's attacker blocklist.
+func TestStateSvc_NormalClearsAttackBlocks(t *testing.T) {
+	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
+	blocks := &mock.ItemRepo{AttackBlocks: map[[3]uint]struct{}{{1, 0, 2}: {}}}
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), blocks)
+
+	// Explicit transition to NORMAL clears the table.
+	s.setStateUntil(model.StateQuiz2, time.Time{})
+	if _, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateNormal, nil); err != nil || status != http.StatusOK {
+		t.Fatalf("SetState NORMAL failed: status=%d err=%v", status, err)
+	}
+	if len(blocks.AttackBlocks) != 0 {
+		t.Fatalf("expected attack blocks cleared on SetState NORMAL, got %v", blocks.AttackBlocks)
+	}
+
+	// Scheduled auto-revert to NORMAL also clears the table.
+	blocks.AttackBlocks = map[[3]uint]struct{}{{1, 0, 2}: {}}
+	s.setStateUntil(model.StateQuiz2, time.Now().Add(-time.Second))
+	s.revertIfDue(time.Now())
+	if getState() != model.StateNormal {
+		t.Fatalf("expected NORMAL after revert, got %q", getState())
+	}
+	if len(blocks.AttackBlocks) != 0 {
+		t.Errorf("expected attack blocks cleared on auto-revert, got %v", blocks.AttackBlocks)
+	}
+}
+
 func TestStateSvc_SetState_StudentForbidden(t *testing.T) {
-	s := NewStateSvc(newRoleRepo("student", model.RoleStudent))
+	s := NewStateSvc(newRoleRepo("student", model.RoleStudent), &mock.ItemRepo{})
 
 	_, status, err := s.SetState(accessTokenFor(t, "student"), model.StateQuiz2, nil)
 	if err == nil {
@@ -134,7 +167,7 @@ func TestStateSvc_SetState_StudentForbidden(t *testing.T) {
 }
 
 func TestStateSvc_SetState_InvalidValue(t *testing.T) {
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher))
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{})
 
 	_, status, err := s.SetState(accessTokenFor(t, "teacher"), model.ServerState("BOGUS"), nil)
 	if err == nil {
@@ -147,7 +180,7 @@ func TestStateSvc_SetState_InvalidValue(t *testing.T) {
 
 func TestStateSvc_GetState(t *testing.T) {
 	useState(t, model.StateQuiz2)
-	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent))
+	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent), &mock.ItemRepo{})
 
 	data, status, err := s.GetState(accessTokenFor(t, "anyone"))
 	if err != nil {
@@ -172,7 +205,7 @@ func TestStateSvc_GetState(t *testing.T) {
 // subsequent transition.
 func TestStateSvc_SubscribeState(t *testing.T) {
 	useState(t, model.StateNormal)
-	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent))
+	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent), &mock.ItemRepo{})
 
 	cur, events, unsub, status, err := s.SubscribeState(accessTokenFor(t, "anyone"))
 	if err != nil {
@@ -189,7 +222,7 @@ func TestStateSvc_SubscribeState(t *testing.T) {
 		t.Error("expected snapshot to carry a non-zero updated_at")
 	}
 
-	setStateUntil(model.StateQuiz2, time.Time{})
+	stateCtl.setStateUntil(model.StateQuiz2, time.Time{})
 	select {
 	case got := <-events:
 		if got.State != model.StateQuiz2 {

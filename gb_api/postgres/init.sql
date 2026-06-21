@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS user_slots (
     PRIMARY KEY (user_id, slot_id)
 );
 
+-- Attackers barred from re-attacking a specific slot after a failed attempt.
+-- Cleared when the slot is repaired. Cascades when either user is deleted.
+CREATE TABLE IF NOT EXISTS slot_attack_blocks (
+    user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- slot owner
+    slot_id     BIGINT NOT NULL,
+    attacker_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- barred attacker
+    PRIMARY KEY (user_id, slot_id, attacker_id)
+);
+
 -- A user's assigned student roster. The user FK cascade removes roster rows when
 -- the user is deleted; the student FK cascade does the same when a student is deleted.
 CREATE TABLE IF NOT EXISTS user_students (

@@ -244,19 +244,20 @@ func (m *RoleRepo) GetUserByID(id uint) (model.User, error) {
 	name, _ := regNameOf(id)
 	return model.User{ID: id, Username: name, Role: m.Role}, nil
 }
-func (m *RoleRepo) CreateUser(_, _ string, _ uint) error     { return nil }
-func (m *RoleRepo) SetUserProfilePic(_ uint, _ string) error { return nil }
-func (m *RoleRepo) SetUserBuilding(_ uint, _ uint) error     { return nil }
-func (m *RoleRepo) SetUserStudents(_ uint, _ []uint) error   { return nil }
+func (m *RoleRepo) CreateUser(_, _ string, _ uint) error      { return nil }
+func (m *RoleRepo) SetUserProfilePic(_ uint, _ string) error  { return nil }
+func (m *RoleRepo) SetUserBuilding(_ uint, _ uint) error      { return nil }
+func (m *RoleRepo) SetUserStudents(_ uint, _ []uint) error    { return nil }
 func (m *RoleRepo) SetUserPassword(_ uint, _ string) error    { return nil }
 func (m *RoleRepo) SetUserDisplayName(_ uint, _ string) error { return nil }
 func (m *RoleRepo) DeleteUser(_ uint) (bool, error)           { return true, nil }
 
 type ItemRepo struct {
-	Inv        map[uint]struct{}   // owned (unslotted) item ids
-	Slot       map[uint]int        // slot_id -> signed item_id
-	Items      map[uint]model.Item // item table
-	NextItemID uint                // next id assigned by CreateItem
+	Inv          map[uint]struct{}    // owned (unslotted) item ids
+	Slot         map[uint]int         // slot_id -> signed item_id
+	Items        map[uint]model.Item  // item table
+	NextItemID   uint                 // next id assigned by CreateItem
+	AttackBlocks map[[3]uint]struct{} // {ownerID, slotID, attackerID} barred from re-attacking
 }
 
 func (m *ItemRepo) QueryInventory(_ uint) ([]model.Item, error) {
@@ -347,6 +348,46 @@ func (m *ItemRepo) SetSlot(_ uint, slotID uint, itemID int) error {
 		m.Slot[slotID] = itemID
 	}
 	return nil
+}
+
+func (m *ItemRepo) IsAttackBlocked(ownerID, slotID, attackerID uint) (bool, error) {
+	_, ok := m.AttackBlocks[[3]uint{ownerID, slotID, attackerID}]
+	return ok, nil
+}
+
+func (m *ItemRepo) AddAttackBlock(ownerID, slotID, attackerID uint) error {
+	if m.AttackBlocks == nil {
+		m.AttackBlocks = map[[3]uint]struct{}{}
+	}
+	m.AttackBlocks[[3]uint{ownerID, slotID, attackerID}] = struct{}{}
+	return nil
+}
+
+func (m *ItemRepo) ClearAttackBlocks(ownerID, slotID uint) error {
+	for k := range m.AttackBlocks {
+		if k[0] == ownerID && k[1] == slotID {
+			delete(m.AttackBlocks, k)
+		}
+	}
+	return nil
+}
+
+func (m *ItemRepo) ClearAllAttackBlocks() error {
+	m.AttackBlocks = nil
+	return nil
+}
+
+func (m *ItemRepo) QuerySlotBlocks(ownerID uint) (map[uint][]uint, error) {
+	out := make(map[uint][]uint)
+	for k := range m.AttackBlocks {
+		if k[0] == ownerID {
+			out[k[1]] = append(out[k[1]], k[2])
+		}
+	}
+	for _, ids := range out {
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
+	return out, nil
 }
 
 type BuildingRepo struct {
