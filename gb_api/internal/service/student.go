@@ -26,11 +26,7 @@ func (s *StudentSvc) Create(accessToken string, name, profilePicURL string) ([]b
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return nil, status, err
 	}
-	id, err := s.repo.CreateStudent(name, profilePicURL)
-	if err != nil {
-		return nil, http.StatusInternalServerError, err
-	}
-	st, err := s.repo.GetStudent(id)
+	st, err := s.repo.CreateStudent(name, profilePicURL)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -49,14 +45,11 @@ func (s *StudentSvc) Update(accessToken string, id uint, name, profilePicURL str
 	if caller.Role < model.RoleTeacher && !slices.Contains(caller.Students, id) {
 		return nil, http.StatusForbidden, fmt.Errorf("權限不足")
 	}
-	if err := s.repo.UpdateStudent(id, name, profilePicURL); err != nil {
+	st, err := s.repo.UpdateStudent(id, name, profilePicURL)
+	if err != nil {
 		if errors.Is(err, apperr.ErrStudentNotFound) {
 			return nil, http.StatusNotFound, err
 		}
-		return nil, http.StatusInternalServerError, err
-	}
-	st, err := s.repo.GetStudent(id)
-	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 	data, err := json.Marshal(st)
@@ -108,6 +101,11 @@ func (s *StudentSvc) SetStudents(accessToken string, userID uint, studentIDs []u
 		return nil, status, err
 	}
 
+	// Validate every requested id against the students table in one query
+	exists, err := s.repo.ExistingStudentIDs(studentIDs)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
 	results := make([]model.StudentAssignResult, 0, len(studentIDs))
 	seen := make(map[uint]struct{}, len(studentIDs))
 	valid := make([]uint, 0, len(studentIDs))
@@ -116,12 +114,9 @@ func (s *StudentSvc) SetStudents(accessToken string, userID uint, studentIDs []u
 			continue
 		}
 		seen[id] = struct{}{}
-		if _, err := s.repo.GetStudent(id); err != nil {
-			if errors.Is(err, apperr.ErrStudentNotFound) {
-				results = append(results, model.StudentAssignResult{StudentID: id, Status: http.StatusNotFound, Error: apperr.ErrStudentNotFound.Error()})
-				continue
-			}
-			return nil, http.StatusInternalServerError, err
+		if !exists[id] {
+			results = append(results, model.StudentAssignResult{StudentID: id, Status: http.StatusNotFound, Error: apperr.ErrStudentNotFound.Error()})
+			continue
 		}
 		valid = append(valid, id)
 		results = append(results, model.StudentAssignResult{StudentID: id, Status: http.StatusOK})

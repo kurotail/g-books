@@ -149,13 +149,18 @@ func (_ *userRepo) SetUserStudents(id uint, studentIDs []uint) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM user_students WHERE user_id = $1`, id); err != nil {
 		return err
 	}
-	for _, sid := range studentIDs {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO user_students (user_id, student_id) VALUES ($1, $2)
-			 ON CONFLICT DO NOTHING`, id, sid,
-		); err != nil {
-			return err
-		}
+	// Bulk-insert the whole roster in one statement via unnest, rather than one
+	// INSERT per student id.
+	arg := make([]int64, len(studentIDs))
+	for i, sid := range studentIDs {
+		arg[i] = int64(sid)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO user_students (user_id, student_id)
+		 SELECT $1, x FROM unnest($2::bigint[]) AS x
+		 ON CONFLICT DO NOTHING`, id, arg,
+	); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

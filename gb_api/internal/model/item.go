@@ -24,6 +24,13 @@ type Item struct {
 	QuestionID uint
 }
 
+// SlotItem is a slotted item hydrated from user_slots joined to items: the item
+// itself plus whether the slot holds it broken.
+type SlotItem struct {
+	Item
+	Broken bool
+}
+
 // ItemView is one owned item as returned by the query endpoint. For the restricted
 // (type-only) student view, ItemID and QuestionID are zero and omitted.
 type ItemView struct {

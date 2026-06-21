@@ -2,11 +2,18 @@ package repo
 
 import (
 	"context"
+	"errors"
+
+	"gb-api/internal/model"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type InventoryRepo interface {
-	QueryInv(userID uint) ([]uint, error)        // owned (unslotted) item ids, sorted
-	QuerySlot(userID uint) (map[uint]int, error) // slot_id -> signed item_id (negative = broken)
+	QueryInventory(userID uint) ([]model.Item, error)        // owned (unslotted) items, sorted by id
+	QuerySlotItems(userID uint) (map[uint]model.SlotItem, error) // slot_id -> hydrated slotted item
+	QuerySlot(userID uint) (map[uint]int, error)             // slot_id -> signed item_id (negative = broken)
+	OwnedItem(userID, itemID uint) (model.Item, bool, error) // the loose item + whether the user owns it
 	AddInvItem(userID uint, itemID uint) error
 	RemoveInvItem(userID uint, itemID uint) error
 	SetSlot(userID uint, slotID uint, itemID int) error // itemID 0 clears the slot
@@ -14,24 +21,71 @@ type InventoryRepo interface {
 
 type inventoryRepo struct{}
 
-func (_ *inventoryRepo) QueryInv(userID uint) ([]uint, error) {
+// OwnedItem returns the loose item the user holds and whether they own it, in a
+// single query that joins user_inventory to items (no separate ownership probe).
+func (_ *inventoryRepo) OwnedItem(userID, itemID uint) (model.Item, bool, error) {
+	ctx := context.Background()
+	var it model.Item
+	err := pool.QueryRow(ctx,
+		`SELECT i.id, i.type, i.question_id
+		 FROM user_inventory ui JOIN items i ON i.id = ui.item_id
+		 WHERE ui.user_id = $1 AND ui.item_id = $2`,
+		userID, itemID,
+	).Scan(&it.ItemID, &it.Type, &it.QuestionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Item{}, false, nil
+	}
+	if err != nil {
+		return model.Item{}, false, err
+	}
+	return it, true, nil
+}
+
+func (_ *inventoryRepo) QueryInventory(userID uint) ([]model.Item, error) {
 	ctx := context.Background()
 	rows, err := pool.Query(ctx,
-		`SELECT item_id FROM user_inventory WHERE user_id = $1 ORDER BY item_id`, userID,
+		`SELECT i.id, i.type, i.question_id
+		 FROM user_inventory ui JOIN items i ON i.id = ui.item_id
+		 WHERE ui.user_id = $1 ORDER BY i.id`, userID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	ids := make([]uint, 0)
+	items := make([]model.Item, 0)
 	for rows.Next() {
-		var id uint
-		if err := rows.Scan(&id); err != nil {
+		var it model.Item
+		if err := rows.Scan(&it.ItemID, &it.Type, &it.QuestionID); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		items = append(items, it)
 	}
-	return ids, rows.Err()
+	return items, rows.Err()
+}
+
+func (_ *inventoryRepo) QuerySlotItems(userID uint) (map[uint]model.SlotItem, error) {
+	ctx := context.Background()
+	rows, err := pool.Query(ctx,
+		`SELECT us.slot_id, (us.item_id < 0) AS broken, i.id, i.type, i.question_id
+		 FROM user_slots us JOIN items i ON i.id = abs(us.item_id)
+		 WHERE us.user_id = $1`, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[uint]model.SlotItem)
+	for rows.Next() {
+		var (
+			slotID uint
+			si     model.SlotItem
+		)
+		if err := rows.Scan(&slotID, &si.Broken, &si.ItemID, &si.Type, &si.QuestionID); err != nil {
+			return nil, err
+		}
+		out[slotID] = si
+	}
+	return out, rows.Err()
 }
 
 func (_ *inventoryRepo) QuerySlot(userID uint) (map[uint]int, error) {

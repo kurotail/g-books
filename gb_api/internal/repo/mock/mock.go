@@ -286,19 +286,51 @@ type ItemRepo struct {
 	NextItemID uint                // next id assigned by CreateItem
 }
 
-func (m *ItemRepo) QueryInv(_ uint) ([]uint, error) {
+func (m *ItemRepo) QueryInventory(_ uint) ([]model.Item, error) {
 	ids := make([]uint, 0, len(m.Inv))
 	for id := range m.Inv {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids, nil
+	items := make([]model.Item, 0, len(ids))
+	for _, id := range ids {
+		if it, ok := m.Items[id]; ok { // mirror the INNER JOIN: skip orphans
+			items = append(items, it)
+		}
+	}
+	return items, nil
+}
+
+func (m *ItemRepo) QuerySlotItems(_ uint) (map[uint]model.SlotItem, error) {
+	out := make(map[uint]model.SlotItem, len(m.Slot))
+	for slotID, signed := range m.Slot {
+		if signed == 0 {
+			continue
+		}
+		broken := signed < 0
+		itemID := uint(signed)
+		if broken {
+			itemID = uint(-signed)
+		}
+		if it, ok := m.Items[itemID]; ok {
+			out[slotID] = model.SlotItem{Item: it, Broken: broken}
+		}
+	}
+	return out, nil
 }
 
 func (m *ItemRepo) QuerySlot(_ uint) (map[uint]int, error) {
 	result := make(map[uint]int, len(m.Slot))
 	maps.Copy(result, m.Slot)
 	return result, nil
+}
+
+func (m *ItemRepo) OwnedItem(_ uint, itemID uint) (model.Item, bool, error) {
+	if _, owned := m.Inv[itemID]; !owned {
+		return model.Item{}, false, nil
+	}
+	it, ok := m.Items[itemID]
+	return it, ok, nil
 }
 
 func (m *ItemRepo) GetItem(itemID uint) (model.Item, bool, error) {
@@ -391,7 +423,7 @@ type StudentRepo struct {
 	NextID   uint
 }
 
-func (m *StudentRepo) CreateStudent(name, profilePicURL string) (uint, error) {
+func (m *StudentRepo) CreateStudent(name, profilePicURL string) (model.Student, error) {
 	if m.Students == nil {
 		m.Students = map[uint]model.Student{}
 	}
@@ -400,16 +432,18 @@ func (m *StudentRepo) CreateStudent(name, profilePicURL string) (uint, error) {
 	}
 	id := m.NextID
 	m.NextID++
-	m.Students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
-	return id, nil
+	st := model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
+	m.Students[id] = st
+	return st, nil
 }
 
-func (m *StudentRepo) UpdateStudent(id uint, name, profilePicURL string) error {
+func (m *StudentRepo) UpdateStudent(id uint, name, profilePicURL string) (model.Student, error) {
 	if _, ok := m.Students[id]; !ok {
-		return apperr.ErrStudentNotFound
+		return model.Student{}, apperr.ErrStudentNotFound
 	}
-	m.Students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
-	return nil
+	st := model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
+	m.Students[id] = st
+	return st, nil
 }
 
 func (m *StudentRepo) GetStudent(id uint) (model.Student, error) {
@@ -418,6 +452,16 @@ func (m *StudentRepo) GetStudent(id uint) (model.Student, error) {
 		return model.Student{}, apperr.ErrStudentNotFound
 	}
 	return s, nil
+}
+
+func (m *StudentRepo) ExistingStudentIDs(ids []uint) (map[uint]bool, error) {
+	out := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		if _, ok := m.Students[id]; ok {
+			out[id] = true
+		}
+	}
+	return out, nil
 }
 
 func (m *StudentRepo) GetAllStudents() ([]model.Student, error) {
