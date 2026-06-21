@@ -12,7 +12,7 @@ import (
 
 func validAccessToken(t *testing.T) string {
 	t.Helper()
-	tok, err := newTestAuthSvc().newAccessToken("testuser")
+	tok, err := newTestAuthSvc().newAccessToken(mock.IDFor("testuser"))
 	if err != nil {
 		t.Fatalf("failed to mint access token: %v", err)
 	}
@@ -70,7 +70,7 @@ func findItem(views []model.ItemView, id uint) (model.ItemView, bool) {
 func TestItemSvc_QueryItems_TeacherSeesFullFields(t *testing.T) {
 	s, _ := newItemSvc(t)
 
-	data, status, err := s.QueryItems(validAccessToken(t), "testuser")
+	data, status, err := s.QueryItems(validAccessToken(t), mock.IDFor("testuser"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestItemSvc_QueryItems_StudentOwnFull_OtherTypeOnly(t *testing.T) {
 	s, _ := newItemSvcAs(model.RoleStudent)
 
 	// Own board: full fields.
-	data, _, err := s.QueryItems(validAccessToken(t), "testuser")
+	data, _, err := s.QueryItems(validAccessToken(t), mock.IDFor("testuser"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestItemSvc_QueryItems_StudentOwnFull_OtherTypeOnly(t *testing.T) {
 	}
 
 	// Another person's board: type only — no item_id / question_id.
-	data, _, err = s.QueryItems(validAccessToken(t), "other")
+	data, _, err = s.QueryItems(validAccessToken(t), mock.IDFor("other"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestItemSvc_QueryItems_StudentOwnFull_OtherTypeOnly(t *testing.T) {
 
 func TestItemSvc_QueryItems_InvalidToken(t *testing.T) {
 	s, _ := newItemSvc(t)
-	_, status, err := s.QueryItems("invalid.token", "testuser")
+	_, status, err := s.QueryItems("invalid.token", mock.IDFor("testuser"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -147,7 +147,7 @@ func TestItemSvc_QueryItems_InvalidToken(t *testing.T) {
 func TestItemSvc_TranInv2Slot_MovesItemToSlot(t *testing.T) {
 	s, r := itemSvc(model.RoleTeacher, allowAll())
 
-	status, err := s.TranInv2Slot(validAccessToken(t), "testuser", 1, 5)
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestItemSvc_TranInv2Slot_MovesItemToSlot(t *testing.T) {
 func TestItemSvc_TranInv2Slot_ItemNotInInventory(t *testing.T) {
 	s, _ := itemSvc(model.RoleTeacher, allowAll())
 
-	status, err := s.TranInv2Slot(validAccessToken(t), "testuser", 99, 5)
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 99, 5)
 	if err == nil {
 		t.Fatal("expected error for an item the user does not own")
 	}
@@ -178,7 +178,7 @@ func TestItemSvc_TranInv2Slot_TypeNotAllowed(t *testing.T) {
 	// building allows type 10 only in slot 1
 	s, r := itemSvc(model.RoleTeacher, map[uint][]uint{10: {1}})
 
-	status, err := s.TranInv2Slot(validAccessToken(t), "testuser", 1, 2) // item 1 is type 10, slot 2
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 2) // item 1 is type 10, slot 2
 	if err == nil {
 		t.Fatal("expected error: type not allowed in slot")
 	}
@@ -192,7 +192,7 @@ func TestItemSvc_TranInv2Slot_TypeNotAllowed(t *testing.T) {
 
 func TestItemSvc_TranInv2Slot_InvalidToken(t *testing.T) {
 	s, _ := newItemSvc(t)
-	status, err := s.TranInv2Slot("bad.token", "testuser", 1, 5)
+	status, err := s.TranInv2Slot("bad.token", mock.IDFor("testuser"), 1, 5)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -206,7 +206,7 @@ func TestItemSvc_TranInv2Slot_SwapNormalItem(t *testing.T) {
 
 	// slot 0 already holds normal item 3; moving item 1 in should swap item 3
 	// back into the inventory set.
-	status, err := s.TranInv2Slot(validAccessToken(t), "testuser", 1, 0)
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestItemSvc_TranInv2Slot_BrokenSlotRejected(t *testing.T) {
 	s, r := itemSvc(model.RoleTeacher, allowAll())
 	r.Slot[2] = -3 // slot 2 holds a broken item 3
 
-	status, err := s.TranInv2Slot(validAccessToken(t), "testuser", 1, 2)
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 2)
 	if err == nil {
 		t.Fatal("expected error placing into a broken slot")
 	}
@@ -249,7 +249,7 @@ func TestItemSvc_TranInv2Slot_StudentBlockedInQuiz(t *testing.T) {
 	setStateUntil(model.StateQuiz2, time.Time{})
 	defer setStateUntil(model.StateNormal, time.Time{})
 
-	status, err := s.TranInv2Slot(validAccessToken(t), "testuser", 1, 5)
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 5)
 	if err == nil {
 		t.Fatal("expected error for student during QUIZ")
 	}
@@ -261,7 +261,7 @@ func TestItemSvc_TranInv2Slot_StudentBlockedInQuiz(t *testing.T) {
 func TestItemSvc_TranInv2Slot_StudentOwnBoardAllowed(t *testing.T) {
 	s, r := newItemSvcAs(model.RoleStudent)
 
-	status, err := s.TranInv2Slot(validAccessToken(t), "testuser", 1, 5)
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestItemSvc_TranInv2Slot_StudentOtherBoardForbidden(t *testing.T) {
 	// Student "testuser" tries to operate on "other"'s board.
 	s, _ := newItemSvcAs(model.RoleStudent)
 
-	status, err := s.TranInv2Slot(validAccessToken(t), "other", 1, 5)
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("other"), 1, 5)
 	if err == nil {
 		t.Fatal("expected error for student operating on another person's board")
 	}
@@ -291,7 +291,7 @@ func TestItemSvc_TranInv2Slot_TeacherOtherBoardForbidden(t *testing.T) {
 	// own board. Here the teacher targets "other".
 	s, _ := itemSvc(model.RoleTeacher, allowAll())
 
-	status, err := s.TranInv2Slot(validAccessToken(t), "other", 1, 5)
+	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("other"), 1, 5)
 	if err == nil {
 		t.Fatal("expected error for a caller operating on another person's board")
 	}
@@ -305,7 +305,7 @@ func TestItemSvc_TranInv2Slot_TeacherOtherBoardForbidden(t *testing.T) {
 func TestItemSvc_TranSlot2Inv_ClearsSlotAndAddsToInv(t *testing.T) {
 	s, r := itemSvc(model.RoleTeacher, allowAll())
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), "testuser", 0)
+	status, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("testuser"), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestItemSvc_TranSlot2Inv_ClearsSlotAndAddsToInv(t *testing.T) {
 func TestItemSvc_TranSlot2Inv_NonExistentSlot(t *testing.T) {
 	s, _ := itemSvc(model.RoleTeacher, allowAll())
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), "testuser", 99)
+	status, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("testuser"), 99)
 	if err == nil {
 		t.Fatal("expected error for non-existent slot")
 	}
@@ -334,7 +334,7 @@ func TestItemSvc_TranSlot2Inv_NonExistentSlot(t *testing.T) {
 
 func TestItemSvc_TranSlot2Inv_InvalidToken(t *testing.T) {
 	s, _ := newItemSvc(t)
-	status, err := s.TranSlot2Inv("bad.token", "testuser", 0)
+	status, err := s.TranSlot2Inv("bad.token", mock.IDFor("testuser"), 0)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -347,7 +347,7 @@ func TestItemSvc_TranSlot2Inv_BrokenSlotRejected(t *testing.T) {
 	s, r := itemSvc(model.RoleTeacher, allowAll())
 	r.Slot[2] = -3 // broken item 3
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), "testuser", 2)
+	status, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("testuser"), 2)
 	if err == nil {
 		t.Fatal("expected error returning a broken item")
 	}
@@ -359,7 +359,7 @@ func TestItemSvc_TranSlot2Inv_BrokenSlotRejected(t *testing.T) {
 func TestItemSvc_TranSlot2Inv_StudentOwnBoardAllowed(t *testing.T) {
 	s, r := newItemSvcAs(model.RoleStudent)
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), "testuser", 0)
+	status, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("testuser"), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestItemSvc_TranSlot2Inv_StudentOwnBoardAllowed(t *testing.T) {
 func TestItemSvc_TranSlot2Inv_StudentOtherBoardForbidden(t *testing.T) {
 	s, _ := newItemSvcAs(model.RoleStudent)
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), "other", 0)
+	status, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("other"), 0)
 	if err == nil {
 		t.Fatal("expected error for student operating on another person's board")
 	}
@@ -389,7 +389,7 @@ func TestItemSvc_TranSlot2Inv_StudentBlockedInQuiz(t *testing.T) {
 	setStateUntil(model.StateQuiz2, time.Time{})
 	defer setStateUntil(model.StateNormal, time.Time{})
 
-	status, err := s.TranSlot2Inv(validAccessToken(t), "testuser", 0)
+	status, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("testuser"), 0)
 	if err == nil {
 		t.Fatal("expected error for student during QUIZ")
 	}

@@ -8,47 +8,50 @@ import (
 	"gb-api/internal/model"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type StudentRepo interface {
-	CreateStudent(id uint, name, profilePicURL string) error
-	UpdateStudent(id uint, name, profilePicURL string) error
+	CreateStudent(name, profilePicURL string) (model.Student, error)
+	UpdateStudent(id uint, name, profilePicURL string) (model.Student, error)
 	GetStudent(id uint) (model.Student, error)
 	GetAllStudents() ([]model.Student, error)
+	ExistingStudentIDs(ids []uint) (map[uint]bool, error)
 	DeleteStudent(id uint) error
 }
 
 type studentRepo struct{}
 
-// CreateStudent inserts a student under the client-supplied id, which is the
-// primary key. It returns ErrStudentExists if that id is already taken.
-func (_ *studentRepo) CreateStudent(id uint, name, profilePicURL string) error {
+func (_ *studentRepo) CreateStudent(name, profilePicURL string) (model.Student, error) {
 	ctx := context.Background()
-	_, err := pool.Exec(ctx,
-		`INSERT INTO students (id, name, profile_pic_url) VALUES ($1, $2, $3)`,
-		id, name, profilePicURL,
-	)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
-		return apperr.ErrStudentExists
+	var s model.Student
+	err := pool.QueryRow(ctx,
+		`INSERT INTO students (name, profile_pic_url) VALUES ($1, $2)
+		 RETURNING id, name, profile_pic_url`,
+		name, profilePicURL,
+	).Scan(&s.StudentID, &s.Name, &s.ProfilePicURL)
+	if err != nil {
+		return model.Student{}, err
 	}
-	return err
+	return s, nil
 }
 
-func (_ *studentRepo) UpdateStudent(id uint, name, profilePicURL string) error {
+// UpdateStudent updates a student and returns the updated row; ErrStudentNotFound
+// when no student has that id.
+func (_ *studentRepo) UpdateStudent(id uint, name, profilePicURL string) (model.Student, error) {
 	ctx := context.Background()
-	tag, err := pool.Exec(ctx,
-		`UPDATE students SET name = $2, profile_pic_url = $3 WHERE id = $1`,
+	var s model.Student
+	err := pool.QueryRow(ctx,
+		`UPDATE students SET name = $2, profile_pic_url = $3 WHERE id = $1
+		 RETURNING id, name, profile_pic_url`,
 		id, name, profilePicURL,
-	)
+	).Scan(&s.StudentID, &s.Name, &s.ProfilePicURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Student{}, apperr.ErrStudentNotFound
+	}
 	if err != nil {
-		return err
+		return model.Student{}, err
 	}
-	if tag.RowsAffected() == 0 {
-		return apperr.ErrStudentNotFound
-	}
-	return nil
+	return s, nil
 }
 
 func (_ *studentRepo) GetStudent(id uint) (model.Student, error) {
@@ -84,8 +87,29 @@ func (_ *studentRepo) GetAllStudents() ([]model.Student, error) {
 	return students, rows.Err()
 }
 
-// DeleteStudent removes a student. Roster references are removed by the
-// user_students FK ON DELETE CASCADE.
+// ExistingStudentIDs returns the subset of ids that exist
+func (_ *studentRepo) ExistingStudentIDs(ids []uint) (map[uint]bool, error) {
+	ctx := context.Background()
+	arg := make([]int64, len(ids))
+	for i, id := range ids {
+		arg[i] = int64(id)
+	}
+	rows, err := pool.Query(ctx, `SELECT id FROM students WHERE id = ANY($1)`, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[uint]bool, len(ids))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[uint(id)] = true
+	}
+	return out, rows.Err()
+}
+
 func (_ *studentRepo) DeleteStudent(id uint) error {
 	ctx := context.Background()
 	tag, err := pool.Exec(ctx, `DELETE FROM students WHERE id = $1`, id)

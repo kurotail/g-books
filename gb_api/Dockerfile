@@ -9,7 +9,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Build the server
-COPY . .
+COPY cmd ./cmd
+COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/server ./cmd/server
 
 # Staged empty uploads dir, copied into the runtime image so the named volume

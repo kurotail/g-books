@@ -2,18 +2,18 @@ package model
 
 // Pointers distinguish a missing field from a valid zero value (slot 0 exists).
 type QueryItemRequest struct {
-	Username *string `json:"username"`
+	UserID *uint `json:"user_id"`
 }
 
 type TranInv2SlotRequest struct {
-	Username *string `json:"username"`
-	ItemID   *uint   `json:"item_id"`
-	SlotID   *uint   `json:"slot_id"`
+	UserID *uint `json:"user_id"`
+	ItemID *uint `json:"item_id"`
+	SlotID *uint `json:"slot_id"`
 }
 
 type TranSlot2InvRequest struct {
-	Username *string `json:"username"`
-	SlotID   *uint   `json:"slot_id"`
+	UserID *uint `json:"user_id"`
+	SlotID *uint `json:"slot_id"`
 }
 
 // Item is a row in the items table: a unique item instance with a Type (which the
@@ -22,6 +22,13 @@ type Item struct {
 	ItemID     uint
 	Type       uint
 	QuestionID uint
+}
+
+// SlotItem is a slotted item hydrated from user_slots joined to items: the item
+// itself plus whether the slot holds it broken.
+type SlotItem struct {
+	Item
+	Broken bool
 }
 
 // ItemView is one owned item as returned by the query endpoint. For the restricted
@@ -41,7 +48,7 @@ type SlotView struct {
 }
 
 type ItemsResponse struct {
-	Username  string            `json:"username"`
+	UserID    uint              `json:"user_id"`
 	Inventory []ItemView        `json:"inventory"`
 	Slots     map[uint]SlotView `json:"slots"`
 }

@@ -1,10 +1,12 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"gb-api/internal/config"
+	apperr "gb-api/internal/error"
 	"gb-api/internal/model"
 	"gb-api/internal/repo"
 
@@ -33,8 +35,11 @@ func getCaller(r repo.UserRepo, accessToken string) (*model.User, int, error) {
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
 	}
-	caller, err := r.GetUser(claims.Username)
+	caller, err := r.GetUserByID(claims.UserID)
 	if err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return nil, http.StatusUnauthorized, fmt.Errorf("使用者不存在")
+		}
 		return nil, http.StatusInternalServerError, err
 	}
 	return &caller, http.StatusOK, nil

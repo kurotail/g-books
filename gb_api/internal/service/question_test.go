@@ -25,7 +25,12 @@ func newQuestionSvc(role uint) (*QuestionSvc, *mock.QuestionRepo) {
 // its item repo.
 func newQuizSvc(role, buildingID uint, difficultyType map[uint][]uint, questions map[uint]model.Question) (*QuestionSvc, *mock.QuestionRepo, *mock.ItemRepo) {
 	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}, Questions: questions}
-	users := &mock.AuthRepo{Roles: map[string]uint{"u": role}, Buildings: map[string]uint{"u": buildingID}}
+	// "victim" is the attack-target user the QUIZ2 tests aim at; it must exist as a
+	// real user for the username->id resolution to find its slots.
+	users := &mock.AuthRepo{
+		Roles:     map[string]uint{"u": role, "victim": model.RoleStudent},
+		Buildings: map[string]uint{"u": buildingID},
+	}
 	buildings := &mock.BuildingRepo{Buildings: map[uint]model.Building{1: {ID: 1, DifficultyType: difficultyType}}}
 	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
 	return NewQuestionSvc(r, users, buildings, items, items, &mock.STTRepo{}), r, items
@@ -36,7 +41,7 @@ func idx(i uint) json.RawMessage { return model.IndexAnswer(i).Data }
 
 func accessTokenFor(t *testing.T, username string) string {
 	t.Helper()
-	tok, err := newTestAuthSvc().newAccessToken(username)
+	tok, err := newTestAuthSvc().newAccessToken(mock.IDFor(username))
 	if err != nil {
 		t.Fatalf("failed to mint access token: %v", err)
 	}
@@ -83,7 +88,7 @@ func TestQuestionSvc_GenerateItem_Succeeds(t *testing.T) {
 		t.Errorf("expected one created item, got %d", len(items.Items))
 	}
 	sess := r.Sessions[r.Created]
-	if sess.Kind != model.KindItem || sess.ItemID == 0 || sess.Username != "u" {
+	if sess.Kind != model.KindItem || sess.ItemID == 0 || sess.UserID != mock.IDFor("u") {
 		t.Errorf("expected a KindItem session for user u with an item, got %+v", sess)
 	}
 }
@@ -188,7 +193,7 @@ func TestQuestionSvc_GenerateTarget_AttackValid(t *testing.T) {
 	items.Slot[0] = 7 // target "victim" slot 0 holds normal item 7
 	items.Items[7] = model.Item{ItemID: 7, Type: 10, QuestionID: 5}
 
-	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), "victim", 0)
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("victim"), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,7 +201,7 @@ func TestQuestionSvc_GenerateTarget_AttackValid(t *testing.T) {
 		t.Fatalf("expected 200, got %d", status)
 	}
 	sess := r.Sessions[r.Created]
-	if sess.Kind != model.KindTarget || sess.Target == nil || sess.Target.Username != "victim" {
+	if sess.Kind != model.KindTarget || sess.Target == nil || sess.Target.UserID != mock.IDFor("victim") {
 		t.Errorf("expected a KindTarget session at user victim, got %+v", sess)
 	}
 }
@@ -206,7 +211,7 @@ func TestQuestionSvc_GenerateTarget_RepairValid(t *testing.T) {
 	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = -7 // own slot 0 holds a broken item
 
-	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), "u", 0)
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("u"), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -220,7 +225,7 @@ func TestQuestionSvc_GenerateTarget_InvalidTarget(t *testing.T) {
 	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = -7 // broken item on ANOTHER person's board — neither attack nor repair
 
-	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), "victim", 0)
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("victim"), 0)
 	if err == nil {
 		t.Fatal("expected error for an invalid target")
 	}
@@ -233,7 +238,7 @@ func TestQuestionSvc_GenerateTarget_EmptySlot(t *testing.T) {
 	useState(t, model.StateQuiz2)
 	s, _, _ := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 
-	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), "victim", 0)
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("victim"), 0)
 	if err == nil {
 		t.Fatal("expected error for an empty slot")
 	}
@@ -247,7 +252,7 @@ func TestQuestionSvc_GenerateTarget_StudentForbiddenOutsideQuiz(t *testing.T) {
 	items.Slot[0] = 7
 	items.Items[7] = model.Item{ItemID: 7, QuestionID: 5}
 
-	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), "victim", 0)
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("victim"), 0)
 	if err == nil {
 		t.Fatal("expected error for student outside QUIZ state")
 	}
@@ -572,7 +577,7 @@ func TestQuestionSvc_Answer_ItemCorrectGrantsItem(t *testing.T) {
 	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
 	r.Sessions["sid"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(time.Minute),
-		Username:  "u",
+		UserID:    mock.IDFor("u"),
 		Kind:      model.KindItem,
 		ItemID:    42,
 		Question:  model.Question{Answer: model.IndexAnswer(1)},
@@ -604,7 +609,7 @@ func TestQuestionSvc_Answer_ItemWrongGrantsNothing(t *testing.T) {
 	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
 	r.Sessions["sid"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(time.Minute),
-		Username:  "u",
+		UserID:    mock.IDFor("u"),
 		Kind:      model.KindItem,
 		ItemID:    42,
 		Question:  model.Question{Answer: model.IndexAnswer(1)},
@@ -629,9 +634,9 @@ func TestQuestionSvc_Answer_TargetAttackBreaks(t *testing.T) {
 	items.Slot[0] = 7 // "victim" board, normal item
 	r.Sessions["sid"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(time.Minute),
-		Username:  "u",
+		UserID:    mock.IDFor("u"),
 		Kind:      model.KindTarget,
-		Target:    &model.Target{Username: "victim", SlotID: 0},
+		Target:    &model.Target{UserID: mock.IDFor("victim"), SlotID: 0},
 		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
@@ -654,9 +659,9 @@ func TestQuestionSvc_Answer_TargetAttackAlreadyBrokenFails(t *testing.T) {
 	items.Slot[0] = -7 // already broken
 	r.Sessions["sid"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(time.Minute),
-		Username:  "u",
+		UserID:    mock.IDFor("u"),
 		Kind:      model.KindTarget,
-		Target:    &model.Target{Username: "victim", SlotID: 0},
+		Target:    &model.Target{UserID: mock.IDFor("victim"), SlotID: 0},
 		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
@@ -679,9 +684,9 @@ func TestQuestionSvc_Answer_TargetRepairFixes(t *testing.T) {
 	items.Slot[0] = -7 // own broken item
 	r.Sessions["sid"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(time.Minute),
-		Username:  "u",
+		UserID:    mock.IDFor("u"),
 		Kind:      model.KindTarget,
-		Target:    &model.Target{Username: "u", SlotID: 0},
+		Target:    &model.Target{UserID: mock.IDFor("u"), SlotID: 0},
 		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
@@ -704,9 +709,9 @@ func TestQuestionSvc_Answer_TargetWrongNoAction(t *testing.T) {
 	items.Slot[0] = 7
 	r.Sessions["sid"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(time.Minute),
-		Username:  "u",
+		UserID:    mock.IDFor("u"),
 		Kind:      model.KindTarget,
-		Target:    &model.Target{Username: "victim", SlotID: 0},
+		Target:    &model.Target{UserID: mock.IDFor("victim"), SlotID: 0},
 		Question:  model.Question{Answer: model.IndexAnswer(1)},
 	}
 
@@ -780,7 +785,7 @@ func TestQuestionSvc_Answer_VoiceResponseGradesViaSTT(t *testing.T) {
 	// Transcript "Eighteen" matches the expected "eighteen" case-insensitively.
 	r.Sessions["sid"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(time.Minute),
-		Username:  "u",
+		UserID:    mock.IDFor("u"),
 		Kind:      model.KindItem,
 		ItemID:    42,
 		Question:  model.Question{Answer: model.VoiceAnswer("eighteen")},
@@ -805,7 +810,7 @@ func TestQuestionSvc_Answer_VoiceResponseGradesViaSTT(t *testing.T) {
 	stt.Transcript = "nineteen"
 	r.Sessions["sid2"] = model.QuestionSession{
 		ExpiresAt: time.Now().Add(time.Minute),
-		Username:  "u",
+		UserID:    mock.IDFor("u"),
 		Kind:      model.KindItem,
 		ItemID:    43,
 		Question:  model.Question{Answer: model.VoiceAnswer("eighteen")},

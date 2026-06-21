@@ -16,9 +16,11 @@ func newMockAuthRepo() *mock.AuthRepo {
 	}
 }
 
+func uptr(u uint) *uint { return &u }
+
 func tokenFor(t *testing.T, username string) string {
 	t.Helper()
-	tok, err := newTestAuthSvc().newAccessToken(username)
+	tok, err := newTestAuthSvc().newAccessToken(mock.IDFor(username))
 	if err != nil {
 		t.Fatalf("failed to mint access token: %v", err)
 	}
@@ -94,6 +96,32 @@ func TestAuthSvc_SetUsername_Success(t *testing.T) {
 	}
 	if _, ok := r.Roles["user"]; ok {
 		t.Error("expected old name to be gone")
+	}
+}
+
+// TestAuthSvc_TokenSurvivesRename verifies the whole point of id-based tokens: an
+// access token minted before a username change still authorizes afterward, with no
+// re-login, because it carries the user's immutable id rather than the name.
+func TestAuthSvc_TokenSurvivesRename(t *testing.T) {
+	r := newMockAuthRepo()
+	s := NewAuthSvc(r, r)
+
+	token := tokenFor(t, "user") // minted before the rename
+
+	if status, err := s.SetUsername(token, "renamed"); err != nil || status != http.StatusOK {
+		t.Fatalf("rename failed: status=%d err=%v", status, err)
+	}
+
+	// Reuse the SAME token on an authenticated self-operation.
+	status, err := s.SetProfilePic(token, nil, "/images/after.png")
+	if err != nil {
+		t.Fatalf("expected token to remain valid after rename, got error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200 after rename, got %d", status)
+	}
+	if r.Pics["renamed"] != "/images/after.png" {
+		t.Errorf("expected pic set on renamed account, got %q", r.Pics["renamed"])
 	}
 }
 
@@ -274,14 +302,14 @@ func newProfilePicAuthSvc() *AuthSvc {
 func TestAuthSvc_SetProfilePic_SelfSucceeds(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.SetProfilePic(tokenFor(t, "alice"), "", "/images/alice.png")
+	status, err := s.SetProfilePic(tokenFor(t, "alice"), nil, "/images/alice.png")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	u, _ := s.users.GetUser("alice")
+	u, _ := s.users.GetUserByUsername("alice")
 	if u.ProfilePicURL != "/images/alice.png" {
 		t.Errorf("expected alice pic %q, got %q", "/images/alice.png", u.ProfilePicURL)
 	}
@@ -290,7 +318,7 @@ func TestAuthSvc_SetProfilePic_SelfSucceeds(t *testing.T) {
 func TestAuthSvc_SetProfilePic_StudentCannotSetOther(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.SetProfilePic(tokenFor(t, "alice"), "bob", "/images/x.png")
+	status, err := s.SetProfilePic(tokenFor(t, "alice"), uptr(mock.IDFor("bob")), "/images/x.png")
 	if err == nil {
 		t.Fatal("expected error for student targeting another user")
 	}
@@ -302,14 +330,14 @@ func TestAuthSvc_SetProfilePic_StudentCannotSetOther(t *testing.T) {
 func TestAuthSvc_SetProfilePic_TeacherSetsOther(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.SetProfilePic(tokenFor(t, "teacher"), "bob", "/images/bob.png")
+	status, err := s.SetProfilePic(tokenFor(t, "teacher"), uptr(mock.IDFor("bob")), "/images/bob.png")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	u, _ := s.users.GetUser("bob")
+	u, _ := s.users.GetUserByUsername("bob")
 	if u.ProfilePicURL != "/images/bob.png" {
 		t.Errorf("expected bob pic %q, got %q", "/images/bob.png", u.ProfilePicURL)
 	}
@@ -318,7 +346,7 @@ func TestAuthSvc_SetProfilePic_TeacherSetsOther(t *testing.T) {
 func TestAuthSvc_SetProfilePic_UnknownTarget(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.SetProfilePic(tokenFor(t, "teacher"), "nobody", "/images/x.png")
+	status, err := s.SetProfilePic(tokenFor(t, "teacher"), uptr(999999999), "/images/x.png")
 	if err == nil {
 		t.Fatal("expected error for unknown target user")
 	}
@@ -330,7 +358,7 @@ func TestAuthSvc_SetProfilePic_UnknownTarget(t *testing.T) {
 func TestAuthSvc_SetProfilePic_InvalidToken(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.SetProfilePic("bad.token", "", "/images/x.png")
+	status, err := s.SetProfilePic("bad.token", nil, "/images/x.png")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -342,14 +370,14 @@ func TestAuthSvc_SetProfilePic_InvalidToken(t *testing.T) {
 func TestAuthSvc_DeleteUser_TeacherDeletesStudent(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), "alice")
+	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), mock.IDFor("alice"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	if _, err := s.users.GetUser("alice"); err == nil {
+	if _, err := s.users.GetUserByUsername("alice"); err == nil {
 		t.Error("expected alice to be deleted")
 	}
 }
@@ -357,7 +385,7 @@ func TestAuthSvc_DeleteUser_TeacherDeletesStudent(t *testing.T) {
 func TestAuthSvc_DeleteUser_UnknownTarget(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), "nobody")
+	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), 999999999)
 	if err == nil {
 		t.Fatal("expected error for unknown user")
 	}
@@ -369,7 +397,7 @@ func TestAuthSvc_DeleteUser_UnknownTarget(t *testing.T) {
 func TestAuthSvc_DeleteUser_StudentForbidden(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.DeleteUser(accessTokenFor(t, "alice"), "bob")
+	status, err := s.DeleteUser(accessTokenFor(t, "alice"), mock.IDFor("bob"))
 	if err == nil {
 		t.Fatal("expected error for student caller")
 	}
@@ -381,14 +409,14 @@ func TestAuthSvc_DeleteUser_StudentForbidden(t *testing.T) {
 func TestAuthSvc_DeleteUser_SelfForbidden(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), "teacher")
+	status, err := s.DeleteUser(accessTokenFor(t, "teacher"), mock.IDFor("teacher"))
 	if err == nil {
 		t.Fatal("expected error for self-deletion")
 	}
 	if status != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", status)
 	}
-	if _, err := s.users.GetUser("teacher"); err != nil {
+	if _, err := s.users.GetUserByUsername("teacher"); err != nil {
 		t.Error("expected teacher to still exist after blocked self-deletion")
 	}
 }
@@ -396,7 +424,7 @@ func TestAuthSvc_DeleteUser_SelfForbidden(t *testing.T) {
 func TestAuthSvc_DeleteUser_InvalidToken(t *testing.T) {
 	s := newProfilePicAuthSvc()
 
-	status, err := s.DeleteUser("bad.token", "alice")
+	status, err := s.DeleteUser("bad.token", mock.IDFor("alice"))
 	if err == nil {
 		t.Fatal("expected error")
 	}

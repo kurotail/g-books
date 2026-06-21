@@ -27,7 +27,7 @@ func newStudentSvc() (*StudentSvc, *mock.StudentRepo) {
 func TestStudentSvc_Create_TeacherSucceeds(t *testing.T) {
 	s, r := newStudentSvc()
 
-	data, status, err := s.Create(tokenFor(t, "teacher"), 42, "Bob", "/images/b.jpg")
+	data, status, err := s.Create(tokenFor(t, "teacher"), "Bob", "/images/b.jpg")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,30 +39,18 @@ func TestStudentSvc_Create_TeacherSucceeds(t *testing.T) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if resp.StudentID != 42 || resp.Name != "Bob" || resp.ProfilePicURL != "/images/b.jpg" {
+	if resp.StudentID == 0 || resp.Name != "Bob" || resp.ProfilePicURL != "/images/b.jpg" {
 		t.Errorf("unexpected response: %+v", resp)
 	}
-	if stored := r.Students[42]; stored.Name != "Bob" {
+	if stored := r.Students[resp.StudentID]; stored.Name != "Bob" {
 		t.Errorf("store not updated: %+v", stored)
-	}
-}
-
-func TestStudentSvc_Create_DuplicateConflict(t *testing.T) {
-	s, _ := newStudentSvc()
-
-	_, status, err := s.Create(tokenFor(t, "teacher"), 1, "Dup", "")
-	if err == nil {
-		t.Fatal("expected error for duplicate student id")
-	}
-	if status != http.StatusConflict {
-		t.Fatalf("expected 409, got %d", status)
 	}
 }
 
 func TestStudentSvc_Create_StudentForbidden(t *testing.T) {
 	s, _ := newStudentSvc()
 
-	_, status, err := s.Create(tokenFor(t, "student"), 2, "Bob", "")
+	_, status, err := s.Create(tokenFor(t, "student"), "Bob", "")
 	if err == nil {
 		t.Fatal("expected error for student caller")
 	}
@@ -270,7 +258,7 @@ func newStudentSvcWithUsers() (*StudentSvc, *mock.AuthRepo) {
 func TestStudentSvc_SetStudents_PartialMultiStatus(t *testing.T) {
 	s, users := newStudentSvcWithUsers()
 
-	data, status, err := s.SetStudents(tokenFor(t, "teacher"), "teacher", []uint{1, 999, 2})
+	data, status, err := s.SetStudents(tokenFor(t, "teacher"), mock.IDFor("teacher"), []uint{1, 999, 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -301,7 +289,7 @@ func TestStudentSvc_SetStudents_PartialMultiStatus(t *testing.T) {
 func TestStudentSvc_SetStudents_StudentForbidden(t *testing.T) {
 	s, _ := newStudentSvcWithUsers()
 
-	_, status, err := s.SetStudents(tokenFor(t, "student"), "teacher", []uint{1})
+	_, status, err := s.SetStudents(tokenFor(t, "student"), mock.IDFor("teacher"), []uint{1})
 	if err == nil {
 		t.Fatal("expected error for student caller")
 	}
@@ -313,7 +301,7 @@ func TestStudentSvc_SetStudents_StudentForbidden(t *testing.T) {
 func TestStudentSvc_SetStudents_UnknownTarget(t *testing.T) {
 	s, _ := newStudentSvcWithUsers()
 
-	_, status, err := s.SetStudents(tokenFor(t, "teacher"), "ghost", []uint{1})
+	_, status, err := s.SetStudents(tokenFor(t, "teacher"), mock.IDFor("ghost"), []uint{1})
 	if err == nil {
 		t.Fatal("expected error for unknown target user")
 	}
@@ -325,7 +313,7 @@ func TestStudentSvc_SetStudents_UnknownTarget(t *testing.T) {
 func TestStudentSvc_Create_InvalidToken(t *testing.T) {
 	s, _ := newStudentSvc()
 
-	_, status, err := s.Create("bad.token", 2, "Bob", "")
+	_, status, err := s.Create("bad.token", "Bob", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

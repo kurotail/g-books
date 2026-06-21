@@ -132,7 +132,7 @@ func (_ *questionRepo) GetQuestion(id uint) (model.Question, bool, error) {
 
 func (_ *questionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord, error) {
 	ctx := context.Background()
-	records := make([]model.QuestionRecord, 0, len(qs))
+	batch := &pgx.Batch{}
 	for _, q := range qs {
 		content, err := json.Marshal(q.Content)
 		if err != nil {
@@ -142,12 +142,20 @@ func (_ *questionRepo) AddQuestions(qs []model.Question) ([]model.QuestionRecord
 		if err != nil {
 			return nil, err
 		}
-		var id uint
-		if err := pool.QueryRow(ctx,
+		batch.Queue(
 			`INSERT INTO questions (content, answer, difficulty, area)
 			 VALUES ($1, $2, $3, $4) RETURNING id`,
 			string(content), string(answer), q.Difficulty, q.Area,
-		).Scan(&id); err != nil {
+		)
+	}
+
+	br := pool.SendBatch(ctx, batch)
+	defer br.Close()
+
+	records := make([]model.QuestionRecord, 0, len(qs))
+	for _, q := range qs {
+		var id uint
+		if err := br.QueryRow().Scan(&id); err != nil {
 			return nil, err
 		}
 		records = append(records, toRecord(id, q))
