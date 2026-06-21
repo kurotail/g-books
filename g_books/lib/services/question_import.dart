@@ -2,12 +2,18 @@
 /// `POST /api/question/upload` 的 payload。純邏輯、無 IO，App 內 ZIP 匯入器與 seed
 /// 腳本（seed/seed_questions.py）共用同一套規則。
 ///
+/// 答案可有多個正解（後端 answer.data 為「非空陣列」；學生只需答對其一）。同一格內以
+/// 直線 `|` 分隔多個正解，單一答案維持原樣即可（會變成 1 元素陣列）。
+///
 /// 題型判斷：
-///   - 題目欄是音檔路徑       → 語音敘述題（description.type = audio）
-///   - A~D 皆空、答案是音檔   → 語音作答題（answer.type = voice_response，data = 參考音檔 URL）
-///                              ⚠️ 後端目前以「STT 文字 vs 儲存文字」評分，參考音檔評分待後端支援。
-///   - A~D 有值、答案是 ABCD  → 選擇題（answer.type = index）；選項若為音檔則以其 URL 當選項字串
-///                              （後端選項型別仍是 text，不需改後端；學生端 UI 需自行渲染成播放鈕）。
+///   - 題目欄是音檔路徑   → 語音敘述題（description.type = audio）
+///   - A~D 皆空           → 語音作答題（answer.type = voice_response）；答案欄為可接受的
+///                          「辨識文字」清單（後端以 STT 轉文字後比對，不分大小寫）。
+///                          ⚠️ App 內匯入不做 STT，答案需直接填文字；若要把參考音檔自動
+///                          轉成文字，請走 seed/seed_questions.py（具 STT 連線）。
+///   - A~D 有值           → 選擇題（answer.type = index）；答案欄為一或多個字母（如 A 或
+///                          A|C）。選項若為音檔則以其 URL 當選項字串（後端選項型別仍是
+///                          text，不需改後端；學生端 UI 需自行渲染成播放鈕）。
 library;
 
 /// 採集 / 平時（NORMAL・QUIZ1）。
@@ -33,6 +39,10 @@ bool isAudioPath(String value) {
   if (dot < 0) return false;
   return _audioExts.contains(v.substring(dot));
 }
+
+/// 把答案欄拆成多個正解（以 `|` 分隔），去除前後空白與空項。
+List<String> splitAnswers(String cell) =>
+    cell.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
 
 /// 解析後的一列題目（[area] 由 [assignAreas] 填入）。
 class QuestRow {
@@ -97,7 +107,9 @@ QuestParseResult parseQuestCsv(String text) {
       difficulty: diff,
       line: line,
     ));
-    for (final v in [prompt, ...options, answer]) {
+    // 只有題目敘述與選項可能是「需上傳的音檔」；答案欄是字母（選擇題）或辨識文字
+    // （語音作答題），不再當音檔上傳。
+    for (final v in [prompt, ...options]) {
       if (isAudioPath(v)) audioRefs.add(v.trim());
     }
   }
@@ -144,18 +156,31 @@ Map<String, dynamic> buildQuestionPayload(
   final Map<String, dynamic> answer;
 
   if (nonempty.isEmpty) {
-    // 語音作答題：答案是參考音檔。
-    if (!isAudioPath(row.answer)) {
-      throw const FormatException('無選項且答案不是音檔，無法判斷題型');
+    // 語音作答題：答案是一個或多個可接受的「辨識文字」（以 | 分隔）。
+    final texts = splitAnswers(row.answer);
+    if (texts.isEmpty) {
+      throw const FormatException('語音作答題（無選項）缺少答案文字');
     }
-    answer = {'type': 'voice_response', 'data': resolveAudioUrl(row.answer)};
+    // App 內匯入沒有 STT 連線，無法把參考音檔轉成文字；請改走 seed 腳本。
+    if (texts.any(isAudioPath)) {
+      throw const FormatException(
+          '語音作答題的答案需為辨識文字；參考音檔請改用 seed/seed_questions.py 轉檔匯入');
+    }
+    answer = {'type': 'voice_response', 'data': texts};
   } else {
-    // 選擇題：答案是 ABCD；選項若為音檔則以其 URL 當選項字串。
-    final ans = row.answer.toUpperCase();
+    // 選擇題：答案是一或多個字母（以 | 分隔）；選項若為音檔則以其 URL 當選項字串。
     final labels = [for (final (l, _) in nonempty) l];
-    final idx = labels.indexOf(ans);
-    if (idx < 0) {
-      throw FormatException('答案「${row.answer}」不在現有選項 $labels 中');
+    final tokens = splitAnswers(row.answer).map((t) => t.toUpperCase()).toList();
+    if (tokens.isEmpty) {
+      throw const FormatException('選擇題缺少答案');
+    }
+    final idxs = <int>[];
+    for (final t in tokens) {
+      final idx = labels.indexOf(t);
+      if (idx < 0) {
+        throw FormatException('答案「$t」不在現有選項 $labels 中');
+      }
+      if (!idxs.contains(idx)) idxs.add(idx);
     }
     content['choices'] = {
       'type': 'text',
@@ -163,7 +188,7 @@ Map<String, dynamic> buildQuestionPayload(
         for (final (_, v) in nonempty) isAudioPath(v) ? resolveAudioUrl(v) : v,
       ],
     };
-    answer = {'type': 'index', 'data': idx};
+    answer = {'type': 'index', 'data': idxs};
   }
 
   return {

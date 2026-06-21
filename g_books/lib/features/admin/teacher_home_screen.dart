@@ -1469,7 +1469,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
       }
       final sb = StringBuffer('成功匯入 $created / ${payloads.length} 題');
       if (voiceCount > 0) {
-        sb.write('\n（含 $voiceCount 題語音作答；後端尚未支援以參考音檔自動評分）');
+        sb.write('\n（含 $voiceCount 題語音作答；以辨識文字比對評分）');
       }
       if (mounted) setState(() => _importResult = sb.toString());
     } catch (e) {
