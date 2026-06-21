@@ -122,7 +122,11 @@ func (h *StudentHandler) SetStudents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.SetStudents(token, req.Username, req.StudentIDs)
+	if req.UserID == nil || *req.UserID == 0 {
+		http.Error(w, "缺少 user_id", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.SetStudents(token, *req.UserID, req.StudentIDs)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

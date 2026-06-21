@@ -58,7 +58,7 @@ func (s *ItemSvc) slotAllowsType(u *model.User, slotID, itemType uint) (bool, er
 	return false, nil
 }
 
-func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, error) {
+func (s *ItemSvc) QueryItems(accessToken string, userID uint) ([]byte, int, error) {
 	claims, err := validateAccessToken(accessToken)
 	if err != nil {
 		return nil, http.StatusUnauthorized, err
@@ -70,15 +70,17 @@ func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, 
 		}
 		return nil, http.StatusInternalServerError, err
 	}
-	full := caller.Role >= model.RoleTeacher || caller.Username == username
+	full := caller.Role >= model.RoleTeacher || caller.ID == userID
 
-	// Resolve the queried user to an id; an unknown username is a 404.
-	targetID, status, err := resolveUserID(s.users, username)
-	if err != nil {
-		return nil, status, err
+	// The queried user must exist; an unknown user_id is a 404.
+	if _, err := s.users.GetUserByID(userID); err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return nil, http.StatusNotFound, fmt.Errorf("使用者不存在")
+		}
+		return nil, http.StatusInternalServerError, err
 	}
 
-	invIDs, err := s.inv.QueryInv(targetID)
+	invIDs, err := s.inv.QueryInv(userID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -95,7 +97,7 @@ func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, 
 		}
 	}
 
-	slotMap, err := s.inv.QuerySlot(targetID)
+	slotMap, err := s.inv.QuerySlot(userID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -116,7 +118,7 @@ func (s *ItemSvc) QueryItems(accessToken string, username string) ([]byte, int, 
 		slots[slotID] = slotView(it, broken, full)
 	}
 
-	data, err := json.Marshal(model.ItemsResponse{Username: username, Inventory: inventory, Slots: slots})
+	data, err := json.Marshal(model.ItemsResponse{UserID: userID, Inventory: inventory, Slots: slots})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -140,12 +142,12 @@ func slotView(it model.Item, broken, full bool) model.SlotView {
 // TranInv2Slot moves an owned item from the user's inventory into a slot. The
 // item's Type must be allowed in the slot by the user's building. A normal item
 // already in the slot is swapped back into the inventory; a broken one blocks the move.
-func (s *ItemSvc) TranInv2Slot(accessToken string, username string, itemID, slotID uint) (int, error) {
+func (s *ItemSvc) TranInv2Slot(accessToken string, userID, itemID, slotID uint) (int, error) {
 	caller, status, err := s.blockStudentQuiz2(s.users, accessToken)
 	if err != nil {
 		return status, err
 	}
-	if caller.Username != username {
+	if caller.ID != userID {
 		return http.StatusForbidden, fmt.Errorf("無法操作其他人的物品")
 	}
 	has, err := s.ownsItem(caller.ID, itemID)
@@ -192,12 +194,12 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, username string, itemID, slot
 }
 
 // TranSlot2Inv returns the item held in a slot to the user's inventory.
-func (s *ItemSvc) TranSlot2Inv(accessToken string, username string, slotID uint) (int, error) {
+func (s *ItemSvc) TranSlot2Inv(accessToken string, userID, slotID uint) (int, error) {
 	caller, status, err := s.blockStudentQuiz2(s.users, accessToken)
 	if err != nil {
 		return status, err
 	}
-	if caller.Username != username {
+	if caller.ID != userID {
 		return http.StatusForbidden, fmt.Errorf("無法操作其他人的物品")
 	}
 	slot, err := s.inv.QuerySlot(caller.ID)

@@ -55,15 +55,15 @@ func (h *QuestionHandler) GenerateTarget(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	if req.TargetUsername == nil || *req.TargetUsername == "" {
-		http.Error(w, "缺少 target_username", http.StatusBadRequest)
+	if req.TargetUserID == nil || *req.TargetUserID == 0 {
+		http.Error(w, "缺少 target_user_id", http.StatusBadRequest)
 		return
 	}
 	if req.TargetSlotID == nil {
 		http.Error(w, "缺少 target_slot_id", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.GenerateTarget(token, *req.TargetUsername, *req.TargetSlotID)
+	data, status, err := h.svc.GenerateTarget(token, *req.TargetUserID, *req.TargetSlotID)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

@@ -17,7 +17,7 @@ type Student struct {
 // SetStudentsRequest is the body of POST /api/users/students: it replaces the
 // target user's student roster with StudentIDs.
 type SetStudentsRequest struct {
-	Username   string `json:"username"` // optional; empty = caller's own
+	UserID     *uint  `json:"user_id"` // required: the user whose roster to set
 	StudentIDs []uint `json:"student_ids"`
 }
 

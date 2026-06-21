@@ -175,6 +175,17 @@ func tokens(body string) (access, refresh string) {
 
 func section(name string) { fmt.Printf("\n=== %s ===\n", name) }
 
+// idOf resolves a username to its numeric id via GET /api/users/{username}.
+// Returns 0 if not found.
+func idOf(access, username string) uint {
+	_, body := req("GET", "/api/users/"+username, access, nil)
+	var u struct {
+		ID uint `json:"id"`
+	}
+	json.Unmarshal([]byte(body), &u)
+	return u.ID
+}
+
 // userAccountChecks exercises profile-picture, username-rename, password-change,
 // and account-deletion against disposable accounts, so the teacher/student
 // tokens the later sections share are never invalidated along the way.
@@ -192,13 +203,15 @@ func userAccountChecks(adminAccess, adminUsername, teacherAccess, runID string) 
 	st, _ := req("POST", "/api/users/pfp", pfpAccess, map[string]any{"profile_pic_url": "/images/self.jpg"})
 	show("user sets own profile picture", st, 200, "")
 
-	st, body = req("POST", "/api/users/pfp", pfpAccess, map[string]any{"username": "anyone-else", "profile_pic_url": "/images/x.jpg"})
+	pfpID := idOf(adminAccess, pfpUser)
+
+	st, body = req("POST", "/api/users/pfp", pfpAccess, map[string]any{"user_id": 999999999, "profile_pic_url": "/images/x.jpg"})
 	show("user sets another user's picture (forbidden)", st, 403, body)
 
-	st, _ = req("POST", "/api/users/pfp", teacherAccess, map[string]any{"username": pfpUser, "profile_pic_url": "/images/teacher-set.jpg"})
+	st, _ = req("POST", "/api/users/pfp", teacherAccess, map[string]any{"user_id": pfpID, "profile_pic_url": "/images/teacher-set.jpg"})
 	show("teacher sets another user's picture", st, 200, "")
 
-	st, body = req("POST", "/api/users/pfp", teacherAccess, map[string]any{"username": "no-such-user-" + runID, "profile_pic_url": "/images/x.jpg"})
+	st, body = req("POST", "/api/users/pfp", teacherAccess, map[string]any{"user_id": 999999999, "profile_pic_url": "/images/x.jpg"})
 	show("set picture for unknown user (404)", st, 404, body)
 
 	// --- rename ---
@@ -246,21 +259,22 @@ func userAccountChecks(adminAccess, adminUsername, teacherAccess, runID string) 
 
 	// --- delete ---
 	req("POST", "/api/register", teacherAccess, map[string]any{"username": gone1, "password": "pw", "role": 0})
+	gone1ID := idOf(adminAccess, gone1)
 
-	st, body = req("DELETE", "/api/users/"+gone1, pAccess, nil)
+	st, body = req("DELETE", fmt.Sprintf("/api/users/%d", gone1ID), pAccess, nil)
 	show("student deletes a user (forbidden)", st, 403, body)
 
-	st, body = req("DELETE", "/api/users/"+gone1, adminAccess, nil)
+	st, body = req("DELETE", fmt.Sprintf("/api/users/%d", gone1ID), adminAccess, nil)
 	show("admin deletes a user", st, 200, body)
 
-	st, body = req("DELETE", "/api/users/"+gone1, adminAccess, nil)
+	st, body = req("DELETE", fmt.Sprintf("/api/users/%d", gone1ID), adminAccess, nil)
 	show("delete already-deleted user (404)", st, 404, body)
 
-	st, body = req("DELETE", "/api/users/"+adminUsername, adminAccess, nil)
+	st, body = req("DELETE", fmt.Sprintf("/api/users/%d", idOf(adminAccess, adminUsername)), adminAccess, nil)
 	show("admin tries to delete self (forbidden)", st, 403, body)
 
 	req("POST", "/api/register", teacherAccess, map[string]any{"username": gone2, "password": "pw", "role": 0})
-	st, body = req("DELETE", "/api/users/"+gone2, teacherAccess, nil)
+	st, body = req("DELETE", fmt.Sprintf("/api/users/%d", idOf(adminAccess, gone2)), teacherAccess, nil)
 	show("teacher deletes a user", st, 200, body)
 }
 
@@ -356,12 +370,12 @@ func studentChecks(adminAccess, studentAccess, rosterTarget string) {
 	show("update unknown student (404)", st, 404, body)
 
 	st, body = req("POST", "/api/users/students", adminAccess, map[string]any{
-		"username": rosterTarget, "student_ids": []uint{sid, 999999999},
+		"user_id": idOf(adminAccess, rosterTarget), "student_ids": []uint{sid, 999999999},
 	})
 	show("assign roster (207 multi-status)", st, 207, body)
 
 	st, body = req("POST", "/api/users/students", adminAccess, map[string]any{"student_ids": []uint{sid}})
-	show("assign roster missing username (rejected)", st, 400, body)
+	show("assign roster missing user_id (rejected)", st, 400, body)
 
 	st, body = req("DELETE", sidPath, adminAccess, nil)
 	show("admin deletes student", st, 200, body)
@@ -488,6 +502,9 @@ func questionPoolChecks(adminAccess, studentAccess string) {
 // teacher token bypasses every state gate; the student token is used to prove
 // the gates themselves (QUIZ1 for generate, QUIZ2 for target).
 func stateItemsQuestions(adminAccess, teacherAccess, teacherUsername, studentAccess, studentUsername string) {
+	teacherID := idOf(adminAccess, teacherUsername)
+	studentID := idOf(adminAccess, studentUsername)
+
 	st, body := req("GET", "/api/state", adminAccess, nil)
 	show("get state (default)", st, 200, body)
 
@@ -537,34 +554,34 @@ func stateItemsQuestions(adminAccess, teacherAccess, teacherUsername, studentAcc
 	item20 := ans.ItemID
 
 	// --- items ---
-	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": ""})
-	show("query items with empty username (rejected)", st, 400, body)
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{})
+	show("query items with missing user_id (rejected)", st, 400, body)
 
-	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": teacherUsername})
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"user_id": teacherID})
 	show("query own items (inventory + slots)", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": 0, "slot_id": 1})
+	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"user_id": teacherID, "item_id": 0, "slot_id": 1})
 	show("inv2slot with item_id 0 (rejected)", st, 400, body)
 
-	st, _ = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": item10, "slot_id": 1})
+	st, _ = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"user_id": teacherID, "item_id": item10, "slot_id": 1})
 	show("move type-10 item into allowed slot 1", st, 200, "")
 
-	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": teacherUsername})
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"user_id": teacherID})
 	show("items after inv2slot", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": item20, "slot_id": 1})
+	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"user_id": teacherID, "item_id": item20, "slot_id": 1})
 	show("move type-20 item into slot 1 (type not allowed)", st, 400, body)
 
-	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": 999999999, "slot_id": 1})
+	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"user_id": teacherID, "item_id": 999999999, "slot_id": 1})
 	show("move item not in inventory (rejected)", st, 400, body)
 
-	st, body = req("POST", "/api/item/slot2inv", teacherAccess, map[string]any{"username": teacherUsername, "slot_id": 1})
+	st, body = req("POST", "/api/item/slot2inv", teacherAccess, map[string]any{"user_id": teacherID, "slot_id": 1})
 	show("move slot 1 back to inventory", st, 200, body)
 
-	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": teacherUsername})
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"user_id": teacherID})
 	show("items after slot2inv (item restored)", st, 200, body)
 
-	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername})
+	st, body = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"user_id": teacherID})
 	show("inv2slot missing item_id/slot_id", st, 400, body)
 
 	// --- student generate, gated by QUIZ1 ---
@@ -584,34 +601,34 @@ func stateItemsQuestions(adminAccess, teacherAccess, teacherUsername, studentAcc
 	st, body = req("POST", "/api/question/answer", studentAccess, map[string]any{"session": q.Session, "answer": itemDiff1Answer})
 	show("student answers correctly -> item granted", st, 200, body)
 
-	st, body = req("POST", "/api/item", studentAccess, map[string]any{"username": studentUsername})
+	st, body = req("POST", "/api/item", studentAccess, map[string]any{"user_id": studentID})
 	show("student queries own items", st, 200, body)
 
 	// --- attack/repair flow (QUIZ2) ---
-	st, _ = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"username": teacherUsername, "item_id": item10, "slot_id": 1})
+	st, _ = req("POST", "/api/item/inv2slot", teacherAccess, map[string]any{"user_id": teacherID, "item_id": item10, "slot_id": 1})
 	show("re-slot the type-10 item for the attack/repair flow", st, 200, "")
 
 	st, _ = req("POST", "/api/state", adminAccess, map[string]any{"state": "QUIZ2"})
 	show("admin sets state QUIZ2", st, 200, "")
 
-	st, body = req("POST", "/api/question/target", studentAccess, map[string]any{"target_username": teacherUsername, "target_slot_id": 1})
+	st, body = req("POST", "/api/question/target", studentAccess, map[string]any{"target_user_id": teacherID, "target_slot_id": 1})
 	show("student targets teacher's slot 1 (attack)", st, 200, body)
 	json.Unmarshal([]byte(body), &q)
 
 	st, body = req("POST", "/api/question/answer", studentAccess, map[string]any{"session": q.Session, "answer": itemDiff1Answer})
 	show("answer correctly -> break the item (success)", st, 200, body)
 
-	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"username": teacherUsername})
+	st, body = req("POST", "/api/item", teacherAccess, map[string]any{"user_id": teacherID})
 	show("teacher items (slot 1 now broken)", st, 200, body)
 
-	st, body = req("POST", "/api/question/target", teacherAccess, map[string]any{"target_username": teacherUsername, "target_slot_id": 1})
+	st, body = req("POST", "/api/question/target", teacherAccess, map[string]any{"target_user_id": teacherID, "target_slot_id": 1})
 	show("teacher targets own broken slot (repair)", st, 200, body)
 	json.Unmarshal([]byte(body), &q)
 
 	st, body = req("POST", "/api/question/answer", teacherAccess, map[string]any{"session": q.Session, "answer": repairAreaAnswer})
 	show("answer correctly -> repair the item (success)", st, 200, body)
 
-	st, body = req("POST", "/api/question/target", teacherAccess, map[string]any{"target_username": teacherUsername, "target_slot_id": 1})
+	st, body = req("POST", "/api/question/target", teacherAccess, map[string]any{"target_user_id": teacherID, "target_slot_id": 1})
 	show("target own non-broken slot (invalid)", st, 400, body)
 
 	st, body = req("POST", "/api/question/generate", studentAccess, map[string]any{"difficulty": itemDifficulty1})
@@ -789,6 +806,12 @@ func main() {
 
 	st, body = req("GET", "/api/users", access, nil)
 	show("GET /api/users with token", st, 200, body)
+
+	st, body = req("GET", "/api/users/"+adminUsername, access, nil)
+	show("GET /api/users/{username} (lookup)", st, 200, body)
+
+	st, body = req("GET", "/api/users/no-such-user", access, nil)
+	show("GET /api/users/{username} unknown (404)", st, 404, body)
 
 	section("REGISTER (teacher-only)")
 

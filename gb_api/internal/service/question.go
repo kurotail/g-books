@@ -58,7 +58,7 @@ func (s *QuestionSvc) GenerateItem(accessToken string, difficulty uint) ([]byte,
 		return nil, http.StatusInternalServerError, err
 	}
 	id, err := s.repo.StoreSession(model.QuestionSession{
-		Username: caller.Username,
+		UserID:   caller.ID,
 		Question: q,
 		Kind:     model.KindItem,
 		ItemID:   itemID,
@@ -87,18 +87,20 @@ func (s *QuestionSvc) randomTypeForDifficulty(buildingID, difficulty uint) (uint
 	return types[mrand.Intn(len(types))], true, nil
 }
 
-func (s *QuestionSvc) GenerateTarget(accessToken string, targetUsername string, targetSlotID uint) ([]byte, int, error) {
+func (s *QuestionSvc) GenerateTarget(accessToken string, targetUserID uint, targetSlotID uint) ([]byte, int, error) {
 	caller, status, err := studentBlockedNotQuiz2(s.users, accessToken)
 	if err != nil {
 		return nil, status, err
 	}
 
-	// Resolve the target user to an id; an unknown target is a 404.
-	targetID, status, err := resolveUserID(s.users, targetUsername)
-	if err != nil {
-		return nil, status, err
+	// The target user must exist; an unknown target is a 404.
+	if _, err := s.users.GetUserByID(targetUserID); err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return nil, http.StatusNotFound, fmt.Errorf("使用者不存在")
+		}
+		return nil, http.StatusInternalServerError, err
 	}
-	slots, err := s.inv.QuerySlot(targetID)
+	slots, err := s.inv.QuerySlot(targetUserID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -107,8 +109,8 @@ func (s *QuestionSvc) GenerateTarget(accessToken string, targetUsername string, 
 		return nil, http.StatusBadRequest, fmt.Errorf("目標格子沒有物品")
 	}
 
-	attack := targetUsername != caller.Username && v > 0
-	repair := targetUsername == caller.Username && v < 0
+	attack := targetUserID != caller.ID && v > 0
+	repair := targetUserID == caller.ID && v < 0
 	if !attack && !repair {
 		return nil, http.StatusBadRequest, fmt.Errorf("無效的目標")
 	}
@@ -142,10 +144,10 @@ func (s *QuestionSvc) GenerateTarget(accessToken string, targetUsername string, 
 	}
 
 	id, err := s.repo.StoreSession(model.QuestionSession{
-		Username: caller.Username,
+		UserID:   caller.ID,
 		Question: q,
 		Kind:     model.KindTarget,
-		Target:   &model.Target{Username: targetUsername, SlotID: targetSlotID},
+		Target:   &model.Target{UserID: targetUserID, SlotID: targetSlotID},
 	})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
@@ -298,20 +300,14 @@ func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) (
 	switch qs.Kind {
 	case model.KindItem:
 		if correct {
-			// Resolve the session owner to an id at grant time. If the user was
-			// deleted since the session was created, resolveUserID returns 404.
-			uid, status, err := resolveUserID(s.users, qs.Username)
-			if err != nil {
-				return nil, status, err
-			}
-			if err := s.inv.AddInvItem(uid, qs.ItemID); err != nil {
+			if err := s.inv.AddInvItem(qs.UserID, qs.ItemID); err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
 			resp.ItemID = qs.ItemID
 		}
 	case model.KindTarget:
 		if correct && qs.Target != nil {
-			success, err := s.applyTarget(qs.Username, *qs.Target)
+			success, err := s.applyTarget(qs.UserID, *qs.Target)
 			if err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
@@ -326,17 +322,8 @@ func (s *QuestionSvc) Answer(accessToken, session string, raw json.RawMessage) (
 	return data, http.StatusOK, nil
 }
 
-func (s *QuestionSvc) applyTarget(callerUsername string, t model.Target) (bool, error) {
-	// Resolve the target user to an id; a vanished target means nothing to do
-	// (best-effort apply, so swallow not-found rather than erroring).
-	targetID, _, err := resolveUserID(s.users, t.Username)
-	if err != nil {
-		if errors.Is(err, apperr.ErrUserNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	slots, err := s.inv.QuerySlot(targetID)
+func (s *QuestionSvc) applyTarget(callerID uint, t model.Target) (bool, error) {
+	slots, err := s.inv.QuerySlot(t.UserID)
 	if err != nil {
 		return false, err
 	}
@@ -344,14 +331,14 @@ func (s *QuestionSvc) applyTarget(callerUsername string, t model.Target) (bool, 
 	if !ok || v == 0 {
 		return false, nil
 	}
-	attack := t.Username != callerUsername
+	attack := t.UserID != callerID
 	if attack && v < 0 { // already broken
 		return false, nil
 	}
 	if !attack && v > 0 { // not broken, nothing to repair
 		return false, nil
 	}
-	if err := s.inv.SetSlot(targetID, t.SlotID, -v); err != nil {
+	if err := s.inv.SetSlot(t.UserID, t.SlotID, -v); err != nil {
 		return false, err
 	}
 	return true, nil

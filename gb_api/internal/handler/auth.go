@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"gb-api/internal/model"
 	"gb-api/internal/service"
@@ -58,6 +59,26 @@ func (h *AuthHandler) QueryUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, status, err := h.svc.QueryUser(token)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, data)
+}
+
+// GetUser returns a single user looked up by the {username} path segment.
+func (h *AuthHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	username := r.PathValue("username")
+	if username == "" {
+		http.Error(w, "缺少 username", http.StatusBadRequest)
+		return
+	}
+	data, status, err := h.svc.GetUser(token, username)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -130,7 +151,7 @@ func (h *AuthHandler) SetProfilePic(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	status, err := h.svc.SetProfilePic(token, req.Username, req.ProfilePicURL)
+	status, err := h.svc.SetProfilePic(token, req.UserID, req.ProfilePicURL)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -190,12 +211,12 @@ func (h *AuthHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	username := r.PathValue("username")
-	if username == "" {
-		http.Error(w, "缺少 username", http.StatusBadRequest)
+	userID, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+	if err != nil || userID == 0 {
+		http.Error(w, "不合法的 user id", http.StatusBadRequest)
 		return
 	}
-	status, err := h.svc.DeleteUser(token, username)
+	status, err := h.svc.DeleteUser(token, uint(userID))
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

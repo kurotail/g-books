@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"gb-api/internal/model"
+	"gb-api/internal/repo/mock"
 )
 
 // ---- auth handler tests ----
@@ -163,6 +164,35 @@ func TestAuthHandler_Register_MissingFields(t *testing.T) {
 	}
 }
 
+// ---- auth handler: GetUser (single lookup) ----
+
+func TestAuthHandler_GetUser_FoundAndUnknown(t *testing.T) {
+	f := newFixture()
+	tok := f.login(t)
+
+	rec := doReq(t, f.auth.GetUser, http.MethodGet, "/api/users/user", tok, nil, map[string]string{"username": "user"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("lookup existing user: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var u model.User
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if u.Username != "user" || u.ID != mock.IDFor("user") {
+		t.Errorf("expected user with id %d, got %+v", mock.IDFor("user"), u)
+	}
+
+	rec = doReq(t, f.auth.GetUser, http.MethodGet, "/api/users/ghost", tok, nil, map[string]string{"username": "ghost"})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("lookup unknown user: expected 404, got %d", rec.Code)
+	}
+
+	rec = doReq(t, f.auth.GetUser, http.MethodGet, "/api/users/user", "", nil, map[string]string{"username": "user"})
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("lookup without token: expected 401, got %d", rec.Code)
+	}
+}
+
 // ---- item handler: request validation ----
 
 func TestItemHandler_MissingToken(t *testing.T) {
@@ -171,7 +201,7 @@ func TestItemHandler_MissingToken(t *testing.T) {
 		"QueryItems": f.item.QueryItems,
 	}
 	for name, fn := range cases {
-		rec := do(t, fn, "", map[string]any{"username": "user"})
+		rec := do(t, fn, "", map[string]any{"user_id": mock.IDFor("user")})
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s without token: expected 401, got %d", name, rec.Code)
 		}
@@ -187,9 +217,9 @@ func TestItemHandler_MissingFields(t *testing.T) {
 		fn   http.HandlerFunc
 		body map[string]any
 	}{
-		{"TranInv2Slot no slot_id", f.item.TranInv2Slot, map[string]any{"username": "user", "item_id": 1}},
-		{"TranInv2Slot no item_id", f.item.TranInv2Slot, map[string]any{"username": "user", "slot_id": 5}},
-		{"TranSlot2Inv no slot_id", f.item.TranSlot2Inv, map[string]any{"username": "user"}},
+		{"TranInv2Slot no slot_id", f.item.TranInv2Slot, map[string]any{"user_id": mock.IDFor("user"), "item_id": 1}},
+		{"TranInv2Slot no item_id", f.item.TranInv2Slot, map[string]any{"user_id": mock.IDFor("user"), "slot_id": 5}},
+		{"TranSlot2Inv no slot_id", f.item.TranSlot2Inv, map[string]any{"user_id": mock.IDFor("user")}},
 	}
 	for _, c := range cases {
 		rec := do(t, c.fn, tok, c.body)
@@ -215,13 +245,13 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	tok := f.login(t)
 
 	// step 1: move item 1 from inventory to slot 5
-	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"username": "user", "item_id": 1, "slot_id": 5})
+	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"user_id": mock.IDFor("user"), "item_id": 1, "slot_id": 5})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step1 TranInv2Slot: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 2: item 1 left inventory and now sits in slot 5; item 3 still in slot 0
-	rec = do(t, f.item.QueryItems, tok, map[string]any{"username": "user"})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"user_id": mock.IDFor("user")})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step2 QueryItems: expected 200, got %d", rec.Code)
 	}
@@ -241,13 +271,13 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 3: return item from slot 0 to inventory (slot 0 held item 3)
-	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"username": "user", "slot_id": 0})
+	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"user_id": mock.IDFor("user"), "slot_id": 0})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step3 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 4: slot 0 gone, item 3 back in inventory, slot 5 unchanged
-	rec = do(t, f.item.QueryItems, tok, map[string]any{"username": "user"})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"user_id": mock.IDFor("user")})
 	inv = decodeInv(t, rec)
 	if _, ok := inv[3]; !ok {
 		t.Error("step4: expected item 3 back in inventory")
@@ -261,13 +291,13 @@ func TestItemHandler_StateTransitions(t *testing.T) {
 	}
 
 	// step 5: return item 1 from slot 5 to inventory, clearing the slot
-	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"username": "user", "slot_id": 5})
+	rec = do(t, f.item.TranSlot2Inv, tok, map[string]any{"user_id": mock.IDFor("user"), "slot_id": 5})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("step5 TranSlot2Inv: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// step 6: final state — slots empty, inventory holds items 1, 2, 3
-	rec = do(t, f.item.QueryItems, tok, map[string]any{"username": "user"})
+	rec = do(t, f.item.QueryItems, tok, map[string]any{"user_id": mock.IDFor("user")})
 	slot = decodeSlots(t, rec)
 	if len(slot) != 0 {
 		t.Errorf("step6: expected empty slot map, got %v", slot)
@@ -286,7 +316,7 @@ func TestItemHandler_TranInv2Slot_ItemNotInInventory(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"username": "user", "item_id": 99, "slot_id": 5})
+	rec := do(t, f.item.TranInv2Slot, tok, map[string]any{"user_id": mock.IDFor("user"), "item_id": 99, "slot_id": 5})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("item not owned: expected 400, got %d", rec.Code)
 	}
@@ -296,7 +326,7 @@ func TestItemHandler_TranSlot2Inv_NonExistentSlot(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.TranSlot2Inv, tok, map[string]any{"username": "user", "slot_id": 99})
+	rec := do(t, f.item.TranSlot2Inv, tok, map[string]any{"user_id": mock.IDFor("user"), "slot_id": 99})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("non-existent slot: expected 400, got %d", rec.Code)
 	}
@@ -306,7 +336,7 @@ func TestItemHandler_QueryItems_MissingUsernameRejected(t *testing.T) {
 	f := newFixture()
 	tok := f.login(t)
 
-	rec := do(t, f.item.QueryItems, tok, map[string]any{"username": ""})
+	rec := do(t, f.item.QueryItems, tok, map[string]any{"user_id": 0})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("empty username: expected 400, got %d", rec.Code)
 	}
@@ -456,7 +486,7 @@ func TestQuestionHandler_StudentTargetBlockedOutsideQuiz(t *testing.T) {
 	f.forceState(t, tok, model.StateNormal)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	gen := do(t, f.question.GenerateTarget, tok, map[string]any{"target_username": "other", "target_slot_id": 0})
+	gen := do(t, f.question.GenerateTarget, tok, map[string]any{"target_user_id": mock.IDFor("other"), "target_slot_id": 0})
 	if gen.Code != http.StatusForbidden {
 		t.Errorf("GenerateTarget as student in NORMAL: expected 403, got %d", gen.Code)
 	}

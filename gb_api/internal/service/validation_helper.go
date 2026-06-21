@@ -45,18 +45,6 @@ func getCaller(r repo.UserRepo, accessToken string) (*model.User, int, error) {
 	return &caller, http.StatusOK, nil
 }
 
-// resolveUserID maps a username to its numeric id.
-func resolveUserID(r repo.UserRepo, username string) (id uint, status int, err error) {
-	u, err := r.GetUserByUsername(username)
-	if err != nil {
-		if errors.Is(err, apperr.ErrUserNotFound) {
-			return 0, http.StatusNotFound, fmt.Errorf("使用者不存在: %q: %w", username, apperr.ErrUserNotFound)
-		}
-		return 0, http.StatusInternalServerError, err
-	}
-	return u.ID, http.StatusOK, nil
-}
-
 func requireTeacher(r repo.UserRepo, accessToken string) (int, error) {
 	caller, status, err := getCaller(r, accessToken)
 	if err != nil {

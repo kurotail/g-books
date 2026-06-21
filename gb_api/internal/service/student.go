@@ -105,13 +105,9 @@ func (s *StudentSvc) Get(accessToken string, id uint) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
-func (s *StudentSvc) SetStudents(accessToken, username string, studentIDs []uint) ([]byte, int, error) {
+func (s *StudentSvc) SetStudents(accessToken string, userID uint, studentIDs []uint) ([]byte, int, error) {
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return nil, status, err
-	}
-	target := username
-	if target == "" {
-		return nil, http.StatusBadRequest, fmt.Errorf("缺少 username")
 	}
 
 	results := make([]model.StudentAssignResult, 0, len(studentIDs))
@@ -133,16 +129,9 @@ func (s *StudentSvc) SetStudents(accessToken, username string, studentIDs []uint
 		results = append(results, model.StudentAssignResult{StudentID: id, Status: http.StatusOK})
 	}
 
-	tu, err := s.users.GetUserByUsername(target)
-	if err != nil {
+	if err := s.users.SetUserStudents(userID, valid); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
-			return nil, http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
-		}
-		return nil, http.StatusInternalServerError, err
-	}
-	if err := s.users.SetUserStudents(tu.ID, valid); err != nil {
-		if errors.Is(err, apperr.ErrUserNotFound) {
-			return nil, http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
+			return nil, http.StatusNotFound, fmt.Errorf("使用者不存在: %d", userID)
 		}
 		return nil, http.StatusInternalServerError, err
 	}

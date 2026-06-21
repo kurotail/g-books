@@ -84,13 +84,13 @@ const (
 
 // Target identifies a user's slot for the QUIZ-state attack/repair flow.
 type Target struct {
-	Username string
-	SlotID   uint
+	UserID uint
+	SlotID uint
 }
 
 type QuestionSession struct {
 	ExpiresAt time.Time
-	Username  string
+	UserID    uint
 	Question  // embedded: the graded Description/Answer
 	Kind      SessionKind
 	ItemID    uint    // KindItem: the new item granted on a correct answer
@@ -104,8 +104,8 @@ type GenerateItemRequest struct {
 
 // GenerateTargetRequest is the body of POST /api/question/target (QUIZ state).
 type GenerateTargetRequest struct {
-	TargetUsername *string `json:"target_username"`
-	TargetSlotID   *uint   `json:"target_slot_id"`
+	TargetUserID *uint `json:"target_user_id"`
+	TargetSlotID *uint `json:"target_slot_id"`
 }
 
 // QuestionInput is a single question supplied by a teacher when uploading to or

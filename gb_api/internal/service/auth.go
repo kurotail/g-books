@@ -135,6 +135,25 @@ func (s *AuthSvc) QueryUser(accessToken string) ([]byte, int, error) {
 	return data, http.StatusOK, nil
 }
 
+// GetUser returns a single user by username.
+func (s *AuthSvc) GetUser(accessToken, username string) ([]byte, int, error) {
+	if _, err := validateAccessToken(accessToken); err != nil {
+		return nil, http.StatusUnauthorized, err
+	}
+	user, err := s.users.GetUserByUsername(username)
+	if err != nil {
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			return nil, http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
+		}
+		return nil, http.StatusInternalServerError, err
+	}
+	data, err := json.Marshal(user)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return data, http.StatusOK, nil
+}
+
 func (s *AuthSvc) RegisterUser(accessToken, username, password string, role uint) (int, error) {
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return status, err
@@ -151,32 +170,23 @@ func (s *AuthSvc) RegisterUser(accessToken, username, password string, role uint
 	return http.StatusCreated, nil
 }
 
-func (s *AuthSvc) SetProfilePic(accessToken, username, url string) (int, error) {
+// SetProfilePic sets a user's picture. userID is optional: nil targets the caller;
+// a non-nil id other than the caller's requires Teacher/Admin.
+func (s *AuthSvc) SetProfilePic(accessToken string, userID *uint, url string) (int, error) {
 	caller, status, err := getCaller(s.users, accessToken)
 	if err != nil {
 		return status, err
 	}
-	target := username
-	if target == "" {
-		target = caller.Username
-	}
-	if target != caller.Username && caller.Role < model.RoleTeacher {
-		return http.StatusForbidden, fmt.Errorf("權限不足")
-	}
 	targetID := caller.ID
-	if target != caller.Username {
-		tu, err := s.users.GetUserByUsername(target)
-		if err != nil {
-			if errors.Is(err, apperr.ErrUserNotFound) {
-				return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
-			}
-			return http.StatusInternalServerError, err
+	if userID != nil && *userID != caller.ID {
+		if caller.Role < model.RoleTeacher {
+			return http.StatusForbidden, fmt.Errorf("權限不足")
 		}
-		targetID = tu.ID
+		targetID = *userID
 	}
 	if err := s.users.SetUserProfilePic(targetID, url); err != nil {
 		if errors.Is(err, apperr.ErrUserNotFound) {
-			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", target)
+			return http.StatusNotFound, fmt.Errorf("使用者不存在: %d", targetID)
 		}
 		return http.StatusInternalServerError, err
 	}
@@ -239,7 +249,7 @@ func (s *AuthSvc) SetPassword(accessToken, oldPassword, newPassword string) (int
 }
 
 // DeleteUser removes a user account. Teachers/admins only
-func (s *AuthSvc) DeleteUser(accessToken, username string) (int, error) {
+func (s *AuthSvc) DeleteUser(accessToken string, userID uint) (int, error) {
 	caller, status, err := getCaller(s.users, accessToken)
 	if err != nil {
 		return status, err
@@ -247,22 +257,15 @@ func (s *AuthSvc) DeleteUser(accessToken, username string) (int, error) {
 	if caller.Role < model.RoleTeacher {
 		return http.StatusForbidden, fmt.Errorf("權限不足")
 	}
-	target, err := s.users.GetUserByUsername(username)
-	if err != nil {
-		if errors.Is(err, apperr.ErrUserNotFound) {
-			return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
-		}
-		return http.StatusInternalServerError, err
-	}
-	if target.ID == caller.ID {
+	if userID == caller.ID {
 		return http.StatusForbidden, fmt.Errorf("無法刪除自己的帳號")
 	}
-	ok, err := s.users.DeleteUser(target.ID)
+	ok, err := s.users.DeleteUser(userID)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 	if !ok {
-		return http.StatusNotFound, fmt.Errorf("使用者不存在: %q", username)
+		return http.StatusNotFound, fmt.Errorf("使用者不存在: %d", userID)
 	}
 	return http.StatusOK, nil
 }
