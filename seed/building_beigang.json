@@ -42,10 +42,10 @@
       "6":  { "name": "晨鐘樓",    "level": 2 },
       "7":  { "name": "香爐",      "level": 2 },
       "8":  { "name": "暮鼓樓",    "level": 2 },
-      "9":  { "name": "交趾陶_1",  "level": 3 },
+      "9":  { "name": "交趾陶",  "level": 3 },
       "10": { "name": "火珠雕塑",  "level": 3 },
       "11": { "name": "福祿壽",    "level": 3 },
-      "12": { "name": "交趾陶_2",  "level": 3 }
+      "12": { "name": "剪粘",  "level": 3 }
     }
   },
   "item_allowed_slot": {
