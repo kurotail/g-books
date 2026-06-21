@@ -9,8 +9,10 @@
 ///   - 題目欄是音檔路徑   → 語音敘述題（description.type = audio）
 ///   - A~D 皆空           → 語音作答題（answer.type = voice_response）；答案欄為可接受的
 ///                          「辨識文字」清單（後端以 STT 轉文字後比對，不分大小寫）。
-///                          ⚠️ App 內匯入不做 STT，答案需直接填文字；若要把參考音檔自動
-///                          轉成文字，請走 seed/seed_questions.py（具 STT 連線）。
+///                          答案欄可直接填文字，或填參考音檔（如 q1.wav）由 STT 轉成文字：
+///                          App 內匯入透過後端 `POST /api/stt`（教師限定）轉檔，seed 腳本則
+///                          直接連本機 STT。[buildQuestionPayload] 以 [resolveTranscript]
+///                          回呼取得音檔的辨識文字；未提供回呼時，音檔答案會丟例外。
 ///   - A~D 有值           → 選擇題（answer.type = index）；答案欄為一或多個字母（如 A 或
 ///                          A|C）。選項若為音檔則以其 URL 當選項字串（後端選項型別仍是
 ///                          text，不需改後端；學生端 UI 需自行渲染成播放鈕）。
@@ -62,13 +64,21 @@ class QuestRow {
   int area = kAreaCollect;
 }
 
-/// [parseQuestCsv] 的結果：成功列、警告（略過的列原因）、需上傳的音檔相對路徑集合。
+/// [parseQuestCsv] 的結果：成功列、警告（略過的列原因），以及兩種音檔引用：
+///   - [audioRefs]       題目敘述 / 選項的音檔 → 需上傳到 `/api/audio` 換 URL。
+///   - [answerAudioRefs] 語音作答題答案欄的參考音檔 → 需經 STT 轉成辨識文字。
 class QuestParseResult {
-  QuestParseResult(this.rows, this.warnings, this.audioRefs);
+  QuestParseResult(
+    this.rows,
+    this.warnings,
+    this.audioRefs,
+    this.answerAudioRefs,
+  );
 
   final List<QuestRow> rows;
   final List<String> warnings;
   final Set<String> audioRefs;
+  final Set<String> answerAudioRefs;
 }
 
 /// 解析 quest.csv 文字（容許 BOM / CRLF / 引號欄位）。第一非空列視為欄名跳過。
@@ -77,6 +87,7 @@ QuestParseResult parseQuestCsv(String text) {
   final rows = <QuestRow>[];
   final warnings = <String>[];
   final audioRefs = <String>{};
+  final answerAudioRefs = <String>{};
 
   var seenHeader = false;
   for (var i = 0; i < table.length; i++) {
@@ -107,13 +118,18 @@ QuestParseResult parseQuestCsv(String text) {
       difficulty: diff,
       line: line,
     ));
-    // 只有題目敘述與選項可能是「需上傳的音檔」；答案欄是字母（選擇題）或辨識文字
-    // （語音作答題），不再當音檔上傳。
+    // 題目敘述與選項的音檔 → 需上傳換 URL。
     for (final v in [prompt, ...options]) {
       if (isAudioPath(v)) audioRefs.add(v.trim());
     }
+    // 語音作答題（A~D 皆空）的答案欄可填參考音檔 → 需經 STT 轉成辨識文字；先收集起來。
+    if (options.every((o) => o.isEmpty)) {
+      for (final t in splitAnswers(answer)) {
+        if (isAudioPath(t)) answerAudioRefs.add(t.trim());
+      }
+    }
   }
-  return QuestParseResult(rows, warnings, audioRefs);
+  return QuestParseResult(rows, warnings, audioRefs, answerAudioRefs);
 }
 
 /// 依各難度把 [kQuiz2Ratio] 比例的題目（均勻散布）標成 area 2，其餘 area 1。
@@ -137,11 +153,16 @@ void assignAreas(List<QuestRow> rows, {double quiz2Ratio = kQuiz2Ratio}) {
 }
 
 /// 把一列轉成後端 QuestionInput payload。[resolveAudioUrl] 把音檔相對路徑換成已上傳的
-/// URL（找不到時應自行丟出 [FormatException]）。格式不符時丟 [FormatException]。
+/// URL（找不到時應自行丟出 [FormatException]）。
+///
+/// [resolveTranscript] 把「語音作答題答案欄的參考音檔」換成 STT 辨識文字（找不到時應自行
+/// 丟出 [FormatException]）；未提供時，答案欄填音檔會直接丟 [FormatException]（呼叫端無
+/// STT 連線）。格式不符時一律丟 [FormatException]。
 Map<String, dynamic> buildQuestionPayload(
   QuestRow row,
-  String Function(String value) resolveAudioUrl,
-) {
+  String Function(String value) resolveAudioUrl, {
+  String Function(String audioPath)? resolveTranscript,
+}) {
   // 敘述：音檔路徑 → audio，否則 text。
   final Map<String, dynamic> description = isAudioPath(row.prompt)
       ? {'type': 'audio', 'data': resolveAudioUrl(row.prompt)}
@@ -156,15 +177,28 @@ Map<String, dynamic> buildQuestionPayload(
   final Map<String, dynamic> answer;
 
   if (nonempty.isEmpty) {
-    // 語音作答題：答案是一個或多個可接受的「辨識文字」（以 | 分隔）。
-    final texts = splitAnswers(row.answer);
-    if (texts.isEmpty) {
-      throw const FormatException('語音作答題（無選項）缺少答案文字');
+    // 語音作答題：答案是一個或多個可接受的「辨識文字」（以 | 分隔）。每一項可直接是文字，
+    // 或是參考音檔（如 q1.wav）→ 經 [resolveTranscript] 轉成辨識文字。
+    final tokens = splitAnswers(row.answer);
+    if (tokens.isEmpty) {
+      throw const FormatException('語音作答題（無選項）缺少答案');
     }
-    // App 內匯入沒有 STT 連線，無法把參考音檔轉成文字；請改走 seed 腳本。
-    if (texts.any(isAudioPath)) {
-      throw const FormatException(
-          '語音作答題的答案需為辨識文字；參考音檔請改用 seed/seed_questions.py 轉檔匯入');
+    final texts = <String>[];
+    for (final t in tokens) {
+      if (isAudioPath(t)) {
+        if (resolveTranscript == null) {
+          // 呼叫端沒有 STT 連線（例如未接後端時）；請改填辨識文字或走 seed 腳本。
+          throw const FormatException(
+              '語音作答題的答案音檔需經 STT 轉檔；請改填辨識文字或用 seed/seed_questions.py');
+        }
+        final text = resolveTranscript(t).trim();
+        if (text.isEmpty) {
+          throw FormatException('參考音檔「$t」辨識結果為空');
+        }
+        if (!texts.contains(text)) texts.add(text);
+      } else if (!texts.contains(t)) {
+        texts.add(t);
+      }
     }
     answer = {'type': 'voice_response', 'data': texts};
   } else {

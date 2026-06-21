@@ -11,6 +11,7 @@ import '../../data/heritage_data.dart';
 import '../../data/models/group_account.dart';
 import '../../data/models/heritage_model.dart';
 import '../../data/models/roster_student.dart';
+import '../../services/api_client.dart' show ApiException;
 import '../../services/course_session_store.dart';
 import '../../services/game_state_service.dart';
 import '../../services/question_import.dart';
@@ -1439,16 +1440,47 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
         );
       }
 
-      // 3) 逐列建 payload；缺音檔或格式錯的列略過並記錄。
+      // 2b) 語音作答題答案欄的參考音檔 → 經後端 STT 轉成可比對的辨識文字（教師限定端點）。
+      final transcripts = <String, String>{};
+      for (final ref in parsed.answerAudioRefs) {
+        final entry = _findAudioEntry(archive, ref);
+        if (entry == null) {
+          issues.add('找不到語音答案音檔：$ref（請確認在 ZIP 的 audio/ 內）');
+          continue;
+        }
+        try {
+          final text =
+              (await _teacher.transcribeQuestionAudio(entry.content as List<int>))
+                  .trim();
+          if (text.isEmpty) {
+            issues.add('語音答案音檔轉檔為空：$ref');
+            continue;
+          }
+          transcripts[ref] = text;
+        } catch (e) {
+          final msg = e is ApiException ? e.message : '$e';
+          issues.add('語音答案音檔轉檔失敗：$ref（$msg）');
+        }
+      }
+
+      // 3) 逐列建 payload；缺音檔 / 未轉檔 / 格式錯的列略過並記錄。
       final payloads = <Map<String, dynamic>>[];
       var voiceCount = 0;
       for (final row in parsed.rows) {
         try {
-          final p = buildQuestionPayload(row, (v) {
-            final url = audioUrls[v.trim()];
-            if (url == null) throw FormatException('音檔未上傳：$v');
-            return url;
-          });
+          final p = buildQuestionPayload(
+            row,
+            (v) {
+              final url = audioUrls[v.trim()];
+              if (url == null) throw FormatException('音檔未上傳：$v');
+              return url;
+            },
+            resolveTranscript: (v) {
+              final t = transcripts[v.trim()];
+              if (t == null) throw FormatException('語音答案未轉檔：$v');
+              return t;
+            },
+          );
           if ((p['answer'] as Map)['type'] == 'voice_response') voiceCount++;
           payloads.add(p);
         } on FormatException catch (e) {
@@ -1536,9 +1568,10 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen> {
               const Text(
                 'ZIP 內需含 quest.csv 與 audio/ 資料夾。\n'
                 'quest.csv 欄位：題目, A, B, C, D, 答案, 難度（首列為欄名）。\n'
-                '• 一般選擇題：A~D 填文字、答案填 A/B/C/D\n'
+                '• 一般選擇題：A~D 填文字、答案填 A/B/C/D（多正解以 | 分隔，如 A|C）\n'
                 '• 語音選項題：A~D 填音檔（如 A.wav）、答案填正確選項字母\n'
-                '• 語音作答題：A~D 留空、答案填參考音檔（如 q1.wav）\n'
+                '• 語音作答題：A~D 留空、答案填辨識文字或參考音檔（WAV）；填音檔會經\n'
+                '  後端 STT 轉成文字。多個正解以 | 分隔（如 媽祖|馬祖婆）\n'
                 '音檔放 audio/ 下，欄位填相對路徑（a.mp3 或 abc/b.mp3）。\n'
                 '各難度約 75% 進採集、25% 進攻防戰。',
                 style: TextStyle(

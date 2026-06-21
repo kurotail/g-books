@@ -132,6 +132,20 @@ class ApiClient {
   Future<String> uploadAudio(List<int> bytes, String filename) =>
       _uploadMedia('/api/audio', bytes, filename);
 
+  /// 把錄音轉文字：`POST /api/stt`（教師/管理者限定；學生會收到 403）。傳入音檔位元組
+  /// （後端要求 WAV），內部 base64 編碼後送出，回傳辨識文字。供題庫匯入時把「語音作答題
+  /// 的參考音檔」轉成可比對的答案文字。STT 在 CPU 上可能偏慢，呼叫端需容忍較長等待。
+  /// 401 會換 token 重試一次；非 2xx（含 500：STT 服務不可用）拋 [ApiException]。
+  Future<String> transcribeAudio(List<int> bytes) async {
+    final raw = await _send(
+      'POST',
+      '/api/stt',
+      body: {'audio_b64': base64Encode(bytes)},
+    );
+    final m = jsonDecode(raw) as Map<String, dynamic>;
+    return (m['text'] as String?) ?? '';
+  }
+
   Future<String> _uploadMedia(
     String path,
     List<int> bytes,

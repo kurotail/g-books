@@ -15,9 +15,20 @@ void main() {
       );
       expect(r.rows.length, 3);
       expect(r.rows[0].difficulty, 1);
-      // 只有題目敘述與選項的音檔會被收集；答案欄（字母 / 辨識文字）不算。
+      // 題目敘述與選項的音檔 → audioRefs；答案欄是字母 / 辨識文字（非音檔）→ 都不收集。
       expect(r.audioRefs, {'a.wav', 'b.wav'});
+      expect(r.answerAudioRefs, isEmpty);
       expect(r.warnings, isEmpty);
+    });
+
+    test('語音作答題答案是音檔 → 收進 answerAudioRefs（不進 audioRefs）', () {
+      final r = parseQuestCsv(
+        '題目,A,B,C,D,答案,難度\n'
+        '請說台語,,,,,q1.wav,1\n'
+        '說兩種,,,,,q2.wav|媽祖,2\n',
+      );
+      expect(r.answerAudioRefs, {'q1.wav', 'q2.wav'});
+      expect(r.audioRefs, isEmpty);
     });
 
     test('容許 BOM、CRLF 與引號內逗號', () {
@@ -94,11 +105,57 @@ void main() {
       expect(p['answer'], {'type': 'voice_response', 'data': ['媽祖', '馬祖婆']});
     });
 
-    test('語音作答題答案是音檔 → 丟 FormatException（App 內無 STT）', () {
+    test('語音作答題答案是音檔、未提供 resolveTranscript → 丟 FormatException', () {
       final row = parseQuestCsv(
         '題目,A,B,C,D,答案,難度\n請說台語,,,,,q1.wav,1\n',
       ).rows.single;
       expect(() => buildQuestionPayload(row, fakeUrl), throwsFormatException);
+    });
+
+    test('語音作答題答案是音檔、提供 resolveTranscript → 轉成辨識文字陣列', () {
+      final row = parseQuestCsv(
+        '題目,A,B,C,D,答案,難度\n請說台語,,,,,q1.wav,1\n',
+      ).rows.single;
+      final p = buildQuestionPayload(
+        row,
+        fakeUrl,
+        resolveTranscript: (v) => 'TX_${v.trim()}',
+      );
+      expect(p['answer'], {'type': 'voice_response', 'data': ['TX_q1.wav']});
+    });
+
+    test('語音作答題混合文字與音檔正解：媽祖|q1.wav → 文字＋轉檔結果', () {
+      final row = parseQuestCsv(
+        '題目,A,B,C,D,答案,難度\n請說台語,,,,,媽祖|q1.wav,1\n',
+      ).rows.single;
+      final p = buildQuestionPayload(
+        row,
+        fakeUrl,
+        resolveTranscript: (v) => '馬祖婆',
+      );
+      expect(p['answer'], {'type': 'voice_response', 'data': ['媽祖', '馬祖婆']});
+    });
+
+    test('語音作答題轉檔結果重複 → 去重', () {
+      final row = parseQuestCsv(
+        '題目,A,B,C,D,答案,難度\n請說台語,,,,,q1.wav|q2.wav,1\n',
+      ).rows.single;
+      final p = buildQuestionPayload(
+        row,
+        fakeUrl,
+        resolveTranscript: (v) => '媽祖',
+      );
+      expect(p['answer'], {'type': 'voice_response', 'data': ['媽祖']});
+    });
+
+    test('語音作答題轉檔結果為空字串 → 丟 FormatException', () {
+      final row = parseQuestCsv(
+        '題目,A,B,C,D,答案,難度\n請說台語,,,,,q1.wav,1\n',
+      ).rows.single;
+      expect(
+        () => buildQuestionPayload(row, fakeUrl, resolveTranscript: (v) => '  '),
+        throwsFormatException,
+      );
     });
 
     test('語音敘述題：題目欄是音檔 → description.type=audio', () {

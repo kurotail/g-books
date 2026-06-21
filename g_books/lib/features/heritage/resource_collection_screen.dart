@@ -98,10 +98,16 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         onError: (_, _) {},
       );
     }
-    precacheImage(const AssetImage('assets/icons/star.png'), context,
-        onError: (_, _) {});
-    precacheImage(const AssetImage('assets/icons/times_up.png'), context,
-        onError: (_, _) {});
+    precacheImage(
+      const AssetImage('assets/icons/star.png'),
+      context,
+      onError: (_, _) {},
+    );
+    precacheImage(
+      const AssetImage('assets/icons/times_up.png'),
+      context,
+      onError: (_, _) {},
+    );
   }
 
   Future<void> _initGameState() async {
@@ -215,7 +221,10 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       _phase = _Phase.loadingQ;
     });
     try {
-      final q = await _quizSvc.fetchQuestion(heritageId: _hid, difficulty: diff);
+      final q = await _quizSvc.fetchQuestion(
+        heritageId: _hid,
+        difficulty: diff,
+      );
       if (!mounted) return;
       setState(() {
         _q = q;
@@ -234,8 +243,9 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
   Future<void> _submitChoice() async {
     if (_selected == null || _submitting || _q == null) return;
     setState(() => _submitting = true);
-    final res =
-        await _quizSvc.submitAnswer(QuizAnswer.choice(_q!.session, _selected!));
+    final res = await _quizSvc.submitAnswer(
+      QuizAnswer.choice(_q!.session, _selected!),
+    );
     await _handleResult(res);
   }
 
@@ -290,7 +300,9 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       _phase = _Phase.roundIntro;
     });
     // 持久化新回合：中途跳出 App、重啟後可接續此回合。
-    _progressSvc.save(CollectionProgress(sessionKey: _sessionKey, round: _round));
+    _progressSvc.save(
+      CollectionProgress(sessionKey: _sessionKey, round: _round),
+    );
   }
 
   // ── 語音 ────────────────────────────────────────────────────────────────────
@@ -360,10 +372,8 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
     }
   }
 
-  void _toast(String msg) => Fluttertoast.showToast(
-        msg: msg,
-        gravity: ToastGravity.CENTER,
-      );
+  void _toast(String msg) =>
+      Fluttertoast.showToast(msg: msg, gravity: ToastGravity.CENTER);
 
   // ── build ───────────────────────────────────────────────────────────────────
 
@@ -401,27 +411,30 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       child: Scaffold(
         backgroundColor: const Color(0xFF15110C),
         body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset('assets/images/bg_login.png',
-              fit: BoxFit.cover, gaplessPlayback: true),
-          const Positioned.fill(child: ColoredBox(color: Color(0x99000000))),
-          SafeArea(child: _body()),
-          _topBar(),
-          if (_phase == _Phase.roundIntro)
-            BannerIntro(
-              key: ValueKey(_round),
-              title: '回 合 ${_cn(_round)}',
-              subtitle: '$_answererLabel 答題',
-              onCompleted: () {
-                if (mounted && _phase == _Phase.roundIntro) {
-                  setState(() => _phase = _Phase.picking);
-                }
-              },
+          fit: StackFit.expand,
+          children: [
+            Image.asset(
+              'assets/images/bg_login.png',
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
             ),
-          if (_phase == _Phase.loadingQ) _loadingOverlay(),
-          if (_phase == _Phase.result) _resultOverlay(),
-          if (_phase == _Phase.timeUp) _timeUpOverlay(),
+            const Positioned.fill(child: ColoredBox(color: Color(0x99000000))),
+            SafeArea(child: _body()),
+            _topBar(),
+            if (_phase == _Phase.roundIntro)
+              BannerIntro(
+                key: ValueKey(_round),
+                title: '回 合 ${_cn(_round)}',
+                subtitle: '$_answererLabel 答題',
+                onCompleted: () {
+                  if (mounted && _phase == _Phase.roundIntro) {
+                    setState(() => _phase = _Phase.picking);
+                  }
+                },
+              ),
+            if (_phase == _Phase.loadingQ) _loadingOverlay(),
+            if (_phase == _Phase.result) _resultOverlay(),
+            if (_phase == _Phase.timeUp) _timeUpOverlay(),
           ],
         ),
       ),
@@ -441,8 +454,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
 
   // ── 上方資訊列：倒數（置中）＋ 回合 / 答題者（右側）─────────────────────────────
   Widget _topBar() {
-    final showRound =
-        _phase == _Phase.picking || _phase == _Phase.answering;
+    final showRound = _phase == _Phase.picking || _phase == _Phase.answering;
     return Positioned(
       top: 0,
       left: 0,
@@ -496,25 +508,29 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('回合 $_round',
-              style: const TextStyle(
-                color: Color(0xFFD4A843),
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1,
-              )),
+          Text(
+            '回合 $_round',
+            style: const TextStyle(
+              color: Color(0xFFD4A843),
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1,
+            ),
+          ),
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 10),
             width: 1,
             height: 16,
             color: Colors.white24,
           ),
-          Text('$_answererLabel答題',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              )),
+          Text(
+            '$_answererLabel答題',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );
@@ -528,16 +544,20 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('原料採集關卡',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 40,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 4,
-              )),
+          const Text(
+            '原料採集關卡',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 40,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 4,
+            ),
+          ),
           const SizedBox(height: 6),
-          const Text('請選擇你想收集古蹟原料等級，星星數越多採集難度越高',
-              style: TextStyle(color: Colors.white60, fontSize: 15)),
+          const Text(
+            '請選擇你想收集古蹟原料等級，星星數越多採集難度越高',
+            style: TextStyle(color: Colors.white60, fontSize: 15),
+          ),
           Expanded(
             child: Center(
               child: Row(
@@ -551,7 +571,6 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
                         imagePath:
                             'assets/heritages/$_hid/area/${_areaKeys[d - 1]}.png',
                         stars: d,
-                        progress: _progressOf(d),
                         onTap: () => _pickDifficulty(d),
                       ),
                     ),
@@ -563,16 +582,6 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         ],
       ),
     );
-  }
-
-  /// 該難度（等級）已採集 / 總數，供關卡卡片顯示進度。
-  String _progressOf(int diff) {
-    final comps = componentsByLevel(_hid, diff);
-    final total = comps.length;
-    final owned = comps
-        .where((c) => _board.qty(c.id) > 0 || _board.slots.containsValue(c.id))
-        .length;
-    return '$owned / $total';
   }
 
   // ── 答題 ────────────────────────────────────────────────────────────────────
@@ -595,15 +604,16 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('請聆聽題目後作答',
-              style: TextStyle(color: Colors.white70, fontSize: 16)),
+          const Text(
+            '請聆聽題目後作答',
+            style: TextStyle(color: Colors.white70, fontSize: 16),
+          ),
           const SizedBox(height: 18),
           GestureDetector(
             onTap: () =>
                 _playUrl(resolveMediaUrl(q.prompt.data) ?? q.prompt.data),
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
               decoration: BoxDecoration(
                 color: const Color(0xF0241F19),
                 borderRadius: BorderRadius.circular(30),
@@ -612,16 +622,21 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.volume_up_rounded,
-                      color: Color(0xFFD4A843), size: 24),
+                  Icon(
+                    Icons.volume_up_rounded,
+                    color: Color(0xFFD4A843),
+                    size: 24,
+                  ),
                   SizedBox(width: 10),
-                  Text('播放語音題目',
-                      style: TextStyle(
-                        color: Color(0xFFE8DCC0),
-                        fontSize: 18,
-                        letterSpacing: 2,
-                        fontWeight: FontWeight.w600,
-                      )),
+                  Text(
+                    '播放語音題目',
+                    style: TextStyle(
+                      color: Color(0xFFE8DCC0),
+                      fontSize: 18,
+                      letterSpacing: 2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -657,9 +672,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       ),
       child: SafeArea(
         top: false,
-        child: q.isChoice
-            ? _choicePanel(q.choices!.data)
-            : _recordPanel(),
+        child: q.isChoice ? _choicePanel(q.choices!.data) : _recordPanel(),
       ),
     );
   }
@@ -712,9 +725,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         ),
         const SizedBox(height: 12),
         Text(
-          _recording
-              ? '錄音中…放開即停止'
-              : (hasClip ? '已錄好，可試聽或送出' : '按壓麥克風，並說出你的答案'),
+          _recording ? '錄音中…放開即停止' : (hasClip ? '已錄好，可試聽或送出' : '按壓麥克風，並說出你的答案'),
           style: const TextStyle(
             color: Color(0xFF4A3A28),
             fontSize: 15,
@@ -771,15 +782,19 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
                   width: 22,
                   height: 22,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2.5, color: Color(0xFFD4A843)),
+                    strokeWidth: 2.5,
+                    color: Color(0xFFD4A843),
+                  ),
                 )
-              : Text(label,
+              : Text(
+                  label,
                   style: const TextStyle(
                     color: Color(0xFFE8DCC0),
                     fontSize: 18,
                     letterSpacing: 4,
                     fontWeight: FontWeight.w700,
-                  )),
+                  ),
+                ),
         ),
       ),
     );
@@ -804,12 +819,14 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
           children: [
             Icon(icon, color: const Color(0xFF4A3A28), size: 20),
             const SizedBox(width: 6),
-            Text(label,
-                style: const TextStyle(
-                  color: Color(0xFF4A3A28),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                )),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF4A3A28),
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ],
         ),
       ),
@@ -849,9 +866,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  correct
-                      ? Icons.check_circle_rounded
-                      : Icons.cancel_rounded,
+                  correct ? Icons.check_circle_rounded : Icons.cancel_rounded,
                   color: correct
                       ? const Color(0xFF6BCB6B)
                       : const Color(0xFFFF6B5E),
@@ -869,8 +884,10 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
                 ),
                 const SizedBox(height: 14),
                 if (correct && reward != null) ...[
-                  const Text('獲得原料',
-                      style: TextStyle(color: Colors.white60, fontSize: 14)),
+                  const Text(
+                    '獲得原料',
+                    style: TextStyle(color: Colors.white60, fontSize: 14),
+                  ),
                   const SizedBox(height: 10),
                   SizedBox(
                     width: 120,
@@ -878,35 +895,45 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
                     child: FramedComponentTile(component: reward),
                   ),
                   const SizedBox(height: 8),
-                  Text('${reward.name}　Lv.${reward.level}',
-                      style: const TextStyle(
-                        color: Color(0xFFE8DCC0),
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                      )),
+                  Text(
+                    '${reward.name}　Lv.${reward.level}',
+                    style: const TextStyle(
+                      color: Color(0xFFE8DCC0),
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ] else if (correct) ...[
-                  const Text('（此難度暫無可獲得的原料）',
-                      style: TextStyle(color: Colors.white60, fontSize: 14)),
+                  const Text(
+                    '（此難度暫無可獲得的原料）',
+                    style: TextStyle(color: Colors.white60, fontSize: 14),
+                  ),
                 ] else
-                  const Text('再接再厲，換下一題試試！',
-                      style: TextStyle(color: Colors.white70, fontSize: 15)),
+                  const Text(
+                    '再接再厲，換下一題試試！',
+                    style: TextStyle(color: Colors.white70, fontSize: 15),
+                  ),
                 const SizedBox(height: 22),
                 GestureDetector(
                   onTap: _nextRound,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 44, vertical: 14),
+                      horizontal: 44,
+                      vertical: 14,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFD4A843),
                       borderRadius: BorderRadius.circular(26),
                     ),
-                    child: const Text('下一題',
-                        style: TextStyle(
-                          color: Color(0xFF2A1A0A),
-                          fontSize: 18,
-                          letterSpacing: 4,
-                          fontWeight: FontWeight.w800,
-                        )),
+                    child: const Text(
+                      '下一題',
+                      style: TextStyle(
+                        color: Color(0xFF2A1A0A),
+                        fontSize: 18,
+                        letterSpacing: 4,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -925,16 +952,21 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset('assets/icons/times_up.png',
-                  width: 280, errorBuilder: (_, _, _) => const SizedBox.shrink()),
+              Image.asset(
+                'assets/icons/times_up.png',
+                width: 280,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
               const SizedBox(height: 8),
-              const Text('資源採集結束',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    letterSpacing: 4,
-                    fontWeight: FontWeight.w600,
-                  )),
+              const Text(
+                '資源採集結束',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  letterSpacing: 4,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(height: 28),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -976,13 +1008,15 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
             width: 1.4,
           ),
         ),
-        child: Text(label,
-            style: TextStyle(
-              color: filled ? const Color(0xFF2A1A0A) : Colors.white,
-              fontSize: 17,
-              letterSpacing: 3,
-              fontWeight: FontWeight.w700,
-            )),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: filled ? const Color(0xFF2A1A0A) : Colors.white,
+            fontSize: 17,
+            letterSpacing: 3,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
     );
   }
@@ -993,14 +1027,12 @@ class _DifficultyCard extends StatelessWidget {
   final String name;
   final String imagePath;
   final int stars;
-  final String progress;
   final VoidCallback onTap;
 
   const _DifficultyCard({
     required this.name,
     required this.imagePath,
     required this.stars,
-    required this.progress,
     required this.onTap,
   });
 
@@ -1018,33 +1050,24 @@ class _DifficultyCard extends StatelessWidget {
             border: Border.all(color: const Color(0xFF8A6A40), width: 1.5),
             boxShadow: const [
               BoxShadow(
-                  color: Colors.black54, blurRadius: 14, offset: Offset(0, 6)),
+                color: Colors.black54,
+                blurRadius: 14,
+                offset: Offset(0, 6),
+              ),
             ],
           ),
           child: Column(
             children: [
-              // 進度條（已採集 / 總數）。
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 7),
-                color: const Color(0xF0241F19),
-                alignment: Alignment.center,
-                child: Text(progress,
-                    style: const TextStyle(
-                      color: Color(0xFFE8DCC0),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 2,
-                    )),
+              const SizedBox(height: 18),
+              Text(
+                name,
+                style: const TextStyle(
+                  color: Color(0xFF2A1A0A),
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 2,
+                ),
               ),
-              const SizedBox(height: 14),
-              Text(name,
-                  style: const TextStyle(
-                    color: Color(0xFF2A1A0A),
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 2,
-                  )),
               const SizedBox(height: 8),
               Expanded(
                 child: Stack(
@@ -1071,15 +1094,18 @@ class _DifficultyCard extends StatelessWidget {
                         children: [
                           for (var i = 0; i < stars; i++)
                             Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
                               child: Image.asset(
                                 'assets/icons/star.png',
-                                width: 42,
-                                height: 42,
+                                width: 80,
+                                height: 80,
                                 errorBuilder: (_, _, _) => const Icon(
-                                    Icons.star,
-                                    color: Color(0xFFD4A843),
-                                    size: 42),
+                                  Icons.star,
+                                  color: Color(0xFFD4A843),
+                                  size: 42,
+                                ),
                               ),
                             ),
                         ],
@@ -1143,21 +1169,25 @@ class _ChoiceTile extends StatelessWidget {
                     : const Color(0x33FFFFFF),
                 shape: BoxShape.circle,
               ),
-              child: Text('${index + 1}',
-                  style: TextStyle(
-                    color: selected ? const Color(0xFF2A1A0A) : Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                  )),
+              child: Text(
+                '${index + 1}',
+                style: TextStyle(
+                  color: selected ? const Color(0xFF2A1A0A) : Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(
-              child: Text(text,
-                  style: const TextStyle(
-                    color: Color(0xFFF0E8D8),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  )),
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: Color(0xFFF0E8D8),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
             // 語音選項：右側播放鈕（獨立點擊，不會觸發選取）。
             if (isAudio) ...[
@@ -1174,8 +1204,11 @@ class _ChoiceTile extends StatelessWidget {
                     shape: BoxShape.circle,
                     border: Border.all(color: const Color(0xFFD4A843)),
                   ),
-                  child: const Icon(Icons.play_arrow_rounded,
-                      color: Color(0xFFD4A843), size: 24),
+                  child: const Icon(
+                    Icons.play_arrow_rounded,
+                    color: Color(0xFFD4A843),
+                    size: 24,
+                  ),
                 ),
               ),
             ],
@@ -1204,7 +1237,10 @@ class _MicButton extends StatelessWidget {
         boxShadow: [
           if (recording)
             const BoxShadow(
-                color: Color(0x66FF6B5E), blurRadius: 24, spreadRadius: 4),
+              color: Color(0x66FF6B5E),
+              blurRadius: 24,
+              spreadRadius: 4,
+            ),
         ],
       ),
       child: Icon(

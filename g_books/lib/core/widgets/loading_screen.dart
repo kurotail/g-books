@@ -7,6 +7,23 @@ import '../theme/app_colors.dart';
 class LoadingScreen extends StatelessWidget {
   const LoadingScreen({super.key});
 
+  /// 圖片載入收尾：已在快取（同步載入）→ 立即顯示；否則解碼完成那刻平滑淡入，
+  /// 避免「啟動預載未命中或被快取淘汰」時露出純色底再硬跳出圖。
+  static Widget _fadeIn(
+    BuildContext context,
+    Widget child,
+    int? frame,
+    bool wasSynchronouslyLoaded,
+  ) {
+    if (wasSynchronouslyLoaded) return child;
+    return AnimatedOpacity(
+      opacity: frame == null ? 0 : 1,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
@@ -14,8 +31,13 @@ class LoadingScreen extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 背景圖（與其他頁一致；已於啟動時預載，故立即顯示不留白）。
-          Image.asset('assets/images/bg_login.png', fit: BoxFit.cover),
+          // 背景圖（與其他頁一致；已於啟動時預載，未命中時平滑淡入不硬跳）。
+          Image.asset(
+            'assets/images/bg_login.png',
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            frameBuilder: _fadeIn,
+          ),
           // 四周暈影，讓中央更聚焦。
           const Positioned.fill(
             child: DecoratedBox(
@@ -31,7 +53,12 @@ class LoadingScreen extends StatelessWidget {
           // logo 置中（略偏上）。
           Align(
             alignment: const Alignment(0, -0.12),
-            child: Image.asset('assets/logo.png', width: 340),
+            child: Image.asset(
+              'assets/logo.png',
+              width: 340,
+              gaplessPlayback: true,
+              frameBuilder: _fadeIn,
+            ),
           ),
           // 右下角轉圈。
           const Positioned(

@@ -86,8 +86,12 @@ abstract class TeacherService {
   Future<List<TeacherBuilding>> listBuildings();
 
   // ── 題庫匯入（POST /api/question/upload）────────────────────────────────────
-  /// 上傳題目音檔（敘述 / 選項 / 語音作答參考），回傳 `/audio/..` URL。
+  /// 上傳題目音檔（敘述 / 選項），回傳 `/audio/..` URL。
   Future<String> uploadQuestionAudio(List<int> bytes, String filename);
+
+  /// 把「語音作答題的參考音檔」經後端 STT（`POST /api/stt`）轉成辨識文字，當作可比對的
+  /// 答案。後端要求 WAV；服務不可用時拋例外（匯入端會略過該題並記錄）。
+  Future<String> transcribeQuestionAudio(List<int> bytes);
 
   /// 批次上傳題目（payload 形狀同後端 QuestionInput）。回傳逐題結果（與送出順序對應）。
   Future<List<QuestionUploadResult>> uploadQuestions(
@@ -267,6 +271,10 @@ class MockTeacherService implements TeacherService {
       '/audio/mock_$filename';
 
   @override
+  Future<String> transcribeQuestionAudio(List<int> bytes) async =>
+      '（mock 轉檔）';
+
+  @override
   Future<List<QuestionUploadResult>> uploadQuestions(
     List<Map<String, dynamic>> questions,
   ) async => [
@@ -420,6 +428,10 @@ class ApiTeacherService implements TeacherService {
   @override
   Future<String> uploadQuestionAudio(List<int> bytes, String filename) =>
       _client.uploadAudio(bytes, filename);
+
+  @override
+  Future<String> transcribeQuestionAudio(List<int> bytes) =>
+      _client.transcribeAudio(bytes);
 
   @override
   Future<List<QuestionUploadResult>> uploadQuestions(

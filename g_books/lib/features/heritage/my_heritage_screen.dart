@@ -40,7 +40,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
   bool _loading = true; // 預載期間蓋上載入畫面
   bool _loadingMounted = true; // 載入畫面淡出後才從樹上移除
   ComponentModel? _dragging; // 編輯模式下拖曳中的原料
-  int? _level = 1; // 底部背包等級篩選（null = 顯示全部原料）
+  int? _level; // 底部背包等級篩選（null = 顯示全部原料；進入編輯預設顯示全部）
 
   // 選單內容固定不變：只建一次並重用同一個 widget 實例。Flutter 對「與舊 widget
   // identical 的子樹」會略過重建，按鈕圖因此保持掛載、不會在面板動畫每幀或切到小組
@@ -159,9 +159,11 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
       ..._menuBtnAssets,
       'assets/images/bg_view.png',
       'assets/images/edit_grid.png',
-      'assets/icons/buttons/supply_station_btn.png',
+      'assets/icons/buttons/component_inventory.png',
       'assets/heritages/${_heritage.id}/main.png',
       for (final lv in const [1, 2, 3]) levelFrameImagePath(lv),
+      // 編輯模式等級切鈕內的難度區域 icon。
+      for (final k in _areaKeys) 'assets/heritages/${_heritage.id}/area/category_$k.png',
       for (final c in componentsOf(_heritage.id)) c.imagePath,
     ];
     // 先同步建立所有 precache future（在任何 await 之前用 context），缺圖以
@@ -878,7 +880,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
               children: [
                 Expanded(
                   child: Image.asset(
-                    'assets/icons/buttons/supply_station_btn.png',
+                    'assets/icons/buttons/component_inventory.png',
                     fit: BoxFit.contain,
                     errorBuilder: (_, _, _) => const Icon(
                       Icons.inventory_2_outlined,
@@ -997,8 +999,12 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     ),
   );
 
+  // 等級 → 對應難度區域 icon 的檔名（easy/mid/hard）。
+  static const List<String> _areaKeys = ['easy', 'mid', 'hard'];
+
   Widget _levelToggle(int level) {
     final on = _level == level;
+    final areaKey = _areaKeys[level - 1];
     return GestureDetector(
       // 再點一次目前選取的等級 → 取消篩選（顯示全部原料）。
       onTap: () => setState(() => _level = on ? null : level),
@@ -1008,12 +1014,29 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Opacity(
-              opacity: on ? 1.0 : 0.4,
-              child: Image.asset(
-                levelFrameImagePath(level),
-                fit: BoxFit.contain,
-                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            // 卡框（外框）。
+            Positioned.fill(
+              child: Opacity(
+                opacity: on ? 1.0 : 0.4,
+                child: Image.asset(
+                  levelFrameImagePath(level),
+                  fit: BoxFit.fill,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+            // 對應難度區域 icon：內縮置於卡框窗內（底部多留白避開卡框橫飾條）。
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(9, 8, 9, 12),
+                child: Opacity(
+                  opacity: on ? 1.0 : 0.4,
+                  child: Image.asset(
+                    'assets/heritages/${_heritage.id}/area/category_$areaKey.png',
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
+                ),
               ),
             ),
             if (on)
