@@ -67,13 +67,16 @@ def main():
     buildings = request("GET", f"{base}/api/building", token=token) or []
     existing = next((b for b in buildings if b.get("name") == HERITAGE_ID), None)
 
-    if existing:
-        bid = existing["building_id"]
-        print(f"==> 已存在 building_id={bid} → PUT 覆蓋")
-        res = request("PUT", f"{base}/api/building/{bid}", token=token, body=data)
-    else:
-        print("==> 尚無同名 building → POST 新建")
-        res = request("POST", f"{base}/api/building", token=token, body=data)
+    try:
+        if existing:
+            bid = existing["building_id"]
+            print(f"==> 已存在 building_id={bid} → PUT 覆蓋")
+            res = request("PUT", f"{base}/api/building/{bid}", token=token, body=data)
+        else:
+            print("==> 尚無同名 building → POST 新建")
+            res = request("POST", f"{base}/api/building", token=token, body=data)
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"!! 寫入 building 失敗 HTTP {e.code}：{e.read().decode('utf-8', 'replace')}")
 
     print(json.dumps(res, ensure_ascii=False, indent=2))
     print("==> 完成")
