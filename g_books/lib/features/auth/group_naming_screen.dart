@@ -16,6 +16,8 @@ class GroupNamingScreen extends StatefulWidget {
 
 class _GroupNamingScreenState extends State<GroupNamingScreen> {
   final _ctrl = TextEditingController();
+  bool _saving = false;
+  String? _error;
 
   @override
   void initState() {
@@ -30,10 +32,27 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
     super.dispose();
   }
 
-  void _confirm() {
+  Future<void> _confirm() async {
+    if (_saving) return;
     final name = _ctrl.text.trim();
-    if (name.isEmpty) return;
-    context.read<AppState>().setGroupName(name);
+    if (name.isEmpty) {
+      setState(() => _error = '請輸入小組名稱');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    // 命名 = 改帳號 username（後端會讓舊 token 失效，AppState 內會自動以新名重登）。
+    final err = await context.read<AppState>().setGroupName(name);
+    if (!mounted) return;
+    if (err != null) {
+      setState(() {
+        _saving = false;
+        _error = err;
+      });
+      return;
+    }
     context.go('/group-overview');
   }
 
@@ -117,6 +136,9 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
                       controller: _ctrl,
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white, fontSize: 18),
+                      onChanged: (_) {
+                        if (_error != null) setState(() => _error = null);
+                      },
                       decoration: InputDecoration(
                         hintText: '請輸入小組名稱',
                         hintStyle: const TextStyle(color: AppColors.inputHint, fontSize: 15),
@@ -140,11 +162,18 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
                         ),
                       ),
                     ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red, fontSize: 13),
+                      ),
+                    ],
                     const SizedBox(height: 32),
                     SizedBox(
                       width: 220,
                       child: ElevatedButton(
-                        onPressed: _confirm,
+                        onPressed: _saving ? null : _confirm,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.buttonDark,
                           foregroundColor: Colors.white,
@@ -154,14 +183,23 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
                           ),
                           elevation: 0,
                         ),
-                        child: const Text(
-                          '確 定',
-                          style: TextStyle(
-                            fontSize: 20,
-                            letterSpacing: 6,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                        child: _saving
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text(
+                                '確 定',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  letterSpacing: 6,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                       ),
                     ),
                   ],

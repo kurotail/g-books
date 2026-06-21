@@ -22,10 +22,10 @@ enum _Stage { picking, cropping, previewing, uploading }
 class UploadAvatarScreen extends StatefulWidget {
   final AvatarTarget target;
 
-  /// 當 [target] 為 [AvatarTarget.member] 時，要編輯的組員座號。
-  final String? memberSeat;
+  /// 當 [target] 為 [AvatarTarget.member] 時，要編輯的組員學號（student_id）。
+  final int? memberId;
 
-  const UploadAvatarScreen({super.key, required this.target, this.memberSeat});
+  const UploadAvatarScreen({super.key, required this.target, this.memberId});
 
   bool get isGroup => target == AvatarTarget.group;
 
@@ -148,7 +148,8 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
   /// 進入畫面時預覽框要顯示的既有頭像（裁切後改顯示裁切結果）。
   String? _initialAvatar(AppState state) {
     if (widget.isGroup) return state.currentGroup?.avatarUrl;
-    return state.memberBySeat(widget.memberSeat ?? '')?.personalAvatarUrl;
+    final id = widget.memberId;
+    return id == null ? null : state.memberById(id)?.avatarUrl;
   }
 
   // ── build ────────────────────────────────────────────────────────────────
@@ -369,7 +370,8 @@ class _UploadAvatarScreenState extends State<UploadAvatarScreen> {
 
   String _title(AppState state) {
     if (widget.isGroup) return '利用上傳或拍照功能建立小組頭像吧！';
-    final name = state.memberBySeat(widget.memberSeat ?? '')?.name ?? '組員';
+    final id = widget.memberId;
+    final name = (id == null ? null : state.memberById(id)?.name) ?? '組員';
     return '為 $name 上傳頭像吧！';
   }
 
