@@ -425,13 +425,15 @@ func questionPoolChecks(adminAccess, studentAccess string) {
 				"difficulty": itemDifficulty2,
 				"area":       1,
 			},
-			{ // area 2 -> drives the repair flow
+			{ // area 2 / difficulty 1 -> drives the repair flow (repair draws an area-2
+				// question matching the broken item's difficulty, here the type-10 item)
 				"content": map[string]any{
 					"description": map[string]any{"type": "text", "data": "Smoke Q3 repair: pick A"},
 					"choices":     map[string]any{"type": "text", "data": []string{"A", "B"}},
 				},
-				"answer": map[string]any{"type": "index", "data": []int{repairAreaAnswer}},
-				"area":   2,
+				"answer":     map[string]any{"type": "index", "data": []int{repairAreaAnswer}},
+				"difficulty": itemDifficulty1,
+				"area":       2,
 			},
 			{ // invalid: empty description, should be rejected rather than fail the batch
 				"content": map[string]any{"description": map[string]any{"type": "text", "data": ""}},

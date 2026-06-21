@@ -92,12 +92,13 @@ type Target struct {
 }
 
 type QuestionSession struct {
-	ExpiresAt time.Time
-	UserID    uint
-	Question  // embedded: the graded Description/Answer
-	Kind      SessionKind
-	ItemID    uint    // KindItem: the new item granted on a correct answer
-	Target    *Target // KindTarget: the slot to break/repair
+	ExpiresAt  time.Time
+	UserID     uint
+	Question   // embedded: the graded Description/Answer
+	Kind       SessionKind
+	ItemID     uint    // KindItem: the new item granted on a correct answer
+	Target     *Target // KindTarget: the slot to break/repair
+	QuestionID uint    // KindTarget repair: the answered question, bound to the item on a successful repair
 }
 
 // GenerateItemRequest is the body of POST /api/question/generate (NORMAL state).
