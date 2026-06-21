@@ -13,16 +13,16 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   provider: ^6.1.5
-  go_router: ^14.6.1
+  go_router: ^17.3.0
   image_picker: ^1.1.2
   crop_your_image: ^2.0.0
   path_provider: ^2.1.5
   fluttertoast: ^9.1.0
   flutter_markdown_plus: ^1.0.7
-  record: ^6.0.0          # 資源採集語音作答：錄音
+  record: ^7.1.0          # 資源採集語音作答：錄音
   audioplayers: ^6.1.0    # 語音題敘述 / 回放錄音作答
-  file_picker: ^8.1.6     # 教師端題庫匯入：選取 .zip
-  archive: ^3.6.1         # 教師端題庫匯入：解壓 quest.csv + audio/
+  file_picker: ^11.0.2     # 教師端題庫匯入：選取 .zip
+  archive: ^4.0.9         # 教師端題庫匯入：解壓 quest.csv + audio/
 
 dev_dependencies:
   flutter_test:
