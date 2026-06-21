@@ -62,10 +62,13 @@ class QuizAnswer {
 /// 作答結果（對應後端 `AnswerResponse`）。
 /// [itemId] 在「採集答對、後端入庫」時帶回（前端據此查背包顯示獲得的原料）；
 /// mock 不走伺服器入庫，[itemId] 為 null（由前端自行發獎）。
+/// [success] 僅 target（攻防戰攻擊 / 修復）session 帶回：是否真的打破 / 修復成功
+/// （後端：若該格損毀狀態已不允許則 false；答錯則後端省略 → 這裡為 null）。
 class QuizResult {
   final bool correct;
   final int? itemId;
-  const QuizResult({required this.correct, this.itemId});
+  final bool? success;
+  const QuizResult({required this.correct, this.itemId, this.success});
 }
 
 /// 題目來源抽象層。對應後端：
@@ -83,6 +86,15 @@ abstract class QuizService {
     required int difficulty,
   });
 
+  /// 攻防戰（QUIZ2）開一個攻擊 / 修復 session（對應 `POST /api/question/target`）。
+  /// - 攻擊：[targetUserId] 為別組、[targetSlotId] 為其未損毀格，答對→打破。
+  /// - 修復：[targetUserId] 為自己、[targetSlotId] 為自己損毀格，答對→修復。
+  /// 回傳的題目即該格元件綁定的題目（修復為後端給的修復題）。
+  Future<QuizQuestion> targetQuestion({
+    required int targetUserId,
+    required int targetSlotId,
+  });
+
   Future<QuizResult> submitAnswer(QuizAnswer answer);
 }
 
@@ -95,6 +107,8 @@ class MockQuizService implements QuizService {
   static const _netDelay = Duration(milliseconds: 350);
   int _seq = 0;
   final Map<String, int> _correctBySession = {};
+  // 攻防戰 target（攻擊 / 修復）session：submitAnswer 答對時回 success=true。
+  final Set<String> _targetSessions = {};
 
   @override
   Future<QuizQuestion> fetchQuestion({
@@ -102,6 +116,21 @@ class MockQuizService implements QuizService {
     required int difficulty,
   }) async {
     await Future<void>.delayed(_netDelay);
+    return _buildQuestion(difficulty);
+  }
+
+  @override
+  Future<QuizQuestion> targetQuestion({
+    required int targetUserId,
+    required int targetSlotId,
+  }) async {
+    await Future<void>.delayed(_netDelay);
+    final q = _buildQuestion(1);
+    _targetSessions.add(q.session);
+    return q;
+  }
+
+  QuizQuestion _buildQuestion(int difficulty) {
     final session =
         '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}_$_seq';
     final kind = _seq % 4;
@@ -168,13 +197,19 @@ class MockQuizService implements QuizService {
   @override
   Future<QuizResult> submitAnswer(QuizAnswer answer) async {
     await Future<void>.delayed(_netDelay);
+    final isTarget = _targetSessions.remove(answer.session);
+    final bool correct;
     if (answer.audioBase64 != null) {
       // 語音作答：mock 無法驗證，視為正確（之後由後端判定）。
-      return const QuizResult(correct: true);
+      correct = true;
+    } else {
+      final c = _correctBySession[answer.session];
+      correct = c != null && answer.choiceIndex == c;
     }
-    final correct = _correctBySession[answer.session];
     return QuizResult(
-      correct: correct != null && answer.choiceIndex == correct,
+      correct: correct,
+      // target（攻擊 / 修復）session 答對 → 視為成功。
+      success: isTarget ? correct : null,
     );
   }
 }
@@ -197,6 +232,18 @@ class ApiQuizService implements QuizService {
   }
 
   @override
+  Future<QuizQuestion> targetQuestion({
+    required int targetUserId,
+    required int targetSlotId,
+  }) async {
+    final m = await _client.sendJson('POST', '/api/question/target', body: {
+      'target_user_id': targetUserId,
+      'target_slot_id': targetSlotId,
+    }) as Map<String, dynamic>;
+    return _parseQuestion(m);
+  }
+
+  @override
   Future<QuizResult> submitAnswer(QuizAnswer answer) async {
     final m = await _client.sendJson('POST', '/api/question/answer', body: {
       'session': answer.session,
@@ -206,6 +253,8 @@ class ApiQuizService implements QuizService {
     return QuizResult(
       correct: m['correct'] == true,
       itemId: (itemId != null && itemId != 0) ? itemId : null,
+      // target session 才有 success；採集 session 後端省略 → null。
+      success: m.containsKey('success') ? m['success'] == true : null,
     );
   }
 

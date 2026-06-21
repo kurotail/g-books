@@ -52,6 +52,9 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
   GamePhase? _gamePhase;
   StreamSubscription<GameStateSnapshot>? _gameSub;
   bool get _collectionUnlocked => _gamePhase == GamePhase.quiz1;
+  bool get _fightUnlocked => _gamePhase == GamePhase.quiz2;
+  // 進入 quiz2 時自動跳轉攻防戰一次；離開 quiz2 後重置（避免從攻防戰返回時又被推回去）。
+  bool _fightAutoNavigated = false;
 
   // 左上角面板選單按鈕圖：先 precache 進 ImageCache，面板每次展開時
   // Image.asset 直接命中快取，不會再有逐張解碼造成的閃爍。
@@ -137,6 +140,17 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
         _gamePhase = phase;
         _menuCache = null; // 解鎖狀態變了 → 重建選單以反映
       });
+      // 收到攻防戰階段 → 自動跳轉進攻防戰（只跳一次；攻防戰按鈕供中途離開者重進）。
+      if (phase == GamePhase.quiz2) {
+        if (!_fightAutoNavigated) {
+          _fightAutoNavigated = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _openFight();
+          });
+        }
+      } else {
+        _fightAutoNavigated = false;
+      }
     }
 
     svc.fetch().then((s) => apply(s.phase));
@@ -247,6 +261,13 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     final goEdit = await context.push<bool>('/resource-collection');
     if (!mounted) return;
     if (goEdit == true) _enterEdit();
+  }
+
+  /// 進入攻防戰（quiz2）。本頁保持掛載於背景，攻防戰頁以新路由覆蓋；返回時回到本頁。
+  void _openFight() {
+    setState(() => _isPanelOpen = false);
+    _panelCtrl.reverse();
+    context.push('/fight');
   }
 
   /// 開始拆卸確認：記住目前鏡頭、推近聚焦該 slot（置中、留左側空間給確認框），
@@ -1114,12 +1135,12 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     final group = state.currentGroup;
     final avatarPath = group?.avatarUrl;
     final groupName = group?.name ?? '';
-    final groupId = group?.id;
+    final username = group?.username ?? '';
 
     return AnimatedBuilder(
       animation: _panelCurve,
       builder: (_, _) =>
-          _panelSurface(_panelCurve.value, avatarPath, groupName, groupId),
+          _panelSurface(_panelCurve.value, avatarPath, groupName, username),
     );
   }
 
@@ -1129,7 +1150,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     double t,
     String? avatarPath,
     String groupName,
-    int? groupId,
+    String username,
   ) {
     final tc = t.clamp(0.0, 1.0);
     return Container(
@@ -1152,7 +1173,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
               children: [
                 AvatarFrame(size: 52, imageUrl: avatarPath),
                 const SizedBox(width: 10),
-                Expanded(child: _panelHeaderText(groupName, groupId)),
+                Expanded(child: _panelHeaderText(groupName, username)),
                 Transform.rotate(
                   angle: tc * math.pi,
                   child: const Icon(
@@ -1179,8 +1200,8 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     );
   }
 
-  /// 標頭文字：常駐顯示組名與 GROUP 編號。
-  Widget _panelHeaderText(String groupName, int? groupId) {
+  /// 標頭文字：常駐顯示組名（display_name）與小組帳號（username，老師設定的登入名稱）。
+  Widget _panelHeaderText(String groupName, String username) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1196,13 +1217,15 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
             letterSpacing: 1,
           ),
         ),
-        if (groupId != null)
+        if (username.isNotEmpty)
           Text(
-            'GROUP $groupId',
+            username,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Colors.white38,
               fontSize: 11,
-              letterSpacing: 2,
+              letterSpacing: 1,
             ),
           ),
       ],
@@ -1217,6 +1240,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
         const SizedBox(height: 8),
         const Divider(color: Colors.white12, height: 1),
         const SizedBox(height: 6),
+        // 攻防戰階段：只開放「古蹟資訊」與「攻防戰」，其餘按鈕停用。
         _menuBtn(
           'assets/icons/buttons/heritages_info_btn.png',
           '古蹟資訊',
@@ -1225,7 +1249,8 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
         _menuBtn(
           'assets/icons/buttons/edit_heritages_btn.png',
           '編輯古蹟',
-          onTap: _enterEdit,
+          onTap: _fightUnlocked ? null : _enterEdit,
+          locked: _fightUnlocked,
         ),
         _menuBtn(
           'assets/icons/buttons/component_collection_btn.png',
@@ -1236,8 +1261,8 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
         _menuBtn(
           'assets/icons/buttons/fight_btn.png',
           '攻防戰',
-          onTap: null,
-          locked: true,
+          onTap: _fightUnlocked ? _openFight : null,
+          locked: !_fightUnlocked,
         ),
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 6),
@@ -1247,9 +1272,13 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
           null,
           '小組資訊',
           icon: Icons.groups_rounded,
-          onTap: _openGroupOverview,
+          onTap: _fightUnlocked ? null : _openGroupOverview,
+          locked: _fightUnlocked,
         ),
-        _menuBtn(null, '登出', icon: Icons.logout_rounded, onTap: _logout),
+        _menuBtn(null, '登出',
+            icon: Icons.logout_rounded,
+            onTap: _fightUnlocked ? null : _logout,
+            locked: _fightUnlocked),
       ],
     );
   }

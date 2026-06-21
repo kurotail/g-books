@@ -68,6 +68,8 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
   final AudioPlayer _player = AudioPlayer();
   bool _recording = false;
   String? _recordedPath;
+  String? _playingId; // 目前播放中的音源（'prompt' / 'choice:<i>' / 'clip'）；null = 沒在播
+  StreamSubscription<void>? _playCompleteSub;
   bool _assetsPrecached = false;
 
   static const _areaKeys = ['easy', 'mid', 'hard'];
@@ -83,6 +85,10 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
     _board = context.read<HeritageBoardController>();
     _appState = context.read<AppState>();
     _progressSvc = context.read<CollectionProgressService>();
+    // 播放自然結束 → 還原播放鈕圖示為 ▶（手動停止 / 切換另一音源時各自清除）。
+    _playCompleteSub = _player.onPlayerComplete.listen((_) {
+      if (mounted) setState(() => _playingId = null);
+    });
     _initGameState();
   }
 
@@ -162,6 +168,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
     if (!mounted) return;
     setState(() {
       _recording = false;
+      _playingId = null;
       _remaining = Duration.zero;
       _phase = _Phase.timeUp;
     });
@@ -171,6 +178,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
   void dispose() {
     _ticker?.cancel();
     _stateSub?.cancel();
+    _playCompleteSub?.cancel();
     _recorder.dispose();
     _player.dispose();
     super.dispose();
@@ -231,6 +239,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         _selected = null;
         _recordedPath = null;
         _recording = false;
+        _playingId = null;
         _phase = _Phase.answering;
       });
     } catch (_) {
@@ -243,10 +252,14 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
   Future<void> _submitChoice() async {
     if (_selected == null || _submitting || _q == null) return;
     setState(() => _submitting = true);
-    final res = await _quizSvc.submitAnswer(
-      QuizAnswer.choice(_q!.session, _selected!),
-    );
-    await _handleResult(res);
+    try {
+      final res = await _quizSvc.submitAnswer(
+        QuizAnswer.choice(_q!.session, _selected!),
+      );
+      await _handleResult(res);
+    } catch (_) {
+      _onSubmitFailed();
+    }
   }
 
   Future<void> _submitAudio() async {
@@ -262,8 +275,29 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       _toast('讀取錄音失敗');
       return;
     }
-    final res = await _quizSvc.submitAnswer(QuizAnswer.audio(_q!.session, b64));
-    await _handleResult(res);
+    try {
+      final res =
+          await _quizSvc.submitAnswer(QuizAnswer.audio(_q!.session, b64));
+      await _handleResult(res);
+    } catch (_) {
+      _onSubmitFailed();
+    }
+  }
+
+  /// 送出作答失敗（連線錯誤 / session 逾時等）：解除「送出中」並退回選關卡重新取題。
+  /// 難題思考較久時，後端 session（15 分鐘 TTL）可能在按下確認前就過期而回 400；
+  /// 過去未接住此例外會讓 [_submitting] 永遠為 true、確認鈕一直轉圈且無法離開（卡死）。
+  void _onSubmitFailed() {
+    if (!mounted) return;
+    _toast('作答送出失敗，題目可能已逾時，請重新挑戰');
+    setState(() {
+      _submitting = false;
+      _q = null;
+      _selected = null;
+      _recordedPath = null;
+      _recording = false;
+      _phase = _Phase.picking;
+    });
   }
 
   Future<void> _handleResult(QuizResult res) async {
@@ -271,9 +305,14 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
     if (res.correct) {
       if (res.itemId != null) {
         // 後端：物品已由伺服器入庫，刷新背包後依 item_id 查出對應原料。
-        await _board.refresh();
-        final type = _board.typeOfItemId(res.itemId!);
-        reward = type != null ? componentById(_hid, type) : null;
+        // 刷新失敗不影響「答對」結果（原料回我的古蹟仍會顯示），故吞掉例外、照樣顯示答對。
+        try {
+          await _board.refresh();
+          final type = _board.typeOfItemId(res.itemId!);
+          reward = type != null ? componentById(_hid, type) : null;
+        } catch (_) {
+          reward = null;
+        }
       } else {
         // 本機 mock：依難度隨機發一個對應等級的原料到背包。
         reward = await _board.grantRandomOfLevel(_difficulty);
@@ -289,12 +328,14 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
   }
 
   void _nextRound() {
+    unawaited(_player.stop());
     setState(() {
       _round++;
       _q = null;
       _selected = null;
       _recordedPath = null;
       _recording = false;
+      _playingId = null;
       _result = null;
       _reward = null;
       _phase = _Phase.roundIntro;
@@ -347,28 +388,39 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
 
   /// 重錄：清掉已錄好的片段，回到「按壓麥克風作答」狀態，重新長按錄音。
   Future<void> _reRecord() async {
-    try {
-      await _player.stop();
-    } catch (_) {}
+    await _stopPlay();
     if (!mounted) return;
     setState(() => _recordedPath = null);
   }
 
-  Future<void> _playUrl(String url) async {
+  /// 開始播放某音源並記為「播放中」（先停掉目前播放的；自然播畢由 onPlayerComplete 清除）。
+  Future<void> _startPlay(String id, Source source, String errMsg) async {
     try {
       await _player.stop();
-      await _player.play(UrlSource(url));
+      if (!mounted) return;
+      setState(() => _playingId = id);
+      await _player.play(source);
     } catch (_) {
-      _toast('語音載入失敗（mock 無音檔）');
+      if (mounted) setState(() => _playingId = null);
+      _toast(errMsg);
     }
   }
 
-  Future<void> _playFile(String path) async {
+  /// 停止播放並清除「播放中」狀態（圖示還原為 ▶）。
+  Future<void> _stopPlay() async {
     try {
       await _player.stop();
-      await _player.play(DeviceFileSource(path));
-    } catch (_) {
-      _toast('無法播放錄音');
+    } catch (_) {}
+    if (mounted) setState(() => _playingId = null);
+  }
+
+  /// 切換播放／停止：正在播放此音源 → 停止；否則開始播放。供試聽與語音選項播放鈕共用，
+  /// 按下後圖示在 ▶ 與 ⏹ 間切換（含動畫）。
+  Future<void> _togglePlay(String id, Source source, String errMsg) async {
+    if (_playingId == id) {
+      await _stopPlay();
+    } else {
+      await _startPlay(id, source, errMsg);
     }
   }
 
@@ -610,8 +662,11 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
           ),
           const SizedBox(height: 18),
           GestureDetector(
-            onTap: () =>
-                _playUrl(resolveMediaUrl(q.prompt.data) ?? q.prompt.data),
+            onTap: () => _startPlay(
+              'prompt',
+              UrlSource(resolveMediaUrl(q.prompt.data) ?? q.prompt.data),
+              '語音載入失敗（mock 無音檔）',
+            ),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
               decoration: BoxDecoration(
@@ -694,8 +749,15 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
               text: audio ? '選項 ${i + 1}' : raw,
               audioUrl: url,
               selected: _selected == i,
+              playing: _playingId == 'choice:$i',
               onTap: _submitting ? null : () => setState(() => _selected = i),
-              onPlay: url == null ? null : () => _playUrl(url),
+              onPlay: url == null
+                  ? null
+                  : () => _togglePlay(
+                        'choice:$i',
+                        UrlSource(url),
+                        '語音載入失敗（mock 無音檔）',
+                      ),
             );
           }(),
         ],
@@ -714,6 +776,7 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
 
   Widget _recordPanel() {
     final hasClip = _recordedPath != null && !_recording;
+    final clipPlaying = _playingId == 'clip';
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -738,9 +801,15 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
           children: [
             if (hasClip) ...[
               _smallPill(
-                icon: Icons.play_arrow_rounded,
-                label: '試聽',
-                onTap: () => _playFile(_recordedPath!),
+                icon: clipPlaying
+                    ? Icons.stop_rounded
+                    : Icons.play_arrow_rounded,
+                label: clipPlaying ? '停止' : '試聽',
+                onTap: () => _togglePlay(
+                  'clip',
+                  DeviceFileSource(_recordedPath!),
+                  '無法播放錄音',
+                ),
               ),
               const SizedBox(width: 14),
               _smallPill(
@@ -817,7 +886,18 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: const Color(0xFF4A3A28), size: 20),
+            // 圖示在 ▶／⏹ 間切換時做縮放淡入動畫（試聽⇄停止）。
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              transitionBuilder: (child, anim) =>
+                  ScaleTransition(scale: anim, child: child),
+              child: Icon(
+                icon,
+                key: ValueKey(icon),
+                color: const Color(0xFF4A3A28),
+                size: 20,
+              ),
+            ),
             const SizedBox(width: 6),
             Text(
               label,
@@ -1129,6 +1209,7 @@ class _ChoiceTile extends StatelessWidget {
   final String text;
   final String? audioUrl; // 非 null → 語音選項，顯示播放鈕
   final bool selected;
+  final bool playing; // 此選項音檔正在播放 → 播放鈕顯示 ⏹（停止）
   final VoidCallback? onTap;
   final VoidCallback? onPlay;
 
@@ -1138,6 +1219,7 @@ class _ChoiceTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.audioUrl,
+    this.playing = false,
     this.onPlay,
   });
 
@@ -1195,19 +1277,32 @@ class _ChoiceTile extends StatelessWidget {
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: onPlay,
-                child: Container(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
                   width: 40,
                   height: 40,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: const Color(0x33D4A843),
+                    // 播放中以實心底色強調，停止後回到半透明。
+                    color: playing
+                        ? const Color(0xFFD4A843)
+                        : const Color(0x33D4A843),
                     shape: BoxShape.circle,
                     border: Border.all(color: const Color(0xFFD4A843)),
                   ),
-                  child: const Icon(
-                    Icons.play_arrow_rounded,
-                    color: Color(0xFFD4A843),
-                    size: 24,
+                  // ▶／⏹ 切換時做縮放淡入動畫。
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    transitionBuilder: (child, anim) =>
+                        ScaleTransition(scale: anim, child: child),
+                    child: Icon(
+                      playing ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                      key: ValueKey(playing),
+                      color: playing
+                          ? const Color(0xFF2A1A0A)
+                          : const Color(0xFFD4A843),
+                      size: 24,
+                    ),
                   ),
                 ),
               ),

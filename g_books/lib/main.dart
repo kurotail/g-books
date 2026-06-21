@@ -12,6 +12,7 @@ import 'services/heritage_sync_service.dart';
 import 'services/game_state_service.dart';
 import 'services/api_game_state_service.dart';
 import 'services/quiz_service.dart';
+import 'services/fight_service.dart';
 import 'services/collection_progress_service.dart';
 import 'services/teacher_service.dart';
 import 'services/account_service.dart';
@@ -74,6 +75,10 @@ Future<void> main() async {
   final QuizService quizService =
       kUseBackend ? ApiQuizService(apiClient) : MockQuizService();
 
+  // 攻防戰（QUIZ2）：全體組別狀態 / 戰況事件 / 排行榜。後端對接點預留（見 後端功能.md）。
+  final FightService fightService =
+      kUseBackend ? ApiFightService(apiClient) : MockFightService();
+
   // 遊戲狀態（階段 + 倒數開始時間）。mock 版還原 / 建立場次以便重啟後接續採集進度；
   // API 版讀後端 /api/state。
   final GameStateService gameStateService;
@@ -105,6 +110,7 @@ Future<void> main() async {
         Provider<HeritageConfigService>.value(value: configService),
         Provider<GameStateService>.value(value: gameStateService),
         Provider<QuizService>.value(value: quizService),
+        Provider<FightService>.value(value: fightService),
         Provider<TeacherService>.value(value: teacherService),
         Provider<AccountService>.value(value: accountService),
         Provider<CollectionProgressService>.value(
@@ -116,21 +122,28 @@ Future<void> main() async {
   );
 }
 
-/// 在 `runApp` 前把資產圖解碼進全域 ImageCache（無 context 版的 precache）。
+/// 啟動時釘住的圖片串流：永久保留其 listener，讓 logo / 各頁背景成為「live image」，
+/// 不會被之後古蹟頁大量預載擠出 ImageCache。否則它們只是普通 LRU 快取項、會被淘汰，
+/// loading 介面便得在古蹟圖解碼忙碌時重解碼 logo → 偶爾畫面已過去仍只剩背景與轉圈。
+final List<ImageStream> _pinnedImageStreams = [];
+
+/// 在 `runApp` 前把資產圖解碼進全域 ImageCache（無 context 版的 precache）並「釘住」不放
+/// （見 [_pinnedImageStreams]），確保 loading 介面每次都同步命中、立即顯示 logo 與背景。
 /// 缺圖以 onError 吞掉，避免卡住啟動。
 Future<void> _warmImage(String asset) {
   final completer = Completer<void>();
   final stream = AssetImage(asset).resolve(ImageConfiguration.empty);
-  late final ImageStreamListener listener;
+  // 永久持有 stream 與其 listener（不 removeListener）→ 該圖留在 live image cache、不淘汰。
+  _pinnedImageStreams.add(stream);
   void done() {
-    stream.removeListener(listener);
     if (!completer.isCompleted) completer.complete();
   }
 
-  listener = ImageStreamListener(
-    (_, _) => done(),
-    onError: (_, _) => done(),
+  stream.addListener(
+    ImageStreamListener(
+      (_, _) => done(),
+      onError: (_, _) => done(),
+    ),
   );
-  stream.addListener(listener);
   return completer.future;
 }

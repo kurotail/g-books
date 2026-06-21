@@ -9,6 +9,7 @@ import 'features/auth/group_overview_screen.dart';
 import 'features/heritage/heritage_selection_screen.dart';
 import 'features/heritage/my_heritage_screen.dart';
 import 'features/heritage/resource_collection_screen.dart';
+import 'features/fight/fight_screen.dart';
 import 'features/admin/staff_login_screen.dart';
 import 'features/admin/admin_home_screen.dart';
 import 'features/admin/admin_editor_screen.dart';
@@ -94,6 +95,11 @@ class _GBooksAppState extends State<GBooksApp> {
           path: '/resource-collection',
           pageBuilder: (_, state) =>
               _fadePage(state, const ResourceCollectionScreen()),
+        ),
+        // 攻防戰（quiz2）：QUIZ2 階段由我的古蹟自動跳入（或攻防戰按鈕重進）。
+        GoRoute(
+          path: '/fight',
+          pageBuilder: (_, state) => _fadePage(state, const FightScreen()),
         ),
       ],
     );

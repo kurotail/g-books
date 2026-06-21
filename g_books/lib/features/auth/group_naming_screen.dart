@@ -43,7 +43,7 @@ class _GroupNamingScreenState extends State<GroupNamingScreen> {
       _saving = true;
       _error = null;
     });
-    // 命名 = 改帳號 username（後端會讓舊 token 失效，AppState 內會自動以新名重登）。
+    // 命名 = 改顯示名稱 display_name（不影響登入帳號 / token，免重新登入）。
     final err = await context.read<AppState>().setGroupName(name);
     if (!mounted) return;
     if (err != null) {

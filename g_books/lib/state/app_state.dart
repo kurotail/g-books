@@ -13,7 +13,7 @@ const String _kDefaultHeritageId = 'beigang_chaotian_temple';
 
 /// App 全域狀態（學生端 + 後台 session）。
 ///
-/// 新模型「一組一帳號」：一個登入帳號 = 一個小組（[currentGroup]，name=username、
+/// 新模型「一組一帳號」：一個登入帳號 = 一個小組（[currentGroup]，name=display_name、
 /// 頭像=帳號 pfp）；組員是後端 `students` 名冊（[groupMembers]，非帳號）。
 class AppState extends ChangeNotifier {
   final AvatarService avatarService;
@@ -28,12 +28,11 @@ class AppState extends ChangeNotifier {
   // ── 學生（小組）session ─────────────────────────────────────────────────────
   bool _loggedIn = false;
   int _userId = 0; // 後端 user_id（背包 / 物品端點皆以此指涉本帳號）
-  GroupModel? _group; // 登入的小組（id=user_id、name=username、avatarUrl=帳號 pfp）
+  GroupModel? _group; // 登入的小組（id=user_id、name=display_name、avatarUrl=帳號 pfp）
   List<RosterStudent> _members = const []; // 本組名冊成員
   bool _setupComplete = false;
   int _buildingId = 0;
   String? _assignedHeritageId;
-  String? _password; // 改名（=改 username）後需以新名重登，故記住密碼
 
   // ── 後台（教師 / 管理者）session ───────────────────────────────────────────
   StaffAccount? _currentStaff;
@@ -157,15 +156,20 @@ class AppState extends ChangeNotifier {
         return '此帳號非小組帳號，請改用教師 / 管理者登入';
       }
 
-      _password = p;
       _userId = (me['id'] as num?)?.toInt() ?? 0;
       _buildingId = (me['building_id'] as num?)?.toInt() ?? 0;
       final pfp = (me['profile_pic_url'] as String?) ?? '';
+      // 顯示用組名取 display_name（與登入帳號 username 分離；新帳號預設等於 username）。
+      final dn = (me['display_name'] as String?)?.trim() ?? '';
       final studentIds = ((me['students'] as List?) ?? const [])
           .map((x) => (x as num).toInt())
           .toList();
-      _group =
-          GroupModel(id: _userId, name: u, avatarUrl: pfp.isEmpty ? null : pfp);
+      _group = GroupModel(
+        id: _userId,
+        name: dn.isEmpty ? u : dn,
+        username: u,
+        avatarUrl: pfp.isEmpty ? null : pfp,
+      );
       _setupComplete = pfp.isNotEmpty; // 已設組徽＝視為已完成首次設定
       _loggedIn = true;
 
@@ -186,7 +190,7 @@ class AppState extends ChangeNotifier {
     }
     final g = match.first;
     _userId = g.id;
-    _group = GroupModel(id: g.id, name: u, avatarUrl: g.avatarUrl);
+    _group = GroupModel(id: g.id, name: u, username: g.username, avatarUrl: g.avatarUrl);
     _members = [for (final id in g.studentIds) ?_rosterById(id)]
       ..sort((a, b) => a.id.compareTo(b.id));
     _setupComplete = g.avatarUrl != null;
@@ -338,9 +342,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 小組命名 = 改自己的登入帳號 username（`POST /api/users/username`）。成功回 null、
-  /// 失敗回錯誤訊息。後端改名後舊 token 立即失效，故成功後以「新名 + 記住的密碼」透明
-  /// 重新登入一次（使用者無感）。
+  /// 小組命名 = 改自己的顯示名稱 display_name（`POST /api/users/display_name`）。
+  /// 顯示名稱與登入帳號（username）分離：改名不動到登入帳號、背包、名冊與現有 token，
+  /// 故免重新登入；顯示名稱可重複（後端不要求唯一）。成功回 null、失敗回錯誤訊息。
   Future<String?> setGroupName(String name) async {
     final newName = name.trim();
     if (newName.isEmpty) return '請輸入小組名稱';
@@ -350,22 +354,13 @@ class AppState extends ChangeNotifier {
       try {
         await _api.sendJson(
           'POST',
-          '/api/users/username',
-          body: {'username': newName},
+          '/api/users/display_name',
+          body: {'display_name': newName},
         );
       } on ApiException catch (e) {
-        return e.statusCode == 409 ? '此組名已被使用，請換一個' : '命名失敗（${e.statusCode}）';
+        return '命名失敗（${e.statusCode}）';
       } catch (_) {
         return '命名失敗，請稍後再試';
-      }
-      // 改名後舊 token 失效 → 用新名 + 記住的密碼重登。
-      final pw = _password;
-      if (pw != null) {
-        try {
-          await _api.login(newName, pw);
-        } catch (_) {
-          return '已改名，請重新登入';
-        }
       }
     }
     _group?.name = newName;
@@ -386,7 +381,6 @@ class AppState extends ChangeNotifier {
     _setupComplete = false;
     _buildingId = 0;
     _assignedHeritageId = null;
-    _password = null;
     _currentStaff = null;
     _api?.clearTokens();
     notifyListeners();
