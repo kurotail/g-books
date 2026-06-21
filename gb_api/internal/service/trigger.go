@@ -97,6 +97,35 @@ func (s *TriggerSvc) randomTypeForDifficulty(buildingID, difficulty uint) (uint,
 	return types[mrand.Intn(len(types))], true, nil
 }
 
+type targetKind int
+
+const (
+	targetInvalid targetKind = iota
+	targetAttack             // another user's intact slot
+	targetRepair             // the caller's own broken slot
+)
+
+// classifyTarget decides what a (caller, owner, slot) triple represents. v is the signed
+// slot value: 0 = empty, > 0 = intact item, < 0 = broken item.
+func classifyTarget(v int, callerID, ownerID uint) targetKind {
+	switch {
+	case v > 0 && ownerID != callerID:
+		return targetAttack
+	case v < 0 && ownerID == callerID:
+		return targetRepair
+	default:
+		return targetInvalid
+	}
+}
+
+// slotItemID returns the item id held in a slot value (its magnitude; negative = broken).
+func slotItemID(v int) uint {
+	if v < 0 {
+		return uint(-v)
+	}
+	return uint(v)
+}
+
 func (s *TriggerSvc) itemIDQuestion(id uint) (*model.Question, int, error) {
 	it, found, err := s.items.GetItem(id)
 	if err != nil {
@@ -136,26 +165,14 @@ func (s *TriggerSvc) GenerateTarget(accessToken string, targetUserID uint, targe
 	if !ok || v == 0 {
 		return nil, http.StatusBadRequest, fmt.Errorf("目標格子沒有物品")
 	}
-	// v is the signed slot value (negative = broken); the item id is its magnitude.
-	itemID := v
-	if itemID < 0 {
-		itemID = -itemID
-	}
-	slotQ, status, err := s.itemIDQuestion(uint(itemID))
-	if err != nil {
-		return nil, status, err
-	}
 
-	attack := targetUserID != caller.ID && v > 0
-	repair := targetUserID == caller.ID && v < 0
-	if !attack && !repair {
-		return nil, http.StatusBadRequest, fmt.Errorf("無效的目標")
-	}
-
-	// A failed attack bars the attacker from this slot until it is repaired.
-	// TODO: teacher/admin bypass
+	// Validate the target before doing any item/question lookup.
 	var q model.Question
-	if attack {
+	var questionID uint // repair: the answered question, bound to the item on a correct answer
+	switch classifyTarget(v, caller.ID, targetUserID) {
+	case targetAttack:
+		// A failed attack bars the attacker from this slot until it is repaired.
+		// TODO: teacher/admin bypass
 		blocked, err := s.blocks.IsAttackBlocked(targetUserID, targetSlotID, caller.ID)
 		if err != nil {
 			return nil, http.StatusInternalServerError, err
@@ -163,9 +180,19 @@ func (s *TriggerSvc) GenerateTarget(accessToken string, targetUserID uint, targe
 		if blocked {
 			return nil, http.StatusForbidden, fmt.Errorf("攻擊失敗後需等待此格子修復才能再次攻擊")
 		}
+		// The graded question is the slotted item's own question (v > 0).
+		slotQ, status, err := s.itemIDQuestion(uint(v))
+		if err != nil {
+			return nil, status, err
+		}
 		q = *slotQ
-	} else {
-		_, gq, found, err := s.question.RandomQuestion(2, &slotQ.Difficulty)
+	case targetRepair:
+		// The graded question is a random area-2 question of the broken item's difficulty.
+		slotQ, status, err := s.itemIDQuestion(slotItemID(v))
+		if err != nil {
+			return nil, status, err
+		}
+		rqid, gq, found, err := s.question.RandomQuestion(2, &slotQ.Difficulty)
 		if err != nil {
 			return nil, http.StatusInternalServerError, err
 		}
@@ -173,13 +200,17 @@ func (s *TriggerSvc) GenerateTarget(accessToken string, targetUserID uint, targe
 			return nil, http.StatusBadRequest, fmt.Errorf("area 2 沒有題目")
 		}
 		q = gq
+		questionID = rqid
+	default:
+		return nil, http.StatusBadRequest, fmt.Errorf("無效的目標")
 	}
 
 	id, err := s.question.StoreSession(model.QuestionSession{
-		UserID:   caller.ID,
-		Question: q,
-		Kind:     model.KindTarget,
-		Target:   &model.Target{UserID: targetUserID, SlotID: targetSlotID},
+		UserID:     caller.ID,
+		Question:   q,
+		Kind:       model.KindTarget,
+		Target:     &model.Target{UserID: targetUserID, SlotID: targetSlotID},
+		QuestionID: questionID,
 	})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
@@ -217,21 +248,11 @@ func (s *TriggerSvc) Answer(accessToken, session string, raw json.RawMessage) ([
 			resp.ItemID = qs.ItemID
 		}
 	case model.KindTarget:
-		if qs.Target != nil {
-			if correct {
-				success, err := s.applyTarget(qs.UserID, *qs.Target)
-				if err != nil {
-					return nil, http.StatusInternalServerError, err
-				}
-				resp.Success = &success
-			} else if qs.Target.UserID != qs.UserID {
-				// A failed attack (not a repair) bars this attacker from the slot
-				// until it is repaired.
-				if err := s.blocks.AddAttackBlock(qs.Target.UserID, qs.Target.SlotID, qs.UserID); err != nil {
-					return nil, http.StatusInternalServerError, err
-				}
-			}
+		success, err := s.applyTargetAnswer(qs, correct)
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
 		}
+		resp.Success = success
 	}
 
 	data, err := json.Marshal(resp)
@@ -241,27 +262,46 @@ func (s *TriggerSvc) Answer(accessToken, session string, raw json.RawMessage) ([
 	return data, http.StatusOK, nil
 }
 
-func (s *TriggerSvc) applyTarget(callerID uint, t model.Target) (bool, error) {
+func (s *TriggerSvc) applyTargetAnswer(qs model.QuestionSession, correct bool) (*bool, error) {
+	if qs.Target == nil {
+		return nil, nil
+	}
+	if correct {
+		success, err := s.applyTarget(qs.UserID, *qs.Target, qs.QuestionID)
+		if err != nil {
+			return nil, err
+		}
+		return &success, nil
+	}
+	// A failed attack (not a repair) bars this attacker from the slot until it is repaired.
+	if qs.Target.UserID != qs.UserID {
+		if err := s.blocks.AddAttackBlock(qs.Target.UserID, qs.Target.SlotID, qs.UserID); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+func (s *TriggerSvc) applyTarget(callerID uint, t model.Target, questionID uint) (bool, error) {
 	slots, err := s.inv.QuerySlot(t.UserID)
 	if err != nil {
 		return false, err
 	}
-	v, ok := slots[t.SlotID]
-	if !ok || v == 0 {
-		return false, nil
-	}
-	attack := t.UserID != callerID
-	if attack && v < 0 { // already broken
-		return false, nil
-	}
-	if !attack && v > 0 { // not broken, nothing to repair
+	// Re-validate against the current slot state (it may have changed since generate):
+	// only an intact attack or a broken self-repair flips the slot.
+	v := slots[t.SlotID]
+	kind := classifyTarget(v, callerID, t.UserID)
+	if kind == targetInvalid {
 		return false, nil
 	}
 	if err := s.inv.SetSlot(t.UserID, t.SlotID, -v); err != nil {
 		return false, err
 	}
-	if !attack {
-		// Repair lifts every attacker block on this slot.
+	if kind == targetRepair {
+		// Bind the answered question to the now-intact item, then lift its attacker blocks.
+		if err := s.items.SetItemQuestion(slotItemID(v), questionID); err != nil {
+			return false, err
+		}
 		if err := s.blocks.ClearAttackBlocks(t.UserID, t.SlotID); err != nil {
 			return false, err
 		}
@@ -270,40 +310,53 @@ func (s *TriggerSvc) applyTarget(callerID uint, t model.Target) (bool, error) {
 	return true, nil
 }
 
-// grade evaluates a submitted answer against the question's stored answer.
+// grade evaluates a submitted answer against the question's stored answer set, dispatching
+// to the strategy for the answer type.
 func (s *TriggerSvc) grade(answer model.Answer, raw json.RawMessage) (bool, int, error) {
 	switch answer.Type {
 	case model.AnswerIndex:
-		var want []uint
-		if err := json.Unmarshal(answer.Data, &want); err != nil {
-			return false, http.StatusInternalServerError, fmt.Errorf("題目答案格式錯誤")
-		}
-		var got uint
-		if err := json.Unmarshal(raw, &got); err != nil {
-			return false, http.StatusBadRequest, fmt.Errorf("不合法的 answer")
-		}
-		return slices.Contains(want, got), http.StatusOK, nil
+		return s.gradeIndex(answer, raw)
 	case model.AnswerVoice:
-		var want []string
-		if err := json.Unmarshal(answer.Data, &want); err != nil {
-			return false, http.StatusInternalServerError, fmt.Errorf("題目答案格式錯誤")
-		}
-		var b64 string
-		if err := json.Unmarshal(raw, &b64); err != nil {
-			return false, http.StatusBadRequest, fmt.Errorf("不合法的 answer")
-		}
-		transcript, err := s.stt.Transcribe(b64)
-		if err != nil {
-			return false, http.StatusInternalServerError, err
-		}
-		got := strings.TrimSpace(transcript)
-		for _, w := range want {
-			if strings.EqualFold(got, strings.TrimSpace(w)) {
-				return true, http.StatusOK, nil
-			}
-		}
-		return false, http.StatusOK, nil
+		return s.gradeVoice(answer, raw)
 	default:
 		return false, http.StatusInternalServerError, fmt.Errorf("未知的答案類型")
 	}
+}
+
+// gradeIndex grades a multiple-choice answer: the submitted index must be one of the accepted
+// indexes.
+func (s *TriggerSvc) gradeIndex(answer model.Answer, raw json.RawMessage) (bool, int, error) {
+	var want []uint
+	if err := json.Unmarshal(answer.Data, &want); err != nil {
+		return false, http.StatusInternalServerError, fmt.Errorf("題目答案格式錯誤")
+	}
+	var got uint
+	if err := json.Unmarshal(raw, &got); err != nil {
+		return false, http.StatusBadRequest, fmt.Errorf("不合法的 answer")
+	}
+	return slices.Contains(want, got), http.StatusOK, nil
+}
+
+// gradeVoice grades a voice answer: the submitted base64 WAV is transcribed and matched, case-
+// insensitively, against any accepted transcript.
+func (s *TriggerSvc) gradeVoice(answer model.Answer, raw json.RawMessage) (bool, int, error) {
+	var want []string
+	if err := json.Unmarshal(answer.Data, &want); err != nil {
+		return false, http.StatusInternalServerError, fmt.Errorf("題目答案格式錯誤")
+	}
+	var b64 string
+	if err := json.Unmarshal(raw, &b64); err != nil {
+		return false, http.StatusBadRequest, fmt.Errorf("不合法的 answer")
+	}
+	transcript, err := s.stt.Transcribe(b64)
+	if err != nil {
+		return false, http.StatusInternalServerError, err
+	}
+	got := strings.TrimSpace(transcript)
+	for _, w := range want {
+		if strings.EqualFold(got, strings.TrimSpace(w)) {
+			return true, http.StatusOK, nil
+		}
+	}
+	return false, http.StatusOK, nil
 }

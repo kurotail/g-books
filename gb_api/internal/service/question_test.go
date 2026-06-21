@@ -213,7 +213,7 @@ func TestQuestionSvc_GenerateTarget_AttackValid(t *testing.T) {
 
 func TestQuestionSvc_GenerateTarget_RepairValid(t *testing.T) {
 	useState(t, model.StateQuiz2)
-	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = -7 // own slot 0 holds a broken item
 	// The broken item must resolve to a question so the repair quiz can match its
 	// difficulty against an area-2 question (q5, difficulty 1).
@@ -226,12 +226,18 @@ func TestQuestionSvc_GenerateTarget_RepairValid(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
+	// The session records the area-2 repair question (q5) so a correct answer can bind it.
+	if sess := r.Sessions[r.Created]; sess.QuestionID != 5 {
+		t.Errorf("expected session to record repair question 5, got %d", sess.QuestionID)
+	}
 }
 
 func TestQuestionSvc_GenerateTarget_InvalidTarget(t *testing.T) {
 	useState(t, model.StateQuiz2)
 	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = -7 // broken item on ANOTHER person's board — neither attack nor repair
+	// Note: no items.Items[7] — the target is classified invalid *before* any item lookup,
+	// so it must report "無效的目標" rather than a missing-question error.
 
 	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("victim"), 0)
 	if err == nil {
@@ -239,6 +245,9 @@ func TestQuestionSvc_GenerateTarget_InvalidTarget(t *testing.T) {
 	}
 	if status != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", status)
+	}
+	if err.Error() != "無效的目標" {
+		t.Errorf("expected 無效的目標 (classified before lookup), got %q", err.Error())
 	}
 }
 
@@ -731,13 +740,15 @@ func TestQuestionSvc_Answer_TargetAttackAlreadyBrokenFails(t *testing.T) {
 
 func TestQuestionSvc_Answer_TargetRepairFixes(t *testing.T) {
 	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
-	items.Slot[0] = -7 // own broken item
+	items.Slot[0] = -7                                              // own broken item
+	items.Items[7] = model.Item{ItemID: 7, Type: 10, QuestionID: 1} // its current question
 	r.Sessions["sid"] = model.QuestionSession{
-		ExpiresAt: time.Now().Add(time.Minute),
-		UserID:    mock.IDFor("u"),
-		Kind:      model.KindTarget,
-		Target:    &model.Target{UserID: mock.IDFor("u"), SlotID: 0},
-		Question:  model.Question{Answer: model.IndexAnswer(1)},
+		ExpiresAt:  time.Now().Add(time.Minute),
+		UserID:     mock.IDFor("u"),
+		Kind:       model.KindTarget,
+		Target:     &model.Target{UserID: mock.IDFor("u"), SlotID: 0},
+		Question:   model.Question{Answer: model.IndexAnswer(1)},
+		QuestionID: 42, // the answered repair question, to be bound to the item
 	}
 
 	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(1))
@@ -751,6 +762,10 @@ func TestQuestionSvc_Answer_TargetRepairFixes(t *testing.T) {
 	}
 	if items.Slot[0] != 7 {
 		t.Errorf("expected slot item repaired (7), got %d", items.Slot[0])
+	}
+	// The answered question is bound to the repaired item.
+	if items.Items[7].QuestionID != 42 {
+		t.Errorf("expected repaired item 7 to bind question 42, got %d", items.Items[7].QuestionID)
 	}
 }
 

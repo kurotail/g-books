@@ -325,6 +325,14 @@ func (m *ItemRepo) CreateItem(itemType, questionID uint) (uint, error) {
 	return id, nil
 }
 
+func (m *ItemRepo) SetItemQuestion(itemID, questionID uint) error {
+	if it, ok := m.Items[itemID]; ok {
+		it.QuestionID = questionID
+		m.Items[itemID] = it
+	}
+	return nil
+}
+
 func (m *ItemRepo) AddInvItem(_ uint, itemID uint) error {
 	if m.Inv == nil {
 		m.Inv = map[uint]struct{}{}

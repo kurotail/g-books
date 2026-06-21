@@ -976,7 +976,10 @@ Open a session against `target_slot_id` on `target_user_id`'s board. **Valid** o
 - **attack** — the target is **another** user and their slot item is **not broken**; the
   graded question is that item's own question, and a correct answer **breaks** it; or
 - **repair** — the target is the caller's **own** board and the slot item **is broken**; the
-  graded question is a random `area 2` question, and a correct answer **repairs** it.
+  graded question is a random `area 2` question **of the broken item's difficulty** (so an
+  `area 2` question of that difficulty must exist, else `400`). A correct answer **repairs** the
+  item *and* **binds the answered question to it** — the repaired item thereafter carries that
+  question (a future attack on it grades against it).
 
 **Attack cooldown** — each slot keeps a set of attackers barred from attacking it (its
 `blocked_attackers`, see [`POST /api/item`](#post-apiitem)). When a caller **fails** an attack
