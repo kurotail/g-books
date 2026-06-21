@@ -19,6 +19,7 @@ type fixture struct {
 	auth         *handler.AuthHandler
 	item         *handler.ItemHandler
 	question     *handler.QuestionHandler
+	trigger      *handler.TriggerHandler
 	state        *handler.StateHandler
 	authRepo     *mock.AuthRepo
 	questionRepo *mock.QuestionRepo
@@ -58,9 +59,10 @@ func newFixture() *fixture {
 	}
 	return &fixture{
 		auth:         handler.NewAuthHandler(service.NewAuthSvc(authRepo, authRepo)),
-		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, itemRepo, authRepo, buildingRepo)),
-		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo, buildingRepo, itemRepo, itemRepo, &mock.STTRepo{})),
-		state:        handler.NewStateHandler(service.NewStateSvc(authRepo)),
+		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, itemRepo, authRepo, buildingRepo, itemRepo)),
+		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo)),
+		trigger:      handler.NewTriggerHandler(service.NewTriggerSvc(questionRepo, authRepo, buildingRepo, itemRepo, itemRepo, itemRepo, &mock.STTRepo{})),
+		state:        handler.NewStateHandler(service.NewStateSvc(authRepo, itemRepo, &mock.ScoreRepo{})),
 		authRepo:     authRepo,
 		questionRepo: questionRepo,
 	}

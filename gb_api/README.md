@@ -135,7 +135,8 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/stt` | Bearer (> Student) | Transcribe a base64-encoded WAV recording to text |
 | `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ1` / `QUIZ2`) |
 | `POST /api/state` | Bearer (> Student) | Transition the server state |
-| `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every state transition |
+| `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect, every state transition, and a `slot_update` whenever a user's slots change |
+| `GET /api/scores` | Bearer | Read the per-user slot-difficulty leaderboard (recalculated when QUIZ2 ends) |
 
 ---
 
@@ -786,6 +787,11 @@ querying **their own** board; for any other user they see **only `type`** (the
 `item_id` and `question_id` fields are omitted). **Teachers and Admins** always see the
 full fields.
 
+Each slot also carries `blocked_attackers` — the user ids currently barred from attacking that
+slot after a failed attack (cleared when the slot is repaired; see
+[`POST /api/question/target`](#post-apiquestiontarget--attack--repair-quiz2)). It is **omitted
+when empty** and shown in both the full and restricted views.
+
 **Request**
 
 ```json
@@ -802,7 +808,7 @@ full fields.
     { "item_id": 2, "type": 20, "question_id": 2 }
   ],
   "slots": {
-    "0": { "item_id": 3, "type": 10, "question_id": 1, "broken": false }
+    "0": { "item_id": 3, "type": 10, "question_id": 1, "broken": false, "blocked_attackers": [5] }
   }
 }
 ```
@@ -814,7 +820,7 @@ is exposed per item.
 {
   "user_id": 2,
   "inventory": [ { "type": 10 }, { "type": 20 } ],
-  "slots": { "0": { "type": 10, "broken": false } }
+  "slots": { "0": { "type": 10, "broken": false, "blocked_attackers": [5] } }
 }
 ```
 
@@ -920,6 +926,10 @@ In short: `QUIZ1` is the item-earning phase in which students may also move item
 is the attack/repair phase (and locks students out of moving items), and `NORMAL` is the
 default idle phase in which students may move items but can neither generate nor target.
 
+When `QUIZ2` **ends** (any transition out of `QUIZ2`, including the scheduled auto-revert),
+the server recalculates the per-user [score leaderboard](#get-apiscores) — the summed
+difficulty of the questions behind each user's intact slotted items.
+
 Read the state with `GET /api/state`; transition it with `POST /api/state`
 (Teacher / Admin only). All endpoints require a valid access token:
 
@@ -968,6 +978,13 @@ Open a session against `target_slot_id` on `target_user_id`'s board. **Valid** o
 - **repair** — the target is the caller's **own** board and the slot item **is broken**; the
   graded question is a random `area 2` question, and a correct answer **repairs** it.
 
+**Attack cooldown** — each slot keeps a set of attackers barred from attacking it (its
+`blocked_attackers`, see [`POST /api/item`](#post-apiitem)). When a caller **fails** an attack
+(answers the attack question incorrectly), they are added to that set and may not open another
+attack session against the slot until it is **repaired** — repairing the slot clears the whole
+set. Returning the server to `NORMAL` (see [`POST /api/state`](#post-apistate)) also clears
+**every** slot's blocklist. A barred caller is rejected here with `403`.
+
 **Request**
 
 ```json
@@ -982,7 +999,7 @@ Open a session against `target_slot_id` on `target_user_id`'s board. **Valid** o
 |--------|-----------|
 | `400`  | Malformed JSON body; `target_user_id` missing; `target_slot_id` missing; the target slot is empty; the target item has no question; or the target is invalid (own non-broken slot, or another user's broken slot) |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
-| `403`  | Caller is a Student and the server is not in `QUIZ2` state |
+| `403`  | Caller is a Student and the server is not in `QUIZ2` state, or the caller is barred from this slot after a failed attack (until it is repaired) |
 | `404`  | `target_user_id` does not exist |
 
 ---
@@ -1018,6 +1035,10 @@ The student always submits a single value; the question's correct answer is a **
 session's correct answer grants an item. `success` is set for **target** sessions and reports
 whether the break/repair actually happened (`false` if the slot's broken state no longer
 allows it; a wrong answer omits it).
+
+A **wrong** answer to an **attack** session bars the caller from re-attacking that slot until it
+is repaired (see the attack cooldown under
+[`POST /api/question/target`](#post-apiquestiontarget--attack--repair-quiz2)).
 
 ```json
 { "correct": true, "item_id": 5 }
@@ -1266,13 +1287,43 @@ Remove the pooled question with the given `id`.
 Read the current server state. `updated_at` is the RFC 3339 timestamp of the last
 state change (the server start time for the initial `NORMAL`). `end_time`, when
 present, is the RFC 3339 time at which the state will automatically revert to
-`NORMAL`; it is omitted when no auto-revert is scheduled.
+`NORMAL`; it is omitted when no auto-revert is scheduled. `scores`, when present, is
+the latest leaderboard recalculated the last time `QUIZ2` ended (see
+[`GET /api/scores`](#get-apiscores)); it is omitted before the first `QUIZ2` ends.
 
 **Response `200 OK`**
 
 ```json
-{ "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z" }
+{ "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z", "scores": [ { "user_id": 1, "score": 5 } ] }
 ```
+
+---
+
+### `GET /api/scores`
+
+Return the **pre-calculated** per-user leaderboard: for every user, the summed
+`difficulty` of the questions referenced by the **intact** items in their slots
+(broken items count `0`). It is **recalculated once when `QUIZ2` ends** (an explicit
+transition out of `QUIZ2`, or the scheduled auto-revert), not on each request. Any
+authenticated user may call it. Every user appears, with `score` `0` when they hold no
+scoring items; the list is empty before the first `QUIZ2` ends.
+
+**Response `200 OK`**
+
+```json
+{
+  "scores": [
+    { "user_id": 1, "score": 5 },
+    { "user_id": 2, "score": 0 }
+  ]
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 
 ---
 
@@ -1286,6 +1337,10 @@ that time passes — a background poller checks it about once a second. The end 
 must be in the future, and is ignored when the target state is `NORMAL`. Each
 request **overwrites** any previous schedule: omitting `end_time` (or setting
 `NORMAL`) clears it.
+
+Returning to `NORMAL` — whether by this endpoint or the scheduled auto-revert — also
+**clears every slot's attacker blocklist** (the `blocked_attackers` cooldown set by failed
+attacks; see [`POST /api/question/target`](#post-apiquestiontarget--attack--repair-quiz2)).
 
 **Request**
 
@@ -1322,17 +1377,31 @@ may be supplied either way:
 - `Authorization: Bearer <access_token>` header, or
 - `?access_token=<access_token>` query parameter.
 
-**Messages** — each frame is JSON, identical in shape to `GET /api/state`:
+**Messages** — the socket carries **two kinds** of JSON frame, distinguished by the `type`
+field:
 
-```json
-{ "state": "QUIZ2", "updated_at": "2026-06-15T09:30:00Z" }
-```
+- **State** — identical in shape to `GET /api/state` (no `type` field), including the `scores`
+  leaderboard (refreshed whenever `QUIZ2` ends, so subscribers see the new scores in the
+  transition message):
+
+  ```json
+  { "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z", "scores": [ { "user_id": 1, "score": 5 } ] }
+  ```
+
+- **Slot update** — pushed whenever a user's slots change (an inventory↔slot move via
+  [`POST /api/item/inv2slot`](#post-apiiteminv2slot) / [`slot2inv`](#post-apiitemslot2inv), or a
+  successful attack/repair). It names the affected user; clients re-fetch
+  [`POST /api/item`](#post-apiitem) for that user (which applies per-viewer visibility):
+
+  ```json
+  { "type": "slot_update", "user_id": 2 }
+  ```
 
 **Lifecycle**
 
-- The first message is the current state at connect time (a snapshot).
-- Subsequent messages are sent only when the state actually changes; a single
-  transition is broadcast to every connected subscriber.
+- The first message is the current state at connect time (a state snapshot).
+- A state frame is sent only when the state actually changes; a slot-update frame is sent on
+  every slot change. Both are broadcast to every connected subscriber.
 - On server shutdown each connection is closed gracefully with a WebSocket
   Going-Away (`1001`) close frame.
 

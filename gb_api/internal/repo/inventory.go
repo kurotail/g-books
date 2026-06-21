@@ -10,10 +10,10 @@ import (
 )
 
 type InventoryRepo interface {
-	QueryInventory(userID uint) ([]model.Item, error)        // owned (unslotted) items, sorted by id
+	QueryInventory(userID uint) ([]model.Item, error)            // owned (unslotted) items, sorted by id
 	QuerySlotItems(userID uint) (map[uint]model.SlotItem, error) // slot_id -> hydrated slotted item
-	QuerySlot(userID uint) (map[uint]int, error)             // slot_id -> signed item_id (negative = broken)
-	OwnedItem(userID, itemID uint) (model.Item, bool, error) // the loose item + whether the user owns it
+	QuerySlot(userID uint) (map[uint]int, error)                 // slot_id -> signed item_id (negative = broken)
+	OwnedItem(userID, itemID uint) (model.Item, bool, error)     // the loose item + whether the user owns it
 	AddInvItem(userID uint, itemID uint) error
 	RemoveInvItem(userID uint, itemID uint) error
 	SetSlot(userID uint, slotID uint, itemID int) error // itemID 0 clears the slot

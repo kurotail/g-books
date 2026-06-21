@@ -11,19 +11,19 @@ import (
 	"gb-api/internal/repo/mock"
 )
 
-// newQuestionSvc builds a QuestionSvc whose every user reports the given role (no
-// building), with empty building/item repos — enough for the pool-management and
-// session-only tests. Returns the service and its question repo mock.
+// newQuestionSvc builds a QuestionSvc whose every user reports the given role — enough
+// for the pool-management tests. Returns the service and its question repo mock.
 func newQuestionSvc(role uint) (*QuestionSvc, *mock.QuestionRepo) {
 	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}}
-	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}, &mock.BuildingRepo{}, &mock.ItemRepo{}, &mock.ItemRepo{}, &mock.STTRepo{}), r
+	return NewQuestionSvc(r, &mock.RoleRepo{Role: role}), r
 }
 
-// newQuizSvc builds a QuestionSvc for caller "u" (role) assigned the given building
+// newQuizSvc builds a TriggerSvc for caller "u" (role) assigned the given building
 // (buildingID 0 = none) whose building (id 1) carries the given DifficultyType, and a
-// question repo seeded with `questions`. Returns the service, its question repo, and
+// question repo seeded with `questions`. The single mock.ItemRepo backs items, the
+// inventory, and the attack-block store. Returns the service, its question repo, and
 // its item repo.
-func newQuizSvc(role, buildingID uint, difficultyType map[uint][]uint, questions map[uint]model.Question) (*QuestionSvc, *mock.QuestionRepo, *mock.ItemRepo) {
+func newQuizSvc(role, buildingID uint, difficultyType map[uint][]uint, questions map[uint]model.Question) (*TriggerSvc, *mock.QuestionRepo, *mock.ItemRepo) {
 	r := &mock.QuestionRepo{Sessions: map[string]model.QuestionSession{}, Questions: questions}
 	// "victim" is the attack-target user the QUIZ2 tests aim at; it must exist as a
 	// real user for the username->id resolution to find its slots.
@@ -33,7 +33,7 @@ func newQuizSvc(role, buildingID uint, difficultyType map[uint][]uint, questions
 	}
 	buildings := &mock.BuildingRepo{Buildings: map[uint]model.Building{1: {ID: 1, DifficultyType: difficultyType}}}
 	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
-	return NewQuestionSvc(r, users, buildings, items, items, &mock.STTRepo{}), r, items
+	return NewTriggerSvc(r, users, buildings, items, items, items, &mock.STTRepo{}), r, items
 }
 
 // idx is the wire form of an index answer the student submits to Answer: a single
@@ -57,8 +57,8 @@ func accessTokenFor(t *testing.T, username string) string {
 // restores StateNormal afterwards.
 func useState(t *testing.T, s model.ServerState) {
 	t.Helper()
-	setStateUntil(s, time.Time{})
-	t.Cleanup(func() { setStateUntil(model.StateNormal, time.Time{}) })
+	stateCtl.setStateUntil(s, time.Time{})
+	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
 }
 
 // --- GenerateItem (QUIZ1 state) ---
@@ -215,6 +215,9 @@ func TestQuestionSvc_GenerateTarget_RepairValid(t *testing.T) {
 	useState(t, model.StateQuiz2)
 	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = -7 // own slot 0 holds a broken item
+	// The broken item must resolve to a question so the repair quiz can match its
+	// difficulty against an area-2 question (q5, difficulty 1).
+	items.Items[7] = model.Item{ItemID: 7, Type: 10, QuestionID: 5}
 
 	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("u"), 0)
 	if err != nil {
@@ -776,6 +779,77 @@ func TestQuestionSvc_Answer_TargetWrongNoAction(t *testing.T) {
 	}
 }
 
+// A failed attack bars the attacker from re-targeting the slot until it is repaired.
+func TestQuestionSvc_Answer_FailedAttackBlocksRetarget(t *testing.T) {
+	useState(t, model.StateQuiz2)
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
+	items.Slot[0] = 7 // "victim" board, normal item
+	items.Items[7] = model.Item{ItemID: 7, Type: 10, QuestionID: 5}
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		UserID:    mock.IDFor("u"),
+		Kind:      model.KindTarget,
+		Target:    &model.Target{UserID: mock.IDFor("victim"), SlotID: 0},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
+	}
+
+	// Wrong answer -> attack fails and the attacker is barred.
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(9))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var resp model.AnswerResponse
+	json.Unmarshal(data, &resp)
+	if resp.Correct {
+		t.Fatalf("expected the attack to fail, got %+v", resp)
+	}
+	if blocked, _ := items.IsAttackBlocked(mock.IDFor("victim"), 0, mock.IDFor("u")); !blocked {
+		t.Fatal("expected the attacker to be recorded as blocked on the slot")
+	}
+
+	// Re-targeting the same slot is now rejected with 403.
+	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("victim"), 0)
+	if err == nil {
+		t.Fatal("expected error re-attacking a slot the caller is barred from")
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+}
+
+// Repairing a slot lifts every attacker block on it.
+func TestQuestionSvc_Answer_RepairClearsBlocks(t *testing.T) {
+	s, r, items := newQuizSvc(model.RoleStudent, 1, nil, nil)
+	items.Slot[0] = -7 // own broken item
+	// "victim" was previously barred from attacking u's slot 0.
+	items.AttackBlocks = map[[3]uint]struct{}{
+		{mock.IDFor("u"), 0, mock.IDFor("victim")}: {},
+	}
+	r.Sessions["sid"] = model.QuestionSession{
+		ExpiresAt: time.Now().Add(time.Minute),
+		UserID:    mock.IDFor("u"),
+		Kind:      model.KindTarget,
+		Target:    &model.Target{UserID: mock.IDFor("u"), SlotID: 0},
+		Question:  model.Question{Answer: model.IndexAnswer(1)},
+	}
+
+	data, _, err := s.Answer(accessTokenFor(t, "u"), "sid", idx(1)) // correct repair
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var resp model.AnswerResponse
+	json.Unmarshal(data, &resp)
+	if !resp.Correct || resp.Success == nil || !*resp.Success {
+		t.Fatalf("expected a successful repair, got %+v", resp)
+	}
+	if items.Slot[0] != 7 {
+		t.Errorf("expected slot repaired (7), got %d", items.Slot[0])
+	}
+	if blocked, _ := items.IsAttackBlocked(mock.IDFor("u"), 0, mock.IDFor("victim")); blocked {
+		t.Error("expected the slot's attacker blocks to be cleared on repair")
+	}
+}
+
 func TestQuestionSvc_Answer_UnknownSession(t *testing.T) {
 	s, _, _ := newQuizSvc(model.RoleStudent, 1, nil, nil)
 
@@ -823,7 +897,7 @@ func TestQuestionSvc_Answer_VoiceResponseGradesViaSTT(t *testing.T) {
 	users := &mock.AuthRepo{Roles: map[string]uint{"u": model.RoleStudent}, Buildings: map[string]uint{"u": 1}}
 	items := &mock.ItemRepo{Inv: map[uint]struct{}{}, Slot: map[uint]int{}, Items: map[uint]model.Item{}}
 	stt := &mock.STTRepo{Transcript: "Eighteen"} // returned regardless of the WAV bytes
-	s := NewQuestionSvc(r, users, &mock.BuildingRepo{}, items, items, stt)
+	s := NewTriggerSvc(r, users, &mock.BuildingRepo{}, items, items, items, stt)
 
 	// The student's answer is a base64-encoded WAV recording.
 	wavB64 := base64.StdEncoding.EncodeToString([]byte("RIFF....WAVE fake audio"))

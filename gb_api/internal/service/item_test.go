@@ -41,7 +41,7 @@ func itemSvc(role uint, allowed map[uint][]uint) (*ItemSvc, *mock.ItemRepo) {
 		Buildings: map[string]uint{"testuser": 1, "other": 1},
 	}
 	buildings := &mock.BuildingRepo{Buildings: map[uint]model.Building{1: {ID: 1, TypeAllowedSlot: allowed}}}
-	return NewItemSvc(r, r, users, buildings), r
+	return NewItemSvc(r, r, users, buildings, r), r
 }
 
 func newItemSvc(t *testing.T) (*ItemSvc, *mock.ItemRepo) {
@@ -91,6 +91,32 @@ func TestItemSvc_QueryItems_TeacherSeesFullFields(t *testing.T) {
 	slot := resp.Slots[0]
 	if slot.ItemID != 3 || slot.Type != 10 || slot.Broken {
 		t.Errorf("expected slot 0 to hold normal item 3 type 10, got %+v", slot)
+	}
+}
+
+func TestItemSvc_QueryItems_ExposesBlockedAttackers(t *testing.T) {
+	s, r := newItemSvc(t)
+	// "other" is barred from attacking testuser's slot 0.
+	r.AttackBlocks = map[[3]uint]struct{}{
+		{mock.IDFor("testuser"), 0, mock.IDFor("other")}: {},
+	}
+
+	data, status, err := s.QueryItems(validAccessToken(t), mock.IDFor("testuser"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	var resp model.ItemsResponse
+	json.Unmarshal(data, &resp)
+	got := resp.Slots[0].BlockedAttackers
+	if len(got) != 1 || got[0] != mock.IDFor("other") {
+		t.Errorf("expected slot 0 blocked_attackers [%d], got %v", mock.IDFor("other"), got)
+	}
+	// A slot with no blocks omits the field (nil slice).
+	if r2 := resp.Slots[0]; r2.ItemID != 3 {
+		t.Errorf("expected slot item unchanged, got %+v", r2)
 	}
 }
 
@@ -159,6 +185,39 @@ func TestItemSvc_TranInv2Slot_MovesItemToSlot(t *testing.T) {
 	}
 	if r.Slot[5] != 1 {
 		t.Errorf("expected slot[5]==1, got %d", r.Slot[5])
+	}
+}
+
+// Moving items in/out of a slot pushes a slot_update for the caller to state-WS subscribers.
+func TestItemSvc_SlotChangesBroadcast(t *testing.T) {
+	s, _ := itemSvc(model.RoleTeacher, allowAll())
+	events, unsub := stateHub.subscribe()
+	defer unsub()
+
+	if _, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 5); err != nil {
+		t.Fatalf("inv2slot failed: %v", err)
+	}
+	assertSlotUpdate(t, events, mock.IDFor("testuser"))
+
+	if _, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("testuser"), 5); err != nil {
+		t.Fatalf("slot2inv failed: %v", err)
+	}
+	assertSlotUpdate(t, events, mock.IDFor("testuser"))
+}
+
+func assertSlotUpdate(t *testing.T, events <-chan any, wantUser uint) {
+	t.Helper()
+	select {
+	case msg := <-events:
+		su, ok := msg.(model.SlotUpdate)
+		if !ok {
+			t.Fatalf("expected a SlotUpdate, got %T", msg)
+		}
+		if su.Type != "slot_update" || su.UserID != wantUser {
+			t.Errorf("expected slot_update for user %d, got %+v", wantUser, su)
+		}
+	default:
+		t.Fatal("expected a slot_update broadcast")
 	}
 }
 
@@ -246,8 +305,8 @@ func TestItemSvc_TranInv2Slot_BrokenSlotRejected(t *testing.T) {
 func TestItemSvc_TranInv2Slot_StudentBlockedInQuiz(t *testing.T) {
 	s, _ := newItemSvcAs(model.RoleStudent)
 
-	setStateUntil(model.StateQuiz2, time.Time{})
-	defer setStateUntil(model.StateNormal, time.Time{})
+	stateCtl.setStateUntil(model.StateQuiz2, time.Time{})
+	defer stateCtl.setStateUntil(model.StateNormal, time.Time{})
 
 	status, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 5)
 	if err == nil {
@@ -386,8 +445,8 @@ func TestItemSvc_TranSlot2Inv_StudentOtherBoardForbidden(t *testing.T) {
 func TestItemSvc_TranSlot2Inv_StudentBlockedInQuiz(t *testing.T) {
 	s, _ := newItemSvcAs(model.RoleStudent)
 
-	setStateUntil(model.StateQuiz2, time.Time{})
-	defer setStateUntil(model.StateNormal, time.Time{})
+	stateCtl.setStateUntil(model.StateQuiz2, time.Time{})
+	defer stateCtl.setStateUntil(model.StateNormal, time.Time{})
 
 	status, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("testuser"), 0)
 	if err == nil {

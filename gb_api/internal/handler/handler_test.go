@@ -427,9 +427,9 @@ func (f *fixture) forceState(t *testing.T, tok string, s model.ServerState) {
 func TestQuestionHandler_MissingToken(t *testing.T) {
 	f := newFixture()
 	cases := map[string]http.HandlerFunc{
-		"GenerateItem":   f.question.GenerateItem,
-		"GenerateTarget": f.question.GenerateTarget,
-		"Answer":         f.question.Answer,
+		"GenerateItem":   f.trigger.GenerateItem,
+		"GenerateTarget": f.trigger.GenerateTarget,
+		"Answer":         f.trigger.Answer,
 		"GetState":       f.state.GetState,
 		"SetState":       f.state.SetState,
 	}
@@ -474,7 +474,7 @@ func TestQuestionHandler_StudentItemBlockedOutsideQuiz1(t *testing.T) {
 	f.forceState(t, tok, model.StateQuiz2)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	gen := do(t, f.question.GenerateItem, tok, map[string]any{"difficulty": 1})
+	gen := do(t, f.trigger.GenerateItem, tok, map[string]any{"difficulty": 1})
 	if gen.Code != http.StatusForbidden {
 		t.Errorf("GenerateItem as student outside QUIZ1: expected 403, got %d", gen.Code)
 	}
@@ -486,7 +486,7 @@ func TestQuestionHandler_StudentTargetBlockedOutsideQuiz(t *testing.T) {
 	f.forceState(t, tok, model.StateNormal)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	gen := do(t, f.question.GenerateTarget, tok, map[string]any{"target_user_id": mock.IDFor("other"), "target_slot_id": 0})
+	gen := do(t, f.trigger.GenerateTarget, tok, map[string]any{"target_user_id": mock.IDFor("other"), "target_slot_id": 0})
 	if gen.Code != http.StatusForbidden {
 		t.Errorf("GenerateTarget as student in NORMAL: expected 403, got %d", gen.Code)
 	}
@@ -500,7 +500,7 @@ func TestQuestionHandler_ItemFlow(t *testing.T) {
 	f.forceState(t, tok, model.StateQuiz1)
 	f.authRepo.Roles["user"] = model.RoleStudent
 
-	gen := do(t, f.question.GenerateItem, tok, map[string]any{"difficulty": 1})
+	gen := do(t, f.trigger.GenerateItem, tok, map[string]any{"difficulty": 1})
 	if gen.Code != http.StatusOK {
 		t.Fatalf("GenerateItem: expected 200, got %d: %s", gen.Code, gen.Body.String())
 	}
@@ -512,7 +512,7 @@ func TestQuestionHandler_ItemFlow(t *testing.T) {
 		t.Fatal("GenerateItem: expected a session in response")
 	}
 
-	ans := do(t, f.question.Answer, tok, map[string]any{"session": qr.Session, "answer": 1})
+	ans := do(t, f.trigger.Answer, tok, map[string]any{"session": qr.Session, "answer": 1})
 	if ans.Code != http.StatusOK {
 		t.Fatalf("Answer: expected 200, got %d: %s", ans.Code, ans.Body.String())
 	}

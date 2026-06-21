@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"gb-api/internal/logger"
 	"gb-api/internal/model"
 	"gb-api/internal/repo"
 )
@@ -17,8 +18,9 @@ import (
 var (
 	stateMu   sync.RWMutex
 	state     = model.StateNormal
-	updatedAt = time.Now()  // when state last changed (server start for the initial NORMAL)
-	endTime   = time.Time{} // when the state auto-reverts to NORMAL; zero = no schedule
+	updatedAt = time.Now()      // when state last changed (server start for the initial NORMAL)
+	endTime   = time.Time{}     // when the state auto-reverts to NORMAL; zero = no schedule
+	scores    []model.UserScore // pre-calculated leaderboard, refreshed when QUIZ2 ends
 )
 
 func getState() model.ServerState {
@@ -29,7 +31,7 @@ func getState() model.ServerState {
 
 // snapshotLocked builds the current state response. Callers must hold stateMu.
 func snapshotLocked() model.StateResponse {
-	resp := model.StateResponse{State: state, UpdatedAt: updatedAt}
+	resp := model.StateResponse{State: state, UpdatedAt: updatedAt, Scores: scores}
 	if !endTime.IsZero() {
 		e := endTime
 		resp.EndTime = &e
@@ -45,68 +47,20 @@ func stateSnapshot() model.StateResponse {
 	return snapshotLocked()
 }
 
-func setStateUntil(s model.ServerState, end time.Time) {
-	stateMu.Lock()
-	changed := state != s
-	endChanged := !endTime.Equal(end)
-	if changed {
-		state = s
-		updatedAt = time.Now()
-	}
-	endTime = end
-	snap := snapshotLocked()
-	stateMu.Unlock()
-	// Notify on a real transition or a (re)scheduled end time.
-	if changed || endChanged {
-		stateHub.broadcast(snap)
-	}
-}
-
-// revertIfDue transitions to NORMAL and clears the schedule when the end time
-func revertIfDue(now time.Time) {
-	stateMu.Lock()
-	if endTime.IsZero() || now.Before(endTime) {
-		stateMu.Unlock()
-		return
-	}
-	if state != model.StateNormal {
-		state = model.StateNormal
-		updatedAt = time.Now()
-	}
-	endTime = time.Time{}
-	snap := snapshotLocked()
-	stateMu.Unlock()
-	stateHub.broadcast(snap)
-}
-
-// StartStateScheduler launches a goroutine that polls the scheduled end time and
-// reverts the state to NORMAL once it passes. It runs until ctx is cancelled.
-func StartStateScheduler(ctx context.Context, interval time.Duration) {
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case t := <-ticker.C:
-				revertIfDue(t)
-			}
-		}
-	}()
-}
-
 // --- broadcast hub ---
 
-var stateHub = &hub{subs: make(map[chan model.StateResponse]struct{})}
+var stateHub = &hub{subs: make(map[chan any]struct{})}
 
+// hub fans out messages to every state-WebSocket subscriber. Messages are either a
+// model.StateResponse (state snapshot/transition) or a model.SlotUpdate (a user's slots
+// changed); subscribers distinguish them by JSON shape / the "type" field.
 type hub struct {
 	mu   sync.Mutex
-	subs map[chan model.StateResponse]struct{}
+	subs map[chan any]struct{}
 }
 
-func (h *hub) subscribe() (<-chan model.StateResponse, func()) {
-	ch := make(chan model.StateResponse, 8)
+func (h *hub) subscribe() (<-chan any, func()) {
+	ch := make(chan any, 8)
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}
 	h.mu.Unlock()
@@ -122,25 +76,67 @@ func (h *hub) subscribe() (<-chan model.StateResponse, func()) {
 	return ch, unsub
 }
 
-func (h *hub) broadcast(s model.StateResponse) {
+func (h *hub) broadcast(msg any) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.subs {
 		select {
-		case ch <- s:
+		case ch <- msg:
 		default:
 		}
 	}
 }
 
+// broadcastSlotUpdate notifies every state-WS subscriber that userID's slots changed, so
+// they can re-fetch that board. Best-effort; never blocks or fails the caller.
+func broadcastSlotUpdate(userID uint) {
+	stateHub.broadcast(model.SlotUpdate{Type: "slot_update", UserID: userID})
+}
+
 // --- service ---
 
 type StateSvc struct {
-	users repo.UserRepo
+	users  repo.UserRepo
+	blocks repo.BlockRepo
+	scores repo.ScoreRepo
 }
 
-func NewStateSvc(users repo.UserRepo) *StateSvc {
-	return &StateSvc{users: users}
+func NewStateSvc(users repo.UserRepo, blocks repo.BlockRepo, scores repo.ScoreRepo) *StateSvc {
+	return &StateSvc{users: users, blocks: blocks, scores: scores}
+}
+
+// clearAttackBlocks wipes every slot's attacker block list
+func (s *StateSvc) clearAttackBlocks() {
+	if err := s.blocks.ClearAllAttackBlocks(); err != nil {
+		logger.L.Error("failed to clear slot attack blocks on NORMAL", "err", err)
+	}
+}
+
+// recomputeScores refreshes the cached per-user leaderboard. Called when QUIZ2 ends.
+func (s *StateSvc) recomputeScores() {
+	computed, err := s.scores.SlotDifficultySums()
+	if err != nil {
+		logger.L.Error("failed to compute slot difficulty scores", "err", err)
+		return
+	}
+	stateMu.Lock()
+	scores = computed
+	stateMu.Unlock()
+}
+
+// GetScores returns the latest pre-calculated per-user leaderboard.
+func (s *StateSvc) GetScores(accessToken string) ([]byte, int, error) {
+	if _, err := validateAccessToken(accessToken); err != nil {
+		return nil, http.StatusUnauthorized, err
+	}
+	stateMu.RLock()
+	cp := append([]model.UserScore(nil), scores...)
+	stateMu.RUnlock()
+	data, err := json.Marshal(model.ScoresResponse{Scores: cp})
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return data, http.StatusOK, nil
 }
 
 func (s *StateSvc) GetState(accessToken string) ([]byte, int, error) {
@@ -169,7 +165,7 @@ func (s *StateSvc) SetState(accessToken string, st model.ServerState, endTime *t
 		}
 		end = *endTime
 	}
-	setStateUntil(st, end)
+	s.setStateUntil(st, end)
 	data, err := json.Marshal(stateSnapshot())
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
@@ -177,10 +173,75 @@ func (s *StateSvc) SetState(accessToken string, st model.ServerState, endTime *t
 	return data, http.StatusOK, nil
 }
 
-func (s *StateSvc) SubscribeState(accessToken string) (model.StateResponse, <-chan model.StateResponse, func(), int, error) {
+func (s *StateSvc) SubscribeState(accessToken string) (model.StateResponse, <-chan any, func(), int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return model.StateResponse{}, nil, nil, http.StatusUnauthorized, err
 	}
 	events, unsub := stateHub.subscribe()
 	return stateSnapshot(), events, unsub, http.StatusOK, nil
+}
+
+func (s *StateSvc) setStateUntil(ns model.ServerState, end time.Time) {
+	stateMu.Lock()
+	old := state
+	changed := state != ns
+	endChanged := !endTime.Equal(end)
+	if changed {
+		state = ns
+		updatedAt = time.Now()
+	}
+	endTime = end
+	stateMu.Unlock()
+
+	// Run side effects (which touch the DB) outside the lock.
+	s.onTransition(old, ns)
+	// Notify on a real transition or a (re)scheduled end time.
+	if changed || endChanged {
+		stateHub.broadcast(stateSnapshot())
+	}
+}
+
+// revertIfDue transitions to NORMAL and clears the schedule once the end time passes.
+func (s *StateSvc) revertIfDue(now time.Time) {
+	stateMu.Lock()
+	if endTime.IsZero() || now.Before(endTime) {
+		stateMu.Unlock()
+		return
+	}
+	old := state
+	if state != model.StateNormal {
+		state = model.StateNormal
+		updatedAt = time.Now()
+	}
+	endTime = time.Time{}
+	stateMu.Unlock()
+
+	s.onTransition(old, model.StateNormal)
+	stateHub.broadcast(stateSnapshot())
+}
+
+// onTransition runs the side effects of a state change: returning to NORMAL clears the
+// per-slot attack blocks, and ending QUIZ2 recomputes the score leaderboard.
+func (s *StateSvc) onTransition(old, ns model.ServerState) {
+	if ns == model.StateNormal {
+		s.clearAttackBlocks()
+	}
+	if old == model.StateQuiz2 && ns != model.StateQuiz2 {
+		s.recomputeScores()
+	}
+}
+
+func (s *StateSvc) StartStateScheduler(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case t := <-ticker.C:
+				s.revertIfDue(t)
+			}
+		}
+	}()
 }
