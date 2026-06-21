@@ -33,7 +33,7 @@ Future<void> main() async {
   // 讀 assets 列出各古蹟可用的原料圖片 id（決定「有哪些原料」）；其餘設定（slot 幾何 /
   // 名稱 / 等級 / 可放對應）由後端 building 於學生登入後載入（見 [StudentConfigLoader]）。
   await loadComponentImageIds(heritageIds);
-  flutter clean
+
   // 所有服務共用同一個 ApiClient（持 JWT、自動換新）。kUseBackend=false 走本機 mock，
   // 可離線開發；後端備妥後翻 true 即整組切換、UI 不變。
   final apiClient = ApiClient();
