@@ -1,4 +1,5 @@
 .env
+import/*
 
 # Self-signed TLS material (generate locally with nginx/gen-certs.sh)
 nginx/certs/*.key

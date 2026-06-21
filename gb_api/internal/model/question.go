@@ -12,7 +12,8 @@ const (
 	DescAudio = "audio"
 	DescVoice = "voice_response"
 
-	ChoicesText = "text"
+	ChoicesText  = "text"
+	ChoicesAudio = "audio"
 
 	AnswerIndex = "index"          // the answer is a zero-based index into Choices.Data
 	AnswerVoice = "voice_response" // the answer is graded by transcribing submitted audio
@@ -26,7 +27,7 @@ type Description struct {
 }
 
 // Choices is the (optional) list of selectable options. Omitted for voice_response
-// answers.
+// answers. Data holds option strings for ChoicesText, or audio URLs for ChoicesAudio.
 type Choices struct {
 	Type string   `json:"type"`
 	Data []string `json:"data"`

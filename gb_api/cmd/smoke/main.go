@@ -8,6 +8,15 @@
 // the API itself. Disposable usernames and ids are suffixed with a per-run
 // timestamp so the script can be re-run against the same (persistent) Postgres
 // database without colliding with a previous run's leftovers.
+//
+// CAVEAT — run this against a CLEAN question pool. The item/attack/repair checks
+// assume the smoke-seeded question is the only candidate that generate/target can
+// draw: generate picks a random question from (area 1, difficulty) and repair a
+// random (area 2) question. If the pool already holds other area-1/area-2 questions
+// (e.g. imported via cmd/import, or left over from a prior run — Q1..Q4 are not
+// deleted), those draws become non-deterministic and the answer/item checks flake.
+// Reset with `docker compose down -v && docker compose up` (wipes the pgdata volume)
+// before relying on this section, or point it at a throwaway database.
 package main
 
 import (

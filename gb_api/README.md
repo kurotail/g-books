@@ -1045,8 +1045,9 @@ Each question is `{ content, answer, difficulty, area }`:
 - `content.description` is `{ type, data }`, where `type` is one of `text`, `audio`, or
   `voice_response`. `data` is the prompt text for `text`, or a URL for `audio` /
   `voice_response`.
-- `content.choices` is `{ type, data }` with `type` `text` and `data` a list of option
-  strings. It is present for multiple-choice questions and omitted for `voice_response`.
+- `content.choices` is `{ type, data }`, present for multiple-choice questions and omitted
+  for `voice_response`. `type` is `text` (then `data` is a list of option strings) or
+  `audio` (then `data` is a list of audio URLs, e.g. uploaded via `POST /api/audio`).
 - `answer` is `{ type, data }`, where `data` is always a non-empty **array** (a set of
   accepted answers): for `type` `index`, an array of zero-based correct-choice indexes
   (numbers); for `type` `voice_response`, an array of accepted transcripts (strings). A
