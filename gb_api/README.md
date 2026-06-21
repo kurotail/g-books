@@ -136,6 +136,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ1` / `QUIZ2`) |
 | `POST /api/state` | Bearer (> Student) | Transition the server state |
 | `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every state transition |
+| `GET /api/scores` | Bearer | Read the per-user slot-difficulty leaderboard (recalculated when QUIZ2 ends) |
 
 ---
 
@@ -925,6 +926,10 @@ In short: `QUIZ1` is the item-earning phase in which students may also move item
 is the attack/repair phase (and locks students out of moving items), and `NORMAL` is the
 default idle phase in which students may move items but can neither generate nor target.
 
+When `QUIZ2` **ends** (any transition out of `QUIZ2`, including the scheduled auto-revert),
+the server recalculates the per-user [score leaderboard](#get-apiscores) — the summed
+difficulty of the questions behind each user's intact slotted items.
+
 Read the state with `GET /api/state`; transition it with `POST /api/state`
 (Teacher / Admin only). All endpoints require a valid access token:
 
@@ -1282,13 +1287,43 @@ Remove the pooled question with the given `id`.
 Read the current server state. `updated_at` is the RFC 3339 timestamp of the last
 state change (the server start time for the initial `NORMAL`). `end_time`, when
 present, is the RFC 3339 time at which the state will automatically revert to
-`NORMAL`; it is omitted when no auto-revert is scheduled.
+`NORMAL`; it is omitted when no auto-revert is scheduled. `scores`, when present, is
+the latest leaderboard recalculated the last time `QUIZ2` ended (see
+[`GET /api/scores`](#get-apiscores)); it is omitted before the first `QUIZ2` ends.
 
 **Response `200 OK`**
 
 ```json
-{ "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z" }
+{ "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z", "scores": [ { "user_id": 1, "score": 5 } ] }
 ```
+
+---
+
+### `GET /api/scores`
+
+Return the **pre-calculated** per-user leaderboard: for every user, the summed
+`difficulty` of the questions referenced by the **intact** items in their slots
+(broken items count `0`). It is **recalculated once when `QUIZ2` ends** (an explicit
+transition out of `QUIZ2`, or the scheduled auto-revert), not on each request. Any
+authenticated user may call it. Every user appears, with `score` `0` when they hold no
+scoring items; the list is empty before the first `QUIZ2` ends.
+
+**Response `200 OK`**
+
+```json
+{
+  "scores": [
+    { "user_id": 1, "score": 5 },
+    { "user_id": 2, "score": 0 }
+  ]
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 
 ---
 
@@ -1342,10 +1377,12 @@ may be supplied either way:
 - `Authorization: Bearer <access_token>` header, or
 - `?access_token=<access_token>` query parameter.
 
-**Messages** — each frame is JSON, identical in shape to `GET /api/state`:
+**Messages** — each frame is JSON, identical in shape to `GET /api/state`, including the
+`scores` leaderboard (refreshed whenever `QUIZ2` ends, so subscribers see the new scores in
+the transition message):
 
 ```json
-{ "state": "QUIZ2", "updated_at": "2026-06-15T09:30:00Z" }
+{ "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z", "scores": [ { "user_id": 1, "score": 5 } ] }
 ```
 
 **Lifecycle**

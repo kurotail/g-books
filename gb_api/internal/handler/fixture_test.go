@@ -62,7 +62,7 @@ func newFixture() *fixture {
 		item:         handler.NewItemHandler(service.NewItemSvc(itemRepo, itemRepo, authRepo, buildingRepo, itemRepo)),
 		question:     handler.NewQuestionHandler(service.NewQuestionSvc(questionRepo, authRepo)),
 		trigger:      handler.NewTriggerHandler(service.NewTriggerSvc(questionRepo, authRepo, buildingRepo, itemRepo, itemRepo, itemRepo, &mock.STTRepo{})),
-		state:        handler.NewStateHandler(service.NewStateSvc(authRepo, itemRepo)),
+		state:        handler.NewStateHandler(service.NewStateSvc(authRepo, itemRepo, &mock.ScoreRepo{})),
 		authRepo:     authRepo,
 		questionRepo: questionRepo,
 	}

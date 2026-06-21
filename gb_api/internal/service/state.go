@@ -18,8 +18,9 @@ import (
 var (
 	stateMu   sync.RWMutex
 	state     = model.StateNormal
-	updatedAt = time.Now()  // when state last changed (server start for the initial NORMAL)
-	endTime   = time.Time{} // when the state auto-reverts to NORMAL; zero = no schedule
+	updatedAt = time.Now()      // when state last changed (server start for the initial NORMAL)
+	endTime   = time.Time{}     // when the state auto-reverts to NORMAL; zero = no schedule
+	scores    []model.UserScore // pre-calculated leaderboard, refreshed when QUIZ2 ends
 )
 
 func getState() model.ServerState {
@@ -30,7 +31,7 @@ func getState() model.ServerState {
 
 // snapshotLocked builds the current state response. Callers must hold stateMu.
 func snapshotLocked() model.StateResponse {
-	resp := model.StateResponse{State: state, UpdatedAt: updatedAt}
+	resp := model.StateResponse{State: state, UpdatedAt: updatedAt, Scores: scores}
 	if !endTime.IsZero() {
 		e := endTime
 		resp.EndTime = &e
@@ -88,10 +89,11 @@ func (h *hub) broadcast(s model.StateResponse) {
 type StateSvc struct {
 	users  repo.UserRepo
 	blocks repo.BlockRepo
+	scores repo.ScoreRepo
 }
 
-func NewStateSvc(users repo.UserRepo, blocks repo.BlockRepo) *StateSvc {
-	return &StateSvc{users: users, blocks: blocks}
+func NewStateSvc(users repo.UserRepo, blocks repo.BlockRepo, scores repo.ScoreRepo) *StateSvc {
+	return &StateSvc{users: users, blocks: blocks, scores: scores}
 }
 
 // clearAttackBlocks wipes every slot's attacker block list
@@ -99,6 +101,33 @@ func (s *StateSvc) clearAttackBlocks() {
 	if err := s.blocks.ClearAllAttackBlocks(); err != nil {
 		logger.L.Error("failed to clear slot attack blocks on NORMAL", "err", err)
 	}
+}
+
+// recomputeScores refreshes the cached per-user leaderboard. Called when QUIZ2 ends.
+func (s *StateSvc) recomputeScores() {
+	computed, err := s.scores.SlotDifficultySums()
+	if err != nil {
+		logger.L.Error("failed to compute slot difficulty scores", "err", err)
+		return
+	}
+	stateMu.Lock()
+	scores = computed
+	stateMu.Unlock()
+}
+
+// GetScores returns the latest pre-calculated per-user leaderboard.
+func (s *StateSvc) GetScores(accessToken string) ([]byte, int, error) {
+	if _, err := validateAccessToken(accessToken); err != nil {
+		return nil, http.StatusUnauthorized, err
+	}
+	stateMu.RLock()
+	cp := append([]model.UserScore(nil), scores...)
+	stateMu.RUnlock()
+	data, err := json.Marshal(model.ScoresResponse{Scores: cp})
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return data, http.StatusOK, nil
 }
 
 func (s *StateSvc) GetState(accessToken string) ([]byte, int, error) {
@@ -145,6 +174,7 @@ func (s *StateSvc) SubscribeState(accessToken string) (model.StateResponse, <-ch
 
 func (s *StateSvc) setStateUntil(ns model.ServerState, end time.Time) {
 	stateMu.Lock()
+	old := state
 	changed := state != ns
 	endChanged := !endTime.Equal(end)
 	if changed {
@@ -152,35 +182,44 @@ func (s *StateSvc) setStateUntil(ns model.ServerState, end time.Time) {
 		updatedAt = time.Now()
 	}
 	endTime = end
-	snap := snapshotLocked()
 	stateMu.Unlock()
-	// Returning to NORMAL clears every per-slot attack block.
-	if ns == model.StateNormal {
-		s.clearAttackBlocks()
-	}
+
+	// Run side effects (which touch the DB) outside the lock.
+	s.onTransition(old, ns)
 	// Notify on a real transition or a (re)scheduled end time.
 	if changed || endChanged {
-		stateHub.broadcast(snap)
+		stateHub.broadcast(stateSnapshot())
 	}
 }
 
-// revertIfDue transitions to NORMAL and clears the schedule when the end time
+// revertIfDue transitions to NORMAL and clears the schedule once the end time passes.
 func (s *StateSvc) revertIfDue(now time.Time) {
 	stateMu.Lock()
-	defer stateMu.Unlock()
 	if endTime.IsZero() || now.Before(endTime) {
 		stateMu.Unlock()
 		return
 	}
-	reverted := state != model.StateNormal
-	if reverted {
+	old := state
+	if state != model.StateNormal {
 		state = model.StateNormal
 		updatedAt = time.Now()
-		s.clearAttackBlocks()
 	}
 	endTime = time.Time{}
-	snap := snapshotLocked()
-	stateHub.broadcast(snap)
+	stateMu.Unlock()
+
+	s.onTransition(old, model.StateNormal)
+	stateHub.broadcast(stateSnapshot())
+}
+
+// onTransition runs the side effects of a state change: returning to NORMAL clears the
+// per-slot attack blocks, and ending QUIZ2 recomputes the score leaderboard.
+func (s *StateSvc) onTransition(old, ns model.ServerState) {
+	if ns == model.StateNormal {
+		s.clearAttackBlocks()
+	}
+	if old == model.StateQuiz2 && ns != model.StateQuiz2 {
+		s.recomputeScores()
+	}
 }
 
 func (s *StateSvc) StartStateScheduler(ctx context.Context, interval time.Duration) {

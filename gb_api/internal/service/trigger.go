@@ -97,6 +97,24 @@ func (s *TriggerSvc) randomTypeForDifficulty(buildingID, difficulty uint) (uint,
 	return types[mrand.Intn(len(types))], true, nil
 }
 
+func (s *TriggerSvc) itemIDQuestion(id uint) (*model.Question, int, error) {
+	it, found, err := s.items.GetItem(id)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	if !found || it.QuestionID == 0 {
+		return nil, http.StatusBadRequest, fmt.Errorf("目標物品沒有題目")
+	}
+	gq, found, err := s.question.GetQuestion(it.QuestionID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	if !found {
+		return nil, http.StatusBadRequest, fmt.Errorf("目標物品沒有題目")
+	}
+	return &gq, http.StatusOK, nil
+}
+
 func (s *TriggerSvc) GenerateTarget(accessToken string, targetUserID uint, targetSlotID uint) ([]byte, int, error) {
 	caller, status, err := studentBlockedNotQuiz2(s.users, accessToken)
 	if err != nil {
@@ -118,6 +136,15 @@ func (s *TriggerSvc) GenerateTarget(accessToken string, targetUserID uint, targe
 	if !ok || v == 0 {
 		return nil, http.StatusBadRequest, fmt.Errorf("目標格子沒有物品")
 	}
+	// v is the signed slot value (negative = broken); the item id is its magnitude.
+	itemID := v
+	if itemID < 0 {
+		itemID = -itemID
+	}
+	slotQ, status, err := s.itemIDQuestion(uint(itemID))
+	if err != nil {
+		return nil, status, err
+	}
 
 	attack := targetUserID != caller.ID && v > 0
 	repair := targetUserID == caller.ID && v < 0
@@ -127,6 +154,7 @@ func (s *TriggerSvc) GenerateTarget(accessToken string, targetUserID uint, targe
 
 	// A failed attack bars the attacker from this slot until it is repaired.
 	// TODO: teacher/admin bypass
+	var q model.Question
 	if attack {
 		blocked, err := s.blocks.IsAttackBlocked(targetUserID, targetSlotID, caller.ID)
 		if err != nil {
@@ -135,27 +163,9 @@ func (s *TriggerSvc) GenerateTarget(accessToken string, targetUserID uint, targe
 		if blocked {
 			return nil, http.StatusForbidden, fmt.Errorf("攻擊失敗後需等待此格子修復才能再次攻擊")
 		}
-	}
-
-	var q model.Question
-	if attack {
-		it, found, err := s.items.GetItem(uint(v))
-		if err != nil {
-			return nil, http.StatusInternalServerError, err
-		}
-		if !found || it.QuestionID == 0 {
-			return nil, http.StatusBadRequest, fmt.Errorf("目標物品沒有題目")
-		}
-		gq, found, err := s.question.GetQuestion(it.QuestionID)
-		if err != nil {
-			return nil, http.StatusInternalServerError, err
-		}
-		if !found {
-			return nil, http.StatusBadRequest, fmt.Errorf("目標物品沒有題目")
-		}
-		q = gq
+		q = *slotQ
 	} else {
-		_, gq, found, err := s.question.RandomQuestion(2, nil)
+		_, gq, found, err := s.question.RandomQuestion(2, &slotQ.Difficulty)
 		if err != nil {
 			return nil, http.StatusInternalServerError, err
 		}

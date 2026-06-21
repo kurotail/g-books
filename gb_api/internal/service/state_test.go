@@ -19,11 +19,11 @@ func newRoleRepo(username string, role uint) *mock.AuthRepo {
 // stateCtl drives the global state machine in tests. The state vars are package-level,
 // so any StateSvc instance mutates the same state; this one is used wherever a test
 // just needs to set/revert state without caring about the block-clearing target.
-var stateCtl = NewStateSvc(&mock.AuthRepo{}, &mock.ItemRepo{})
+var stateCtl = NewStateSvc(&mock.AuthRepo{}, &mock.ItemRepo{}, &mock.ScoreRepo{})
 
 func TestStateSvc_SetState_TeacherTransitions(t *testing.T) {
 	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{})
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{}, &mock.ScoreRepo{})
 
 	data, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateQuiz2, nil)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestStateSvc_SetState_TeacherTransitions(t *testing.T) {
 
 func TestStateSvc_SetState_EndTimeScheduledAndOverwritten(t *testing.T) {
 	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{})
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{}, &mock.ScoreRepo{})
 
 	end1 := time.Now().Add(time.Hour).UTC().Round(time.Second)
 	data, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateQuiz2, &end1)
@@ -83,7 +83,7 @@ func TestStateSvc_SetState_EndTimeScheduledAndOverwritten(t *testing.T) {
 
 func TestStateSvc_SetState_PastEndTimeRejected(t *testing.T) {
 	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{})
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{}, &mock.ScoreRepo{})
 
 	past := time.Now().Add(-time.Minute)
 	_, status, err := s.SetState(accessTokenFor(t, "teacher"), model.StateQuiz2, &past)
@@ -131,7 +131,7 @@ func TestRevertIfDue(t *testing.T) {
 func TestStateSvc_NormalClearsAttackBlocks(t *testing.T) {
 	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
 	blocks := &mock.ItemRepo{AttackBlocks: map[[3]uint]struct{}{{1, 0, 2}: {}}}
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), blocks)
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), blocks, &mock.ScoreRepo{})
 
 	// Explicit transition to NORMAL clears the table.
 	s.setStateUntil(model.StateQuiz2, time.Time{})
@@ -154,8 +154,64 @@ func TestStateSvc_NormalClearsAttackBlocks(t *testing.T) {
 	}
 }
 
+// Ending QUIZ2 recomputes and caches the leaderboard; GetState/GetScores then expose it.
+func TestStateSvc_Quiz2EndComputesScores(t *testing.T) {
+	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
+	want := []model.UserScore{{UserID: 1, Score: 5}, {UserID: 2, Score: 0}}
+	scoreRepo := &mock.ScoreRepo{Sums: want}
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{}, scoreRepo)
+
+	// Enter QUIZ2, then end it (QUIZ2 -> NORMAL) — this triggers the recompute.
+	s.setStateUntil(model.StateQuiz2, time.Time{})
+	if _, _, err := s.SetState(accessTokenFor(t, "teacher"), model.StateNormal, nil); err != nil {
+		t.Fatalf("SetState NORMAL failed: %v", err)
+	}
+
+	data, _, err := s.GetScores(accessTokenFor(t, "teacher"))
+	if err != nil {
+		t.Fatalf("GetScores failed: %v", err)
+	}
+	var resp model.ScoresResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(resp.Scores) != 2 || resp.Scores[0] != want[0] || resp.Scores[1] != want[1] {
+		t.Errorf("expected scores %v, got %v", want, resp.Scores)
+	}
+
+	// The state snapshot (and thus the WS broadcast) carries the same scores.
+	data, _, _ = s.GetState(accessTokenFor(t, "teacher"))
+	var st model.StateResponse
+	json.Unmarshal(data, &st)
+	if len(st.Scores) != 2 {
+		t.Errorf("expected state snapshot to carry scores, got %v", st.Scores)
+	}
+}
+
+// A transition that is not a QUIZ2 exit must not recompute scores.
+func TestStateSvc_NonQuiz2EndLeavesScores(t *testing.T) {
+	t.Cleanup(func() { stateCtl.setStateUntil(model.StateNormal, time.Time{}) })
+	scoreRepo := &mock.ScoreRepo{Sums: []model.UserScore{{UserID: 9, Score: 9}}}
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{}, scoreRepo)
+
+	// Seed a known cache via a QUIZ2 exit, then change what the repo would return.
+	s.setStateUntil(model.StateQuiz2, time.Time{})
+	s.setStateUntil(model.StateNormal, time.Time{})
+	scoreRepo.Sums = []model.UserScore{{UserID: 1, Score: 100}} // would differ if recomputed
+
+	// NORMAL -> QUIZ1 is not a QUIZ2 exit: the cache must stay as the QUIZ2-end snapshot.
+	s.setStateUntil(model.StateQuiz1, time.Time{})
+
+	data, _, _ := s.GetScores(accessTokenFor(t, "teacher"))
+	var resp model.ScoresResponse
+	json.Unmarshal(data, &resp)
+	if len(resp.Scores) != 1 || resp.Scores[0].UserID != 9 {
+		t.Errorf("expected the QUIZ2-end snapshot to persist, got %v", resp.Scores)
+	}
+}
+
 func TestStateSvc_SetState_StudentForbidden(t *testing.T) {
-	s := NewStateSvc(newRoleRepo("student", model.RoleStudent), &mock.ItemRepo{})
+	s := NewStateSvc(newRoleRepo("student", model.RoleStudent), &mock.ItemRepo{}, &mock.ScoreRepo{})
 
 	_, status, err := s.SetState(accessTokenFor(t, "student"), model.StateQuiz2, nil)
 	if err == nil {
@@ -167,7 +223,7 @@ func TestStateSvc_SetState_StudentForbidden(t *testing.T) {
 }
 
 func TestStateSvc_SetState_InvalidValue(t *testing.T) {
-	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{})
+	s := NewStateSvc(newRoleRepo("teacher", model.RoleTeacher), &mock.ItemRepo{}, &mock.ScoreRepo{})
 
 	_, status, err := s.SetState(accessTokenFor(t, "teacher"), model.ServerState("BOGUS"), nil)
 	if err == nil {
@@ -180,7 +236,7 @@ func TestStateSvc_SetState_InvalidValue(t *testing.T) {
 
 func TestStateSvc_GetState(t *testing.T) {
 	useState(t, model.StateQuiz2)
-	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent), &mock.ItemRepo{})
+	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent), &mock.ItemRepo{}, &mock.ScoreRepo{})
 
 	data, status, err := s.GetState(accessTokenFor(t, "anyone"))
 	if err != nil {
@@ -205,7 +261,7 @@ func TestStateSvc_GetState(t *testing.T) {
 // subsequent transition.
 func TestStateSvc_SubscribeState(t *testing.T) {
 	useState(t, model.StateNormal)
-	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent), &mock.ItemRepo{})
+	s := NewStateSvc(newRoleRepo("anyone", model.RoleStudent), &mock.ItemRepo{}, &mock.ScoreRepo{})
 
 	cur, events, unsub, status, err := s.SubscribeState(accessTokenFor(t, "anyone"))
 	if err != nil {

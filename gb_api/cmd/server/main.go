@@ -22,7 +22,7 @@ func routes() (http.Handler, *handler.StateHandler, *service.StateSvc) {
 	itemHandler := handler.NewItemHandler(service.NewItemSvc(repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitBlockRepo()))
 	questionHandler := handler.NewQuestionHandler(service.NewQuestionSvc(repo.InitQuestionRepo(), repo.InitUserRepo()))
 	triggerHandler := handler.NewTriggerHandler(service.NewTriggerSvc(repo.InitQuestionRepo(), repo.InitUserRepo(), repo.InitBuildingRepo(), repo.InitItemRepo(), repo.InitInventoryRepo(), repo.InitBlockRepo(), repo.InitSTTRepo()))
-	stateSvc := service.NewStateSvc(repo.InitUserRepo(), repo.InitBlockRepo())
+	stateSvc := service.NewStateSvc(repo.InitUserRepo(), repo.InitBlockRepo(), repo.InitScoreRepo())
 	stateHandler := handler.NewStateHandler(stateSvc)
 	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
 	studentHandler := handler.NewStudentHandler(service.NewStudentSvc(repo.InitStudentRepo(), repo.InitUserRepo()))
@@ -74,6 +74,7 @@ func routes() (http.Handler, *handler.StateHandler, *service.StateSvc) {
 	mux.HandleFunc("GET /api/state", stateHandler.GetState)
 	mux.HandleFunc("POST /api/state", stateHandler.SetState)
 	mux.HandleFunc("GET /api/state/ws", stateHandler.StateSocket)
+	mux.HandleFunc("GET /api/scores", stateHandler.GetScores)
 
 	return logger.RequestLogger(mux), stateHandler, stateSvc
 }

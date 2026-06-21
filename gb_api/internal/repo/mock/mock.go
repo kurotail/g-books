@@ -390,6 +390,16 @@ func (m *ItemRepo) QuerySlotBlocks(ownerID uint) (map[uint][]uint, error) {
 	return out, nil
 }
 
+// ScoreRepo is a stub ScoreRepo whose SlotDifficultySums returns the preset Sums.
+type ScoreRepo struct {
+	Sums []model.UserScore
+	Err  error
+}
+
+func (m *ScoreRepo) SlotDifficultySums() ([]model.UserScore, error) {
+	return m.Sums, m.Err
+}
+
 type BuildingRepo struct {
 	Buildings map[uint]model.Building
 	NextID    uint

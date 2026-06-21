@@ -208,4 +208,16 @@ type StateResponse struct {
 	State     ServerState `json:"state"`
 	UpdatedAt time.Time   `json:"updated_at"`
 	EndTime   *time.Time  `json:"end_time,omitempty"` // when state auto-reverts to NORMAL; nil = no schedule
+	Scores    []UserScore `json:"scores,omitempty"`   // latest QUIZ2-end leaderboard; omitted before the first QUIZ2 ends
+}
+
+// UserScore is one user's pre-calculated score: the summed difficulty of the questions
+// referenced by the intact items in their slots (computed when QUIZ2 ends).
+type UserScore struct {
+	UserID uint `json:"user_id"`
+	Score  int  `json:"score"`
+}
+
+type ScoresResponse struct {
+	Scores []UserScore `json:"scores"`
 }

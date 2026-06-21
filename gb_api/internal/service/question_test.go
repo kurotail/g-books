@@ -215,6 +215,9 @@ func TestQuestionSvc_GenerateTarget_RepairValid(t *testing.T) {
 	useState(t, model.StateQuiz2)
 	s, _, items := newQuizSvc(model.RoleStudent, 1, nil, area2Q)
 	items.Slot[0] = -7 // own slot 0 holds a broken item
+	// The broken item must resolve to a question so the repair quiz can match its
+	// difficulty against an area-2 question (q5, difficulty 1).
+	items.Items[7] = model.Item{ItemID: 7, Type: 10, QuestionID: 5}
 
 	_, status, err := s.GenerateTarget(accessTokenFor(t, "u"), mock.IDFor("u"), 0)
 	if err != nil {

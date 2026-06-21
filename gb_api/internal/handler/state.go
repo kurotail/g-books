@@ -89,6 +89,20 @@ func (h *StateHandler) GetState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
+func (h *StateHandler) GetScores(w http.ResponseWriter, r *http.Request) {
+	token, err := bearerToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	data, status, err := h.svc.GetScores(token)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, data)
+}
+
 func (h *StateHandler) SetState(w http.ResponseWriter, r *http.Request) {
 	token, err := bearerToken(r)
 	if err != nil {
