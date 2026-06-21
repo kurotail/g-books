@@ -221,3 +221,10 @@ type UserScore struct {
 type ScoresResponse struct {
 	Scores []UserScore `json:"scores"`
 }
+
+// SlotUpdate is pushed over the state WebSocket when a user's slots change, so subscribers
+// can re-fetch that user's board (POST /api/item).
+type SlotUpdate struct {
+	Type   string `json:"type"` // always "slot_update"
+	UserID uint   `json:"user_id"`
+}

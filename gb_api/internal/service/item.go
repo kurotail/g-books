@@ -155,6 +155,7 @@ func (s *ItemSvc) TranInv2Slot(accessToken string, userID, itemID, slotID uint) 
 	if err := s.inv.SetSlot(caller.ID, slotID, int(itemID)); err != nil {
 		return http.StatusInternalServerError, err
 	}
+	broadcastSlotUpdate(caller.ID)
 	return http.StatusOK, nil
 }
 
@@ -184,5 +185,6 @@ func (s *ItemSvc) TranSlot2Inv(accessToken string, userID, slotID uint) (int, er
 	if err := s.inv.SetSlot(caller.ID, slotID, 0); err != nil {
 		return http.StatusInternalServerError, err
 	}
+	broadcastSlotUpdate(caller.ID)
 	return http.StatusOK, nil
 }

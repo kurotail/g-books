@@ -280,7 +280,11 @@ func TestStateSvc_SubscribeState(t *testing.T) {
 
 	stateCtl.setStateUntil(model.StateQuiz2, time.Time{})
 	select {
-	case got := <-events:
+	case msg := <-events:
+		got, ok := msg.(model.StateResponse)
+		if !ok {
+			t.Fatalf("expected a StateResponse event, got %T", msg)
+		}
 		if got.State != model.StateQuiz2 {
 			t.Errorf("expected QUIZ event, got %q", got.State)
 		}

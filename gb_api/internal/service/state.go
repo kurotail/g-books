@@ -49,15 +49,18 @@ func stateSnapshot() model.StateResponse {
 
 // --- broadcast hub ---
 
-var stateHub = &hub{subs: make(map[chan model.StateResponse]struct{})}
+var stateHub = &hub{subs: make(map[chan any]struct{})}
 
+// hub fans out messages to every state-WebSocket subscriber. Messages are either a
+// model.StateResponse (state snapshot/transition) or a model.SlotUpdate (a user's slots
+// changed); subscribers distinguish them by JSON shape / the "type" field.
 type hub struct {
 	mu   sync.Mutex
-	subs map[chan model.StateResponse]struct{}
+	subs map[chan any]struct{}
 }
 
-func (h *hub) subscribe() (<-chan model.StateResponse, func()) {
-	ch := make(chan model.StateResponse, 8)
+func (h *hub) subscribe() (<-chan any, func()) {
+	ch := make(chan any, 8)
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}
 	h.mu.Unlock()
@@ -73,15 +76,21 @@ func (h *hub) subscribe() (<-chan model.StateResponse, func()) {
 	return ch, unsub
 }
 
-func (h *hub) broadcast(s model.StateResponse) {
+func (h *hub) broadcast(msg any) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.subs {
 		select {
-		case ch <- s:
+		case ch <- msg:
 		default:
 		}
 	}
+}
+
+// broadcastSlotUpdate notifies every state-WS subscriber that userID's slots changed, so
+// they can re-fetch that board. Best-effort; never blocks or fails the caller.
+func broadcastSlotUpdate(userID uint) {
+	stateHub.broadcast(model.SlotUpdate{Type: "slot_update", UserID: userID})
 }
 
 // --- service ---
@@ -164,7 +173,7 @@ func (s *StateSvc) SetState(accessToken string, st model.ServerState, endTime *t
 	return data, http.StatusOK, nil
 }
 
-func (s *StateSvc) SubscribeState(accessToken string) (model.StateResponse, <-chan model.StateResponse, func(), int, error) {
+func (s *StateSvc) SubscribeState(accessToken string) (model.StateResponse, <-chan any, func(), int, error) {
 	if _, err := validateAccessToken(accessToken); err != nil {
 		return model.StateResponse{}, nil, nil, http.StatusUnauthorized, err
 	}

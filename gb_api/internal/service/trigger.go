@@ -266,6 +266,7 @@ func (s *TriggerSvc) applyTarget(callerID uint, t model.Target) (bool, error) {
 			return false, err
 		}
 	}
+	broadcastSlotUpdate(t.UserID)
 	return true, nil
 }
 

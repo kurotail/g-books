@@ -135,7 +135,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `POST /api/stt` | Bearer (> Student) | Transcribe a base64-encoded WAV recording to text |
 | `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ1` / `QUIZ2`) |
 | `POST /api/state` | Bearer (> Student) | Transition the server state |
-| `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every state transition |
+| `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect, every state transition, and a `slot_update` whenever a user's slots change |
 | `GET /api/scores` | Bearer | Read the per-user slot-difficulty leaderboard (recalculated when QUIZ2 ends) |
 
 ---
@@ -1377,19 +1377,31 @@ may be supplied either way:
 - `Authorization: Bearer <access_token>` header, or
 - `?access_token=<access_token>` query parameter.
 
-**Messages** — each frame is JSON, identical in shape to `GET /api/state`, including the
-`scores` leaderboard (refreshed whenever `QUIZ2` ends, so subscribers see the new scores in
-the transition message):
+**Messages** — the socket carries **two kinds** of JSON frame, distinguished by the `type`
+field:
 
-```json
-{ "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z", "scores": [ { "user_id": 1, "score": 5 } ] }
-```
+- **State** — identical in shape to `GET /api/state` (no `type` field), including the `scores`
+  leaderboard (refreshed whenever `QUIZ2` ends, so subscribers see the new scores in the
+  transition message):
+
+  ```json
+  { "state": "NORMAL", "updated_at": "2026-06-15T09:30:00Z", "scores": [ { "user_id": 1, "score": 5 } ] }
+  ```
+
+- **Slot update** — pushed whenever a user's slots change (an inventory↔slot move via
+  [`POST /api/item/inv2slot`](#post-apiiteminv2slot) / [`slot2inv`](#post-apiitemslot2inv), or a
+  successful attack/repair). It names the affected user; clients re-fetch
+  [`POST /api/item`](#post-apiitem) for that user (which applies per-viewer visibility):
+
+  ```json
+  { "type": "slot_update", "user_id": 2 }
+  ```
 
 **Lifecycle**
 
-- The first message is the current state at connect time (a snapshot).
-- Subsequent messages are sent only when the state actually changes; a single
-  transition is broadcast to every connected subscriber.
+- The first message is the current state at connect time (a state snapshot).
+- A state frame is sent only when the state actually changes; a slot-update frame is sent on
+  every slot change. Both are broadcast to every connected subscriber.
 - On server shutdown each connection is closed gracefully with a WebSocket
   Going-Away (`1001`) close frame.
 

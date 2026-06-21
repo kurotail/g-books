@@ -188,6 +188,39 @@ func TestItemSvc_TranInv2Slot_MovesItemToSlot(t *testing.T) {
 	}
 }
 
+// Moving items in/out of a slot pushes a slot_update for the caller to state-WS subscribers.
+func TestItemSvc_SlotChangesBroadcast(t *testing.T) {
+	s, _ := itemSvc(model.RoleTeacher, allowAll())
+	events, unsub := stateHub.subscribe()
+	defer unsub()
+
+	if _, err := s.TranInv2Slot(validAccessToken(t), mock.IDFor("testuser"), 1, 5); err != nil {
+		t.Fatalf("inv2slot failed: %v", err)
+	}
+	assertSlotUpdate(t, events, mock.IDFor("testuser"))
+
+	if _, err := s.TranSlot2Inv(validAccessToken(t), mock.IDFor("testuser"), 5); err != nil {
+		t.Fatalf("slot2inv failed: %v", err)
+	}
+	assertSlotUpdate(t, events, mock.IDFor("testuser"))
+}
+
+func assertSlotUpdate(t *testing.T, events <-chan any, wantUser uint) {
+	t.Helper()
+	select {
+	case msg := <-events:
+		su, ok := msg.(model.SlotUpdate)
+		if !ok {
+			t.Fatalf("expected a SlotUpdate, got %T", msg)
+		}
+		if su.Type != "slot_update" || su.UserID != wantUser {
+			t.Errorf("expected slot_update for user %d, got %+v", wantUser, su)
+		}
+	default:
+		t.Fatal("expected a slot_update broadcast")
+	}
+}
+
 func TestItemSvc_TranInv2Slot_ItemNotInInventory(t *testing.T) {
 	s, _ := itemSvc(model.RoleTeacher, allowAll())
 
