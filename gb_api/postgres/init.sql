@@ -10,11 +10,13 @@
 -- Schema
 -- ---------------------------------------------------------------------------
 
--- Users are keyed by a stable numeric id; username is a unique, mutable handle
--- (renaming a user changes only this column, never the id the child rows reference).
+-- Users are keyed by a stable numeric id; username is a unique login handle and
+-- display_name is the mutable, user-facing name (changing it leaves the id the
+-- child rows reference untouched).
 CREATE TABLE IF NOT EXISTS users (
     id              BIGSERIAL PRIMARY KEY,
     username        TEXT   UNIQUE NOT NULL,
+    display_name    TEXT   NOT NULL DEFAULT '',
     password        TEXT   NOT NULL,
     role            INT    NOT NULL DEFAULT 0,
     building_id     BIGINT NOT NULL DEFAULT 0,   -- 0 = no building assigned

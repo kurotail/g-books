@@ -37,7 +37,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	mux.HandleFunc("POST /api/users/pfp", authHandler.SetProfilePic)
 	mux.HandleFunc("POST /api/users/building", authHandler.SetBuilding)
 	mux.HandleFunc("POST /api/users/students", studentHandler.SetStudents)
-	mux.HandleFunc("POST /api/users/username", authHandler.SetUsername)
+	mux.HandleFunc("POST /api/users/display_name", authHandler.SetDisplayName)
 	mux.HandleFunc("POST /api/users/password", authHandler.SetPassword)
 	mux.HandleFunc("DELETE /api/users/{id}", authHandler.DeleteUser)
 

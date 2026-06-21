@@ -24,8 +24,9 @@ type RegisterRequest struct {
 }
 
 type User struct {
-	ID            uint   `json:"id"` // numeric primary key; read-only (server-assigned, never accepted as input)
-	Username      string `json:"username"`
+	ID            uint   `json:"id"`       // numeric primary key; read-only (server-assigned, never accepted as input)
+	Username      string `json:"username"` // unique login handle; immutable via the API
+	DisplayName   string `json:"display_name"`
 	Role          uint   `json:"role"`
 	BuildingID    uint   `json:"building_id"`     // 0 = no building assigned
 	ProfilePicURL string `json:"profile_pic_url"` // image link; empty = no picture
@@ -43,8 +44,8 @@ type SetUserBuildingRequest struct {
 	BuildingID *uint `json:"building_id"`
 }
 
-type SetUsernameRequest struct {
-	Username string `json:"username"`
+type SetDisplayNameRequest struct {
+	DisplayName string `json:"display_name"`
 }
 
 type SetPasswordRequest struct {
