@@ -167,6 +167,17 @@ type AnswerRequest struct {
 	Answer  json.RawMessage `json:"answer"` // index question: a number; voice_response: an audio URL string
 }
 
+// TranscribeRequest carries a base64-encoded WAV recording for the standalone STT
+// endpoint, mirroring the voice answer payload fed to STTRepo.Transcribe.
+type TranscribeRequest struct {
+	AudioB64 string `json:"audio_b64"`
+}
+
+// TranscribeResponse reports the text recognized from the submitted recording.
+type TranscribeResponse struct {
+	Text string `json:"text"`
+}
+
 // AnswerResponse reports the outcome of answering a session. ItemID is set when a
 // KindItem answer grants an item; Success is set for KindTarget answers and reports
 // whether the break/repair actually happened (false when the precondition no longer holds).

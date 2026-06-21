@@ -129,6 +129,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `DELETE /api/question/{id}` | Bearer (> Student) | Delete a pooled question by ID |
 | `POST /api/image` | Bearer | Upload an image; returns the URL it is served at |
 | `POST /api/audio` | Bearer | Upload an audio file; returns the URL it is served at |
+| `POST /api/stt` | Bearer (> Student) | Transcribe a base64-encoded WAV recording to text |
 | `GET /api/state` | Bearer | Read the current server state (`NORMAL` / `QUIZ1` / `QUIZ2`) |
 | `POST /api/state` | Bearer (> Student) | Transition the server state |
 | `GET /api/state/ws` | Bearer or `?access_token=` | WebSocket; pushes the current state on connect and on every state transition |
@@ -1411,6 +1412,47 @@ The upload directory and per-category size caps are configurable via environment
 > When raising `MAX_AUDIO_MB`, also bump `client_max_body_size` in
 > `nginx/conf.d/default.conf` so nginx does not reject the larger body before it
 > reaches the API.
+
+---
+
+## Speech-to-text
+
+Transcribe a spoken recording to text on demand. This is the same speech-to-text
+backend that grades `voice_response` questions (see
+[`POST /api/question/answer`](#post-apiquestionanswer)), exposed as a standalone
+endpoint so **Teachers and Admins** can transcribe a recording directly — for example
+to author or verify a question's accepted transcripts. Students receive `403`.
+
+The endpoint accepts the recording as a base64-encoded WAV string (the same payload
+shape as a voice answer), sends it to the transcription service, and returns the text.
+The service can be slow on CPU, so the request may take a while.
+
+```
+Authorization: Bearer <access_token>
+```
+
+### `POST /api/stt`
+
+**Request** — `audio_b64` is a WAV file, base64-encoded into a string
+
+```json
+{ "audio_b64": "UklGRiQAAABXQVZF..." }
+```
+
+**Response `200 OK`**
+
+```json
+{ "text": "eighteen" }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Malformed JSON body, a missing `audio_b64`, or audio that is not valid base64 |
+| `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
+| `403`  | Caller's role is Student or lower |
+| `500`  | The transcription service is unreachable or returned an error |
 
 ---
 

@@ -25,6 +25,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 	buildingHandler := handler.NewBuildingHandler(service.NewBuildingSvc(repo.InitBuildingRepo(), repo.InitUserRepo()))
 	studentHandler := handler.NewStudentHandler(service.NewStudentSvc(repo.InitStudentRepo(), repo.InitUserRepo()))
 	mediaHandler := handler.NewMediaHandler(service.NewMediaSvc(config.UploadDir, config.MaxImageMB, config.MaxAudioMB))
+	sttHandler := handler.NewSTTHandler(service.NewSTTSvc(repo.InitSTTRepo(), repo.InitUserRepo()))
 
 	mux := http.NewServeMux()
 
@@ -66,6 +67,7 @@ func routes() (http.Handler, *handler.StateHandler) {
 
 	mux.HandleFunc("POST /api/image", mediaHandler.UploadImage)
 	mux.HandleFunc("POST /api/audio", mediaHandler.UploadAudio)
+	mux.HandleFunc("POST /api/stt", sttHandler.Transcribe)
 
 	mux.HandleFunc("GET /api/state", stateHandler.GetState)
 	mux.HandleFunc("POST /api/state", stateHandler.SetState)
