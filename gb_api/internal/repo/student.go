@@ -8,11 +8,10 @@ import (
 	"gb-api/internal/model"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type StudentRepo interface {
-	CreateStudent(id uint, name, profilePicURL string) error
+	CreateStudent(name, profilePicURL string) (uint, error)
 	UpdateStudent(id uint, name, profilePicURL string) error
 	GetStudent(id uint) (model.Student, error)
 	GetAllStudents() ([]model.Student, error)
@@ -21,19 +20,18 @@ type StudentRepo interface {
 
 type studentRepo struct{}
 
-// CreateStudent inserts a student under the client-supplied id, which is the
-// primary key. It returns ErrStudentExists if that id is already taken.
-func (_ *studentRepo) CreateStudent(id uint, name, profilePicURL string) error {
+// CreateStudent inserts a student with a server-assigned id and returns it.
+func (_ *studentRepo) CreateStudent(name, profilePicURL string) (uint, error) {
 	ctx := context.Background()
-	_, err := pool.Exec(ctx,
-		`INSERT INTO students (id, name, profile_pic_url) VALUES ($1, $2, $3)`,
-		id, name, profilePicURL,
-	)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
-		return apperr.ErrStudentExists
+	var id uint
+	err := pool.QueryRow(ctx,
+		`INSERT INTO students (name, profile_pic_url) VALUES ($1, $2) RETURNING id`,
+		name, profilePicURL,
+	).Scan(&id)
+	if err != nil {
+		return 0, err
 	}
-	return err
+	return id, nil
 }
 
 func (_ *studentRepo) UpdateStudent(id uint, name, profilePicURL string) error {

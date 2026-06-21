@@ -2,12 +2,12 @@ package model
 
 // CreateStudentRequest is the body for creating or updating a student.
 type CreateStudentRequest struct {
-	StudentID     uint   `json:"student_id"` // client-supplied primary key (create only)
 	Name          string `json:"name"`
 	ProfilePicURL string `json:"profile_pic_url"` // image link; empty = no picture
 }
 
-// Student is a row in the students table. Primary key: StudentID.
+// Student is a row in the students table. StudentID is the server-assigned,
+// read-only primary key.
 type Student struct {
 	StudentID     uint   `json:"student_id"`
 	Name          string `json:"name"`

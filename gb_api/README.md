@@ -111,7 +111,7 @@ Refresh tokens are single-use. Using the same refresh token twice returns `401`.
 | `GET /api/building` | Bearer | List all buildings |
 | `GET /api/building/{id}` | Bearer | Read a building by ID |
 | `PUT /api/building/{id}` | Bearer (> Student) | Replace a building by ID |
-| `POST /api/student` | Bearer (> Student) | Create a student (client-supplied `student_id`) |
+| `POST /api/student` | Bearer (> Student) | Create a student (server-assigned `student_id`) |
 | `GET /api/student` | Bearer | List all students |
 | `GET /api/student/{id}` | Bearer | Read a student by ID |
 | `PUT /api/student/{id}` | Bearer (> Student, or a student assigned to the caller) | Replace a student by ID |
@@ -598,9 +598,9 @@ values are cleared (read back as empty). `name` is required.
 ## Students
 
 A **student** is a lightweight record: `{ student_id, name, profile_pic_url }`. The
-`student_id` is the **primary key and is supplied by the client** on create (e.g. a
-school-assigned student number) — it is **not** auto-generated, and must be greater than `0`.
-`profile_pic_url` is an image link (typically a URL returned by [`POST /api/image`](#post-apiimage--post-apiaudio)),
+`student_id` is the **server-assigned, read-only** primary key — it is allocated by the
+database on create and is **not** accepted as input. `profile_pic_url` is an image link
+(typically a URL returned by [`POST /api/image`](#post-apiimage--post-apiaudio)),
 stored and returned verbatim; empty means no picture.
 
 Students are assigned to users via each user's [roster](#post-apiusersstudents). Deleting a
@@ -615,16 +615,17 @@ Authorization: Bearer <access_token>
 
 ### `POST /api/student`
 
-Create a student under the **client-supplied** `student_id`. **Teachers and Admins only.**
-`student_id` (`> 0`) and `name` are required; `profile_pic_url` is optional.
+Create a student. **Teachers and Admins only.** `name` is required; `profile_pic_url`
+is optional. The `student_id` is **server-assigned** and returned in the response (any
+`student_id` sent in the body is ignored).
 
 **Request**
 
 ```json
-{ "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
+{ "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
 ```
 
-**Response `200 OK`** — the created student
+**Response `200 OK`** — the created student, including its new `student_id`
 
 ```json
 { "student_id": 1, "name": "Alice", "profile_pic_url": "/images/abc.jpg" }
@@ -634,10 +635,9 @@ Create a student under the **client-supplied** `student_id`. **Teachers and Admi
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Malformed JSON body, a missing/zero `student_id`, or a missing `name` |
+| `400`  | Malformed JSON body, or a missing `name` |
 | `401`  | Missing/malformed `Authorization` header, or an invalid/expired access token |
 | `403`  | Caller's role is Student or lower |
-| `409`  | A student with that `student_id` already exists |
 
 ---
 

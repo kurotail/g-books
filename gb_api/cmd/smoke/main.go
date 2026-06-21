@@ -335,22 +335,18 @@ func buildingChecks(adminAccess, studentAccess string) uint {
 // studentChecks exercises the student CRUD endpoints and the roster-assignment
 // endpoint, using a freshly minted student id so reruns never collide.
 func studentChecks(adminAccess, studentAccess, rosterTarget string) {
-	sid := uint(time.Now().UnixNano()%900000) + 100000
-	otherSid := sid + 1
-
-	st, body := req("POST", "/api/student", adminAccess, map[string]any{"student_id": sid, "name": "Alice"})
+	st, body := req("POST", "/api/student", adminAccess, map[string]any{"name": "Alice"})
 	show("admin creates a student", st, 200, body)
+	var created struct {
+		StudentID uint `json:"student_id"`
+	}
+	json.Unmarshal([]byte(body), &created)
+	sid := created.StudentID
 
-	st, body = req("POST", "/api/student", adminAccess, map[string]any{"student_id": sid, "name": "Alice"})
-	show("create duplicate student id (conflict)", st, 409, body)
-
-	st, body = req("POST", "/api/student", adminAccess, map[string]any{"name": "NoID"})
-	show("create student missing student_id (rejected)", st, 400, body)
-
-	st, body = req("POST", "/api/student", adminAccess, map[string]any{"student_id": otherSid})
+	st, body = req("POST", "/api/student", adminAccess, map[string]any{})
 	show("create student missing name (rejected)", st, 400, body)
 
-	st, body = req("POST", "/api/student", studentAccess, map[string]any{"student_id": otherSid, "name": "Nope"})
+	st, body = req("POST", "/api/student", studentAccess, map[string]any{"name": "Nope"})
 	show("student creates a student (forbidden)", st, 403, body)
 
 	st, body = req("GET", "/api/student", adminAccess, nil)
@@ -383,7 +379,7 @@ func studentChecks(adminAccess, studentAccess, rosterTarget string) {
 	st, body = req("DELETE", sidPath, adminAccess, nil)
 	show("delete already-deleted student (404)", st, 404, body)
 
-	st, body = req("DELETE", fmt.Sprintf("/api/student/%d", otherSid), studentAccess, nil)
+	st, body = req("DELETE", "/api/student/999999999", studentAccess, nil)
 	show("student deletes a student (forbidden)", st, 403, body)
 }
 

@@ -21,15 +21,13 @@ func NewStudentSvc(r repo.StudentRepo, users repo.UserRepo) *StudentSvc {
 	return &StudentSvc{repo: r, users: users}
 }
 
-// Create adds a new student under the client-supplied id. Only teachers/admins may create students.
-func (s *StudentSvc) Create(accessToken string, id uint, name, profilePicURL string) ([]byte, int, error) {
+// Create adds a new student with a server-assigned id. Only teachers/admins may create students.
+func (s *StudentSvc) Create(accessToken string, name, profilePicURL string) ([]byte, int, error) {
 	if status, err := requireTeacher(s.users, accessToken); err != nil {
 		return nil, status, err
 	}
-	if err := s.repo.CreateStudent(id, name, profilePicURL); err != nil {
-		if errors.Is(err, apperr.ErrStudentExists) {
-			return nil, http.StatusConflict, err
-		}
+	id, err := s.repo.CreateStudent(name, profilePicURL)
+	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 	st, err := s.repo.GetStudent(id)

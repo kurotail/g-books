@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS questions (
 );
 
 CREATE TABLE IF NOT EXISTS students (
-    id              BIGINT PRIMARY KEY,          -- client-supplied PK
+    id              BIGSERIAL PRIMARY KEY,        -- server-assigned
     name            TEXT NOT NULL,
     profile_pic_url TEXT NOT NULL DEFAULT ''
 );

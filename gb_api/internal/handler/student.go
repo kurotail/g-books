@@ -29,15 +29,11 @@ func (h *StudentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "不合法的 JSON 格式", http.StatusBadRequest)
 		return
 	}
-	if req.StudentID == 0 {
-		http.Error(w, "缺少 student_id", http.StatusBadRequest)
-		return
-	}
 	if req.Name == "" {
 		http.Error(w, "缺少 name", http.StatusBadRequest)
 		return
 	}
-	data, status, err := h.svc.Create(token, req.StudentID, req.Name, req.ProfilePicURL)
+	data, status, err := h.svc.Create(token, req.Name, req.ProfilePicURL)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

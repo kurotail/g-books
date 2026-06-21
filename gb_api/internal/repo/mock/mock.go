@@ -388,17 +388,20 @@ func (m *BuildingRepo) GetAllBuildings() ([]model.Building, error) {
 
 type StudentRepo struct {
 	Students map[uint]model.Student
+	NextID   uint
 }
 
-func (m *StudentRepo) CreateStudent(id uint, name, profilePicURL string) error {
+func (m *StudentRepo) CreateStudent(name, profilePicURL string) (uint, error) {
 	if m.Students == nil {
 		m.Students = map[uint]model.Student{}
 	}
-	if _, ok := m.Students[id]; ok {
-		return apperr.ErrStudentExists
+	if m.NextID == 0 {
+		m.NextID = 1000 // high base to avoid colliding with test-seeded ids
 	}
+	id := m.NextID
+	m.NextID++
 	m.Students[id] = model.Student{StudentID: id, Name: name, ProfilePicURL: profilePicURL}
-	return nil
+	return id, nil
 }
 
 func (m *StudentRepo) UpdateStudent(id uint, name, profilePicURL string) error {
