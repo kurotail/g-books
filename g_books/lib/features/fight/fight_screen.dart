@@ -842,6 +842,10 @@ class _FightScreenState extends State<FightScreen>
     final worldView = focused == null && !_supplyFocused;
     return Stack(
       children: [
+        // 全景時：在補給島的螢幕投影位置疊一個透明點擊區，確保「點地圖補給島＝聚焦補給島」。
+        // （補給島浮出主島右上、在部分長寬比下會溢出 InteractiveViewer 的場景方框而無法被點到，
+        //  故改用不受場景方框裁切的 HUD 投影點擊區。）
+        if (worldView) _buildSupplyTapCatcher(),
         // 全景：固定大小的氣泡（頭像 + 組名 + 血量），跟著島嶼移動但不隨縮放變大。
         if (worldView) _buildBubbleLayer(),
         // 上方倒數。
@@ -921,6 +925,27 @@ class _FightScreenState extends State<FightScreen>
           width: btnW,
           child: Center(
             child: _goldButton(label: '開始補給', onTap: _openSupplyPanel),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 全景時補給島的透明點擊區：每幀依鏡頭把補給島投影到螢幕，疊一個透明 GestureDetector，
+  /// 點到即等同點選單「文資補給」（聚焦補給島並顯示「開始補給」）。放在 HUD（不受場景方框裁切），
+  /// 解決補給島浮出主島右上、座標溢出 InteractiveViewer 場景方框時點不到的問題。
+  Widget _buildSupplyTapCatcher() {
+    return AnimatedBuilder(
+      animation: _tc,
+      builder: (_, _) {
+        final main = FightMapGeometry.mainRect(_viewport);
+        final supply = FightMapGeometry.supplyRect(main);
+        final rect = _screenRect(supply, _tc.value);
+        return Positioned.fromRect(
+          rect: rect,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _onTapSupply,
           ),
         );
       },

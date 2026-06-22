@@ -11,6 +11,7 @@ import 'dart:io';
 const String kApiBaseUrl = String.fromEnvironment(
   'GB_API_BASE',
   defaultValue: 'https://10.0.2.2',
+  // defaultValue: 'https://192.168.207.10',
 );
 
 /// 把後端媒體路徑（上傳後端回的 `/images/..` 或 `/audio/..` 相對路徑）補成可載入的絕對
