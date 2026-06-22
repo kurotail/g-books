@@ -81,8 +81,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 onTap: () => context.push('/staff-login'),
                 behavior: HitTestBehavior.opaque,
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 9,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.pillDark,
                     borderRadius: BorderRadius.circular(20),
@@ -97,8 +99,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.admin_panel_settings_outlined,
-                          size: 16, color: Colors.white),
+                      Icon(
+                        Icons.admin_panel_settings_outlined,
+                        size: 16,
+                        color: Colors.white,
+                      ),
                       SizedBox(width: 6),
                       Text(
                         '教師 / 管理者登入',
@@ -203,6 +208,7 @@ class _LoginScreenState extends State<LoginScreen> {
       keyboardType: TextInputType.text,
       style: const TextStyle(color: Colors.white, fontSize: 16),
       onChanged: (_) => setState(() => _error = null),
+      onSubmitted: (_) => _login(),
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: const TextStyle(color: AppColors.inputHint, fontSize: 14),

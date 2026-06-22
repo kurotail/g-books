@@ -118,11 +118,13 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
 
   Future<void> _initGameState() async {
     final snap = await _gameSvc.fetch();
-    // 依場次（階段開始時間）解析回合：同場次接續先前回合；新場次從第 1 回合開始。
-    final sessionKey = snap.startTime.toIso8601String();
-    final saved = await _progressSvc.load();
+    // 依場次（組別 + 階段開始時間）解析回合：同場次接續先前回合；新場次從第 1 回合開始。
+    // 每場次各自存進度，換組登入也不會互相覆蓋，回到同一組能接續其回合。
+    final groupKey = _appState.currentGroup?.id ?? 0;
+    final sessionKey = '$groupKey:${snap.startTime.toIso8601String()}';
+    final saved = await _progressSvc.load(sessionKey);
     int round;
-    if (saved != null && saved.sessionKey == sessionKey) {
+    if (saved != null) {
       round = saved.round < 1 ? 1 : saved.round;
     } else {
       round = 1;
@@ -276,8 +278,9 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
       return;
     }
     try {
-      final res =
-          await _quizSvc.submitAnswer(QuizAnswer.audio(_q!.session, b64));
+      final res = await _quizSvc.submitAnswer(
+        QuizAnswer.audio(_q!.session, b64),
+      );
       await _handleResult(res);
     } catch (_) {
       _onSubmitFailed();
@@ -309,7 +312,11 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
         try {
           await _board.refresh();
           final type = _board.typeOfItemId(res.itemId!);
-          reward = type != null ? componentById(_hid, type) : null;
+          // 一律以正 id 解析原料：若後端 difficulty_type 殘留負 id（損毀替身），
+          // 仍對應回其正 id 原料，避免「答對卻顯示該難度無原料」。
+          reward = type == null
+              ? null
+              : componentById(_hid, type) ?? componentById(_hid, type.abs());
         } catch (_) {
           reward = null;
         }
@@ -754,10 +761,10 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
               onPlay: url == null
                   ? null
                   : () => _togglePlay(
-                        'choice:$i',
-                        UrlSource(url),
-                        '語音載入失敗（mock 無音檔）',
-                      ),
+                      'choice:$i',
+                      UrlSource(url),
+                      '語音載入失敗（mock 無音檔）',
+                    ),
             );
           }(),
         ],
@@ -930,94 +937,161 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
     final reward = _reward;
     return Positioned.fill(
       child: ColoredBox(
-        color: const Color(0xCC000000),
+        color: const Color(0xD9000000),
         child: Center(
-          child: Container(
-            width: 360,
-            padding: const EdgeInsets.fromLTRB(28, 28, 28, 22),
-            decoration: BoxDecoration(
-              color: const Color(0xF21F1B15),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: correct ? const Color(0xFFD4A843) : Colors.white24,
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  correct ? Icons.check_circle_rounded : Icons.cancel_rounded,
-                  color: correct
-                      ? const Color(0xFF6BCB6B)
-                      : const Color(0xFFFF6B5E),
-                  size: 64,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  correct ? '答對了！' : '答錯了',
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Image.asset(
+                correct
+                    ? 'assets/icons/collect_successful.png'
+                    : 'assets/icons/collect_fail.png',
+                width: 620,
+                errorBuilder: (_, _, _) => Text(
+                  correct ? '採集成功' : '採集失敗',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 28,
+                    fontSize: 44,
                     fontWeight: FontWeight.w900,
-                    letterSpacing: 4,
+                    letterSpacing: 6,
                   ),
                 ),
-                const SizedBox(height: 14),
-                if (correct && reward != null) ...[
-                  const Text(
-                    '獲得原料',
-                    style: TextStyle(color: Colors.white60, fontSize: 14),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: 120,
-                    height: 120,
-                    child: FramedComponentTile(component: reward),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${reward.name}　Lv.${reward.level}',
-                    style: const TextStyle(
-                      color: Color(0xFFE8DCC0),
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ] else if (correct) ...[
-                  const Text(
-                    '（此難度暫無可獲得的原料）',
-                    style: TextStyle(color: Colors.white60, fontSize: 14),
-                  ),
-                ] else
-                  const Text(
-                    '再接再厲，換下一題試試！',
-                    style: TextStyle(color: Colors.white70, fontSize: 15),
-                  ),
-                const SizedBox(height: 22),
-                GestureDetector(
-                  onTap: _nextRound,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 44,
-                      vertical: 14,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD4A843),
-                      borderRadius: BorderRadius.circular(26),
-                    ),
-                    child: const Text(
-                      '下一題',
-                      style: TextStyle(
-                        color: Color(0xFF2A1A0A),
-                        fontSize: 18,
-                        letterSpacing: 4,
-                        fontWeight: FontWeight.w800,
+              ),
+              Transform.translate(
+                offset: const Offset(0, -18),
+                child: Container(
+                  width: 420,
+                  padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xF2CDB590),
+                    borderRadius: BorderRadius.circular(30),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black54,
+                        blurRadius: 16,
+                        offset: Offset(0, 7),
                       ),
-                    ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        correct ? '恭喜 $_answererLabel 答題正確！' : '答錯了，再接再厲！',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF2A1A0A),
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      if (correct && reward != null)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6E4D45),
+                            borderRadius: BorderRadius.circular(18),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x66000000),
+                                blurRadius: 5,
+                                offset: Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              Text(
+                                '獲得 ${reward.name} *1',
+                                style: const TextStyle(
+                                  color: Color(0xFFFFE7B2),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: 86,
+                                height: 86,
+                                child: FramedComponentTile(component: reward),
+                              ),
+                            ],
+                          ),
+                        )
+                      else if (correct)
+                        const Text(
+                          '此難度暫無可獲得的原料',
+                          style: TextStyle(
+                            color: Color(0xFF4A3A28),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        )
+                      else
+                        const Text(
+                          '換下一題再試一次。',
+                          style: TextStyle(
+                            color: Color(0xFF4A3A28),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      const SizedBox(height: 22),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _resultButton('繼續採集', _nextRound, filled: true),
+                          const SizedBox(width: 28),
+                          _resultButton(
+                            '結束採集',
+                            () => context.pop(),
+                            filled: false,
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _resultButton(
+    String label,
+    VoidCallback onTap, {
+    required bool filled,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+        decoration: BoxDecoration(
+          color: filled ? const Color(0xFFE8CBA8) : const Color(0x559B8066),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: const Color(0xFF7B5C49), width: 1.4),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x55000000),
+              blurRadius: 4,
+              offset: Offset(0, 2),
             ),
+          ],
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF2A1A0A),
+            fontSize: 15,
+            letterSpacing: 2,
+            fontWeight: FontWeight.w900,
           ),
         ),
       ),
@@ -1032,37 +1106,82 @@ class _ResourceCollectionScreenState extends State<ResourceCollectionScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset(
-                'assets/icons/times_up.png',
-                width: 280,
-                errorBuilder: (_, _, _) => const SizedBox.shrink(),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                '資源採集結束',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  letterSpacing: 4,
-                  fontWeight: FontWeight.w600,
+              SizedBox(
+                width: 560,
+                height: 300,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Image.asset(
+                      'assets/icons/times_up.png',
+                      width: 320,
+                      errorBuilder: (_, _, _) => const Text(
+                        '時間到',
+                        style: TextStyle(color: Colors.white, fontSize: 40),
+                      ),
+                    ),
+                    Positioned(
+                      right: 32,
+                      top: 120,
+                      child: GestureDetector(
+                        onTap: () => context.pop(true),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 86,
+                              height: 86,
+                              child: Image.asset(
+                                'assets/icons/buttons/edit_heritages_btn.png',
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, _, _) => const Icon(
+                                  Icons.edit_rounded,
+                                  color: Color(0xFFE8DCC0),
+                                  size: 52,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              '編輯古蹟',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 17,
+                                letterSpacing: 2,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 28),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _timeUpButton(
-                    label: '返回我的古蹟',
-                    filled: false,
-                    onTap: () => context.pop(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 70,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xCC000000),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  '00:00',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    letterSpacing: 4,
+                    fontWeight: FontWeight.w800,
                   ),
-                  const SizedBox(width: 18),
-                  _timeUpButton(
-                    label: '前往編輯',
-                    filled: true,
-                    onTap: () => context.pop(true),
-                  ),
-                ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              _timeUpButton(
+                label: '返回首頁',
+                filled: true,
+                onTap: () => context.pop(),
               ),
             ],
           ),
@@ -1155,7 +1274,7 @@ class _DifficultyCard extends StatelessWidget {
                   children: [
                     // 區域圖：底部多留白，讓星數可貼著下緣並稍微重疊其上。
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 4, 18, 30),
+                      padding: const EdgeInsets.fromLTRB(34, 18, 34, 46),
                       child: Image.asset(
                         imagePath,
                         fit: BoxFit.contain,

@@ -28,6 +28,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
@@ -40,7 +41,9 @@ flutter:
     - assets/images/bg_group_info.png  # 小組總覽
     - assets/images/bg_view.png        # 古蹟檢視頁
     - assets/images/edit_grid.png      # 古蹟編輯格線
+    - assets/images/bg_fight.png       # 攻防戰背景
     - assets/images/fight_map.png      # 攻防戰地圖（功能預留）
+    - assets/images/supply_station.png # 文資補給站島嶼
     # icons
     - assets/icons/                    # star.png / times_up.png 等
     - assets/icons/buttons/            # 功能按鈕圖
@@ -65,3 +68,11 @@ flutter:
     - assets/heritages/chihkan_tower/info_imgs/
 
     - assets/heritages/former_british_consular_residence/
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/logo.png"
+  min_sdk_android: 26
+  adaptive_icon_background: "#886137"
+  adaptive_icon_foreground: "assets/logo.png"

@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 import 'models/component_model.dart';
 import 'models/heritage_config.dart';
+import 'map_cell_data.dart';
 import 'slot_data.dart';
 
 /// 原料資料改為「設定驅動」：
@@ -37,6 +38,10 @@ List<ComponentModel> componentsByLevel(String heritageId, int level) =>
     [for (final c in componentsOf(heritageId)) if (c.level == level) c];
 
 /// 啟動時讀 AssetManifest，列出每座古蹟 `components/<id>.png` 的 id 清單。
+///
+/// **只收正整數 id**：負數圖（`-<id>.png`）是該原料「損毀狀態」的替身圖，由
+/// [ComponentModel.brokenImagePath] 依正 id 推導，**不是另一個原料**——不可進入原料
+/// 清單，否則會混入背包 / 原料庫 / 採集難度池 / 管理者物品設定與後端 difficulty_type。
 Future<void> loadComponentImageIds(Iterable<String> heritageIds) async {
   final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
   final assets = manifest.listAssets();
@@ -47,7 +52,8 @@ Future<void> loadComponentImageIds(Iterable<String> heritageIds) async {
       if (a.startsWith(prefix) && a.endsWith('.png')) {
         final base = a.substring(prefix.length, a.length - 4);
         final id = int.tryParse(base);
-        if (id != null) ids.add(id);
+        // 負數 / 0 是損毀替身圖，略過；只有正 id 才是可採集原料。
+        if (id != null && id > 0) ids.add(id);
       }
     }
     ids.sort();
@@ -60,6 +66,7 @@ void applyHeritageConfig(String heritageId, HeritageConfig config) {
   _metaByHeritage[heritageId] = config.components;
   _slotsByComponent[heritageId] = config.componentSlots;
   setHeritageSlots(heritageId, config.slots);
+  setHeritageMapCells(heritageId, config.mapCells);
   _rebuild(heritageId);
 }
 

@@ -7,12 +7,14 @@ import '../../data/component_data.dart';
 import '../../data/models/heritage_config.dart';
 import '../../data/models/heritage_slot.dart';
 import '../../services/heritage_config_service.dart';
+import '../fight/fight_map_geometry.dart';
 import '../heritage/heritage_view_geometry.dart';
 
-/// 管理者古蹟設定編輯器（取代舊 SlotEditorScreen）。三種模式：
+/// 管理者古蹟設定編輯器（取代舊 SlotEditorScreen）。四種模式：
 ///   - Slot：擺放 / 縮放 slot（八方向控制點），輸出 slot 幾何
 ///   - 原料對應：選一個原料，點 slot 切換可放與否
 ///   - 物品：自動列出該古蹟 assets 內的原料圖片，設定名稱與等級
+///   - 世界地圖：在 fight_map.png 上擺放 / 縮放各組島格（攻防戰世界地圖用），作法同 Slot
 ///
 /// 進場向（假）後端 [HeritageConfigService.fetch] 取設定；按「儲存」整包 [save] 回後端，
 /// 並即時 [applyHeritageConfig] 讓執行中的 app 反映。
@@ -24,7 +26,7 @@ class AdminEditorScreen extends StatefulWidget {
   State<AdminEditorScreen> createState() => _AdminEditorScreenState();
 }
 
-enum _Mode { slots, mapping, items }
+enum _Mode { slots, mapping, items, mapCells }
 
 enum _Grab { none, move, resize }
 
@@ -44,6 +46,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
 
   // 編輯中狀態
   List<HeritageSlot> _slots = [];
+  List<HeritageSlot> _cells = []; // 世界地圖島格（fight_map.png 正規化）
   Map<int, Set<int>> _allowed = {}; // componentId → 可放 slotIds
   final Map<int, ComponentMeta> _meta = {}; // componentId → 名稱/等級
   final Map<int, TextEditingController> _nameCtrls = {};
@@ -89,6 +92,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
 
   void _applyLoaded(HeritageConfig cfg) {
     _slots = cfg.slots.map((s) => s.copyWith()).toList();
+    _cells = cfg.mapCells.map((s) => s.copyWith()).toList();
     _allowed = {
       for (final e in cfg.componentSlots.entries) e.key: Set<int>.from(e.value),
     };
@@ -111,8 +115,13 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
   }
 
   // ── slot helpers ────────────────────────────────────────────────────────────
+  // 世界地圖模式編輯 _cells；其餘（slots / mapping）編輯 _slots。slot 與島格幾何相同
+  // （cx/cy/w/h），擺放 / 縮放 / 選取邏輯共用，只差編輯哪份清單與底圖。
+  bool get _cellMode => _mode == _Mode.mapCells;
+  List<HeritageSlot> get _geom => _cellMode ? _cells : _slots;
+
   int get _nextId {
-    final used = _slots.map((s) => s.id).toSet();
+    final used = _geom.map((s) => s.id).toSet();
     var id = 1;
     while (used.contains(id)) {
       id++;
@@ -121,15 +130,34 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
   }
 
   HeritageSlot? get _selected {
-    for (final s in _slots) {
+    for (final s in _geom) {
       if (s.id == _selectedId) return s;
     }
     return null;
   }
 
   void _replace(HeritageSlot updated) {
-    final i = _slots.indexWhere((s) => s.id == updated.id);
-    if (i >= 0) _slots[i] = updated;
+    final i = _geom.indexWhere((s) => s.id == updated.id);
+    if (i >= 0) _geom[i] = updated;
+  }
+
+  /// 底圖（main.png 或 fight_map.png）的置中顯示矩形。slots / mapping 用正方形
+  /// （main.png 為正方）；世界地圖用 fight_map.png 的原圖長寬比，slot / 島格座標皆
+  /// 正規化於此矩形。
+  Rect _baseRect(Size viewport) {
+    final center = Offset(viewport.width / 2, viewport.height / 2);
+    if (_cellMode) {
+      final maxSide = viewport.shortestSide * 0.92;
+      var w = maxSide;
+      var h = w / FightMapGeometry.mainAspect;
+      if (h > maxSide) {
+        h = maxSide;
+        w = h * FightMapGeometry.mainAspect;
+      }
+      return Rect.fromCenter(center: center, width: w, height: h);
+    }
+    final side = viewport.shortestSide * 0.92;
+    return Rect.fromCenter(center: center, width: side, height: side);
   }
 
   Offset _toScene(Offset viewportPt) => (viewportPt - _offset) / _scale;
@@ -162,7 +190,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
     _grab = _Grab.none;
     _grabStart = null;
 
-    if (_mode != _Mode.slots) return;
+    if (_mode != _Mode.slots && _mode != _Mode.mapCells) return;
 
     final scene = _toScene(d.localFocalPoint);
     final sel = _selected;
@@ -179,7 +207,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
         }
       }
     }
-    for (final s in _slots.reversed) {
+    for (final s in _geom.reversed) {
       if (HeritageViewGeometry.slotRect(s, main).contains(scene)) {
         _grab = _Grab.move;
         _grabStart = s;
@@ -258,7 +286,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
     final wasTap = !_moved && _gestureMaxPointers <= 1 && elapsed <= _tapMaxMs;
     if (wasTap) {
       final scene = _toScene(_startFocal);
-      if (_mode == _Mode.slots) {
+      if (_mode == _Mode.slots || _mode == _Mode.mapCells) {
         if (_grab != _Grab.none && _grabStart != null) {
           setState(() => _selectedId = _grabStart!.id);
         } else if (_selectedId != null) {
@@ -277,10 +305,11 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
   void _addAtScene(Offset scene, Rect main) {
     final cx = ((scene.dx - main.left) / main.width).clamp(0.0, 1.0);
     final cy = ((scene.dy - main.top) / main.height).clamp(0.0, 1.0);
-    final slot = HeritageSlot(
-        id: _nextId, cx: cx, cy: cy, w: _defaultSize, h: _defaultSize);
+    // 島格預設比 slot 大（要塞得下一座島嶼）。
+    final size = _cellMode ? 0.2 : _defaultSize;
+    final slot = HeritageSlot(id: _nextId, cx: cx, cy: cy, w: size, h: size);
     setState(() {
-      _slots.add(slot);
+      _geom.add(slot);
       _selectedId = slot.id;
     });
   }
@@ -303,7 +332,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
   void _deleteSelected() {
     if (_selectedId == null) return;
     setState(() {
-      _slots.removeWhere((s) => s.id == _selectedId);
+      _geom.removeWhere((s) => s.id == _selectedId);
       _selectedId = null;
     });
   }
@@ -333,6 +362,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
 
   HeritageConfig _buildConfig() {
     _slots.sort((a, b) => a.id.compareTo(b.id));
+    _cells.sort((a, b) => a.id.compareTo(b.id));
     final componentSlots = <int, Set<int>>{
       for (final e in _allowed.entries)
         if (e.value.isNotEmpty) e.key: Set<int>.from(e.value),
@@ -348,6 +378,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
       slots: _slots,
       componentSlots: componentSlots,
       components: components,
+      mapCells: _cells,
     );
   }
 
@@ -376,12 +407,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
                 builder: (_, constraints) {
                   final viewport =
                       Size(constraints.maxWidth, constraints.maxHeight);
-                  final side = viewport.shortestSide * 0.92;
-                  final main = Rect.fromCenter(
-                    center: Offset(viewport.width / 2, viewport.height / 2),
-                    width: side,
-                    height: side,
-                  );
+                  final main = _baseRect(viewport);
                   return Stack(
                     children: [
                       if (_mode != _Mode.items) ...[
@@ -537,14 +563,20 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
                           Positioned.fromRect(
                             rect: main,
                             child: Image.asset(
-                              'assets/heritages/${widget.heritageId}/main.png',
+                              _cellMode
+                                  ? 'assets/images/fight_map.png'
+                                  : 'assets/heritages/${widget.heritageId}/main.png',
                               fit: BoxFit.fill,
                               filterQuality: FilterQuality.low,
                               errorBuilder: (_, _, _) => Container(
                                 color: Colors.white10,
                                 alignment: Alignment.center,
-                                child: const Text('main.png 不存在',
-                                    style: TextStyle(color: Colors.white38)),
+                                child: Text(
+                                    _cellMode
+                                        ? 'fight_map.png 不存在'
+                                        : 'main.png 不存在',
+                                    style: const TextStyle(
+                                        color: Colors.white38)),
                               ),
                             ),
                           ),
@@ -558,7 +590,7 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
                         ],
                       ),
                     ),
-                    for (final s in _slots) _slotBox(s, main),
+                    for (final s in _geom) _slotBox(s, main),
                   ],
                 ),
               ),
@@ -668,6 +700,8 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
               _modeTab('原料對應', _Mode.mapping),
               const SizedBox(width: 4),
               _modeTab('物品', _Mode.items),
+              const SizedBox(width: 4),
+              _modeTab('世界地圖', _Mode.mapCells),
             ]),
           ),
           const Spacer(),
@@ -708,7 +742,13 @@ class _AdminEditorScreenState extends State<AdminEditorScreen> {
   Widget _modeTab(String label, _Mode m) {
     final on = _mode == m;
     return GestureDetector(
-      onTap: () => setState(() => _mode = m),
+      // 切換模式時清掉選取（slots 與島格的 id 各自獨立）。
+      onTap: () => setState(() {
+        _mode = m;
+        _selectedId = null;
+        _grab = _Grab.none;
+        _grabStart = null;
+      }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(

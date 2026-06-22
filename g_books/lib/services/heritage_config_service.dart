@@ -87,6 +87,7 @@ HeritageConfig heritageConfigFromBuilding(Map<String, dynamic> b) {
     slots: _slotsFromJson(layout['slots']),
     componentSlots: _componentSlotsFromJson(b['item_allowed_slot']),
     components: components,
+    mapCells: _slotsFromJson(layout['mapCells']),
   );
 }
 
@@ -108,6 +109,7 @@ Map<int, ComponentMeta> _componentsFromDifficulty(dynamic raw) {
 Map<String, String> serializeHeritageConfig(HeritageConfig c) {
   const enc = JsonEncoder.withIndent('  ');
   final slots = enc.convert(c.slots.map((s) => s.toJson()).toList());
+  final mapCells = enc.convert(c.mapCells.map((s) => s.toJson()).toList());
 
   final cs = <String, List<int>>{};
   for (final e in c.componentSlots.entries.toList()
@@ -127,6 +129,7 @@ Map<String, String> serializeHeritageConfig(HeritageConfig c) {
     'slots': slots,
     'component_slots': componentSlots,
     'components': components,
+    'map_cells': mapCells,
   };
 }
 
@@ -158,10 +161,15 @@ class LocalHeritageConfigService implements HeritageConfigService {
       await save(hid, seeded);
       return seeded;
     }
+    // map_cells.json 為後加欄位：不存在時視為空（不強制重新種子化）。
+    final mapCellsFile = File('${dir.path}/map_cells.json');
     return HeritageConfig(
       slots: _slotsFromJson(await slotsFile.readAsString()),
       componentSlots: _componentSlotsFromJson(await compSlotsFile.readAsString()),
       components: _componentsFromJson(await compFile.readAsString()),
+      mapCells: await mapCellsFile.exists()
+          ? _slotsFromJson(await mapCellsFile.readAsString())
+          : const [],
     );
   }
 
@@ -174,6 +182,7 @@ class LocalHeritageConfigService implements HeritageConfigService {
     await File('${dir.path}/component_slots.json')
         .writeAsString(j['component_slots']!);
     await File('${dir.path}/components.json').writeAsString(j['components']!);
+    await File('${dir.path}/map_cells.json').writeAsString(j['map_cells']!);
   }
 }
 
@@ -241,6 +250,7 @@ class ApiHeritageConfigService implements HeritageConfigService {
       'components': {
         for (final e in c.components.entries) '${e.key}': e.value.toJson(),
       },
+      'mapCells': [for (final s in c.mapCells) s.toJson()],
     });
     return {
       'name': hid,
@@ -297,6 +307,7 @@ class StudentConfigLoader {
       await File('${dir.path}/component_slots.json')
           .writeAsString(j['component_slots']!);
       await File('${dir.path}/components.json').writeAsString(j['components']!);
+      await File('${dir.path}/map_cells.json').writeAsString(j['map_cells']!);
     } catch (_) {
       // 快取寫入失敗不影響本次顯示。
     }
@@ -316,6 +327,7 @@ class StudentConfigLoader {
         componentSlots:
             _componentSlotsFromJson(await _readOrNull(dir, 'component_slots.json')),
         components: _componentsFromJson(await _readOrNull(dir, 'components.json')),
+        mapCells: _slotsFromJson(await _readOrNull(dir, 'map_cells.json')),
       );
       return (heritageId: hid, config: cfg);
     } catch (_) {

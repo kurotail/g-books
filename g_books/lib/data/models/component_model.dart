@@ -30,6 +30,11 @@ class ComponentModel {
   String get imagePath =>
       'assets/heritages/$heritageId/components/$id.png';
 
+  /// 損毀狀態圖路徑：同一原料的「負 id」替身圖（`components/-<id>.png`）。
+  /// 後端只記錄 slot 是否 broken；前端據此把該部件改畫成這張損毀圖。
+  String get brokenImagePath =>
+      'assets/heritages/$heritageId/components/${-id}.png';
+
   /// 依等級取得卡框圖。
   String get frameImagePath => levelFrameImagePath(level);
 

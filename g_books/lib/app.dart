@@ -9,6 +9,7 @@ import 'features/auth/group_overview_screen.dart';
 import 'features/heritage/heritage_selection_screen.dart';
 import 'features/heritage/my_heritage_screen.dart';
 import 'features/heritage/resource_collection_screen.dart';
+import 'features/fight/fight_loading_screen.dart';
 import 'features/fight/fight_screen.dart';
 import 'features/admin/staff_login_screen.dart';
 import 'features/admin/admin_home_screen.dart';
@@ -46,12 +47,12 @@ class _GBooksAppState extends State<GBooksApp> {
         ),
         GoRoute(
           path: '/teacher',
-          pageBuilder: (_, state) => _fadePage(state, const TeacherHomeScreen()),
+          pageBuilder: (_, state) =>
+              _fadePage(state, const TeacherHomeScreen()),
         ),
         GoRoute(
           path: '/admin',
-          pageBuilder: (_, state) =>
-              _fadePage(state, const AdminHomeScreen()),
+          pageBuilder: (_, state) => _fadePage(state, const AdminHomeScreen()),
         ),
         GoRoute(
           path: '/admin/edit/:hid',
@@ -87,8 +88,7 @@ class _GBooksAppState extends State<GBooksApp> {
         ),
         GoRoute(
           path: '/my-heritage',
-          pageBuilder: (_, state) =>
-              _fadePage(state, const MyHeritageScreen()),
+          pageBuilder: (_, state) => _fadePage(state, const MyHeritageScreen()),
         ),
         // 資源採集（quiz1）：由我的古蹟面板推入，返回時可回傳 true 代表「前往編輯」。
         GoRoute(
@@ -98,8 +98,16 @@ class _GBooksAppState extends State<GBooksApp> {
         ),
         // 攻防戰（quiz2）：QUIZ2 階段由我的古蹟自動跳入（或攻防戰按鈕重進）。
         GoRoute(
+          path: '/fight-loading',
+          pageBuilder: (_, state) =>
+              _fadePage(state, const FightLoadingScreen()),
+        ),
+        GoRoute(
           path: '/fight',
-          pageBuilder: (_, state) => _fadePage(state, const FightScreen()),
+          pageBuilder: (_, state) => _fadePage(
+            state,
+            FightScreen(initialData: state.extra as FightInitialData?),
+          ),
         ),
       ],
     );

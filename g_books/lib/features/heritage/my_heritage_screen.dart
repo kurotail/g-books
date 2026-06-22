@@ -177,7 +177,8 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
       'assets/heritages/${_heritage.id}/main.png',
       for (final lv in const [1, 2, 3]) levelFrameImagePath(lv),
       // 編輯模式等級切鈕內的難度區域 icon。
-      for (final k in _areaKeys) 'assets/heritages/${_heritage.id}/area/category_$k.png',
+      for (final k in _areaKeys)
+        'assets/heritages/${_heritage.id}/area/category_$k.png',
       for (final c in componentsOf(_heritage.id)) c.imagePath,
     ];
     // 先同步建立所有 precache future（在任何 await 之前用 context），缺圖以
@@ -267,7 +268,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
   void _openFight() {
     setState(() => _isPanelOpen = false);
     _panelCtrl.reverse();
-    context.push('/fight');
+    context.push('/fight-loading');
   }
 
   /// 開始拆卸確認：記住目前鏡頭、推近聚焦該 slot（置中、留左側空間給確認框），
@@ -290,7 +291,8 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     });
     if (remove && slot != null) {
       await _guardGroupChanged(
-          () => context.read<HeritageBoardController>().removeAt(slot.id));
+        () => context.read<HeritageBoardController>().removeAt(slot.id),
+      );
     }
     _animateTo(_savedTransform);
   }
@@ -672,6 +674,7 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
                       viewport,
                       componentById(_heritage.id, board.itemAt(s.id)!)!,
                       blinking: _confirmSlot?.id == s.id,
+                      broken: board.isBroken(s.id),
                     ),
                 // 編輯且拖曳中：可放置 slot 的 highlight + 拖放目標
                 if (_editMode && dragging)
@@ -717,9 +720,11 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
     Size viewport,
     ComponentModel comp, {
     bool blinking = false,
+    bool broken = false,
   }) {
     Widget img = Image.asset(
-      comp.imagePath,
+      // 損毀（攻防戰被打壞）→ 改畫損毀替身圖（負 id）。
+      broken ? comp.brokenImagePath : comp.imagePath,
       width: rect.width,
       fit: BoxFit.fitWidth,
       errorBuilder: (_, _, _) => const SizedBox.shrink(),
@@ -1272,13 +1277,9 @@ class _MyHeritageScreenState extends State<MyHeritageScreen>
           null,
           '小組資訊',
           icon: Icons.groups_rounded,
-          onTap: _fightUnlocked ? null : _openGroupOverview,
-          locked: _fightUnlocked,
+          onTap: _openGroupOverview,
         ),
-        _menuBtn(null, '登出',
-            icon: Icons.logout_rounded,
-            onTap: _fightUnlocked ? null : _logout,
-            locked: _fightUnlocked),
+        _menuBtn(null, '登出', icon: Icons.logout_rounded, onTap: _logout),
       ],
     );
   }

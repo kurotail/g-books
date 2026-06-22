@@ -26,9 +26,11 @@ class HeritageBoardController extends ChangeNotifier {
   String get heritageId => _heritageId;
 
   /// 背包：type（原料 id）→ 持有數量。
+  /// 只計正 id 原料；負 id（損毀替身）不是可持有原料，排除以免進原料庫顯示 / 計數。
   Map<int, int> get inventory {
     final m = <int, int>{};
     for (final it in _inventory) {
+      if (it.type <= 0) continue;
       m[it.type] = (m[it.type] ?? 0) + 1;
     }
     return Map.unmodifiable(m);
@@ -41,8 +43,9 @@ class HeritageBoardController extends ChangeNotifier {
     return Map.unmodifiable(m);
   }
 
-  /// 背包中該 type 的持有數量。
-  int qty(int type) => _inventory.where((it) => it.type == type).length;
+  /// 背包中該 type 的持有數量（負 id 非可持有原料，一律 0）。
+  int qty(int type) =>
+      type <= 0 ? 0 : _inventory.where((it) => it.type == type).length;
 
   /// 該 slot 上的物品 type（原料 id），空則 null。
   int? itemAt(int slotId) => _slots[slotId]?.type;
@@ -64,8 +67,8 @@ class HeritageBoardController extends ChangeNotifier {
   /// 該 slot 上的物品是否已損毀（攻防戰打壞）。
   bool isBroken(int slotId) => _slots[slotId]?.broken ?? false;
 
-  /// 背包中尚未使用（未放上 slot）的原料總數。
-  int get unusedCount => _inventory.length;
+  /// 背包中尚未使用（未放上 slot）的原料總數（只計正 id 原料）。
+  int get unusedCount => _inventory.where((it) => it.type > 0).length;
 
   /// 已放上 slot 的元件數。
   int get usedCount => _slots.length;
